@@ -245,6 +245,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard/tasks", label: "Daily Tasks", ready: true, icon: I.tasks },
       { href: "/dashboard/history", label: "My History", ready: true, icon: I.history },
+      { href: "/dashboard/attendance-calendar", label: "My attendance", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
       { href: "/dashboard/huddles", label: "Team Huddle", ready: true, roles: ["MANAGER"], icon: I.huddle },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },
@@ -339,7 +340,7 @@ export default function DashboardLayout({
     const item = GROUPS.flatMap((g) => g.items).find(
       (i) => i.href.split("?")[0] === pathname && (!i.roles || i.roles.includes(role)) && !(i.notRoles ?? []).includes(role)
     );
-    document.title = pathname === "/dashboard/profile" ? "My Profile | Avatar HRMS" : item ? `${item.label} | Avatar HRMS` : "Avatar HRMS";
+    document.title = pathname === "/dashboard/profile" ? "My Profile | Avatar HRMS" : pathname === "/dashboard/attendance-calendar" ? "Attendance Calendar | Avatar HRMS" : item ? `${item.label} | Avatar HRMS` : "Avatar HRMS";
   }, [pathname, me?.role]);
 
   // Query Desk / Complaint Centre: how many items are waiting for this person (queries to answer, corrections to decide, information asked of them).
@@ -459,7 +460,7 @@ export default function DashboardLayout({
               {group.items.map((item) => {
                 // Items that deep-link with ?tab= are never "active"; the
                 // plain page entry owns the highlight.
-                const active = !item.href.includes("?") && pathname === item.href;
+                const active = !item.href.includes("?") && (pathname === item.href || (item.href === "/dashboard/team-attendance" && pathname === "/dashboard/attendance-calendar"));
                 const Icon = item.icon;
 
                 if (!item.ready) {

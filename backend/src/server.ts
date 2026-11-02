@@ -26,6 +26,7 @@ import documentRoutes from "./modules/documents/documents.routes.js";
 import meetingRoutes from "./modules/meetings/meetings.routes.js";
 import companyRoutes from "./modules/companies/companies.routes.js";
 import teamAttendanceRoutes from "./modules/team-attendance/teamAttendance.routes.js";
+import attendanceCalendarRoutes from "./modules/team-attendance/attendanceCalendar.routes.js";
 import { startRealtime } from "./lib/realtime.js";
 import { manageableUserIds } from "./modules/tasks/tasks.service.js";
 import { requireAuth } from "./middlewares/auth.js";
@@ -105,6 +106,7 @@ app.use("/api/documents", documentRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/companies", companyRoutes);
 app.use("/api/team-attendance", teamAttendanceRoutes);
+app.use("/api/attendance-calendar", attendanceCalendarRoutes);
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
 });

@@ -196,7 +196,13 @@ export default function AttendancePage() {
             <Link href="/dashboard/reports" className="font-medium text-indigo-600 hover:underline">Reports &amp; Analytics</Link>.
           </p>
         </div>
-        <p className="text-xs text-slate-400">Refreshes every 15 s{live ? ` · last updated ${clockTime(live.generatedAt, tz)}` : ""}</p>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex rounded-xl bg-white p-1 text-sm shadow-[var(--shadow-card)]">
+            <span className="rounded-lg bg-indigo-600 px-3 py-1.5 font-medium text-white">Live board</span>
+            <Link href="/dashboard/attendance-calendar" className="rounded-lg px-3 py-1.5 font-medium text-slate-500 hover:text-slate-900">Calendar</Link>
+          </div>
+          <p className="text-xs text-slate-400">Refreshes every 15 s{live ? ` · last updated ${clockTime(live.generatedAt, tz)}` : ""}</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
