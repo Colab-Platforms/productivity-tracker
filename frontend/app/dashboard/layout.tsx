@@ -231,6 +231,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard", label: "Dashboard", ready: true, roles: ["HR", "ADMIN"], icon: I.grid },
       { href: "/dashboard", label: "Today", ready: true, notRoles: ["HR", "ADMIN"], icon: I.today },
+      { href: "/dashboard/attendance-calendar", label: "My Calendar", ready: true, roles: ["EMPLOYEE"], icon: I.holidays },
       { href: "/dashboard/admin", label: "Employees", ready: true, roles: ["HR", "ADMIN"], icon: I.team },
       { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["HR", "ADMIN"], icon: I.folder },
       { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
@@ -245,7 +246,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard/tasks", label: "Daily Tasks", ready: true, icon: I.tasks },
       { href: "/dashboard/history", label: "My History", ready: true, icon: I.history },
-      { href: "/dashboard/attendance-calendar", label: "My attendance", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
       { href: "/dashboard/huddles", label: "Team Huddle", ready: true, roles: ["MANAGER"], icon: I.huddle },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },

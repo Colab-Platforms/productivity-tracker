@@ -17,6 +17,8 @@ type Person = { id: string; name: string; code: string | null; designation: stri
 type Row = {
   userId: string; date: string; status: Status; firstCheckIn: string | null; lastCheckOut: string | null; lateByMinutes: number | null;
   workedSeconds: number | null; breakSeconds: number | null; stillWorking: boolean; payrollStatus: string; leaveType: string | null; holidayName: string | null; note: string | null;
+  lateRemark: string | null; correctedBy: string | null; autoClosed: boolean; leaveHalfDay: string | null; leaveReason: string | null;
+  tasksPlanned: number | null; tasksCompleted: number | null; remarks: string;
 };
 type Data = {
   timezone: string; today: string; from: string; to: string; rules: { presentUntil: string; lateUntil: string };
@@ -106,7 +108,7 @@ export default function AttendanceCalendarPage() {
     <div className="mx-auto page-7xl space-y-5 p-4 sm:p-8">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{isStaff ? "Attendance" : "My attendance"}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{isStaff ? "Attendance" : "My attendance calendar"}</h1>
           <p className="mt-1 text-sm text-slate-500">
             Each day is marked from the first check-in: Present up to {data?.rules.presentUntil ?? "09:45"}, Late up to {data?.rules.lateUntil ?? "10:15"}, Half day after that (company time).
           </p>
@@ -261,8 +263,30 @@ export default function AttendanceCalendarPage() {
                   <Item k={pickedRow.stillWorking ? "Working time so far" : "Working time"} v={pickedRow.workedSeconds === null ? "—" : hm(pickedRow.workedSeconds)} />
                   <Item k="Break time" v={pickedRow.breakSeconds === null ? "—" : hm(pickedRow.breakSeconds)} />
                 </dl>
-                {pickedRow.leaveType && <p className="mt-3 text-sm text-slate-600">Leave type: {pickedRow.leaveType.toLowerCase()}</p>}
-                {pickedRow.holidayName && <p className="mt-3 text-sm text-slate-600">{pickedRow.holidayName}</p>}
+                {pickedRow.status === "LEAVE" && (
+                  <div className="mt-4 rounded-xl bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
+                    <p className="font-medium">{pickedRow.leaveType ? `${pickedRow.leaveType.charAt(0)}${pickedRow.leaveType.slice(1).toLowerCase()} leave` : "On leave"}{pickedRow.leaveHalfDay ? ` · half day (${pickedRow.leaveHalfDay})` : ""}</p>
+                    {pickedRow.leaveReason && <p className="mt-0.5 text-xs text-sky-800">Reason: {pickedRow.leaveReason}</p>}
+                  </div>
+                )}
+                {pickedRow.holidayName && <p className="mt-3 rounded-xl bg-indigo-50 px-3 py-2.5 text-sm text-indigo-900">{pickedRow.holidayName}</p>}
+                {pickedRow.firstCheckIn && (
+                  <div className="mt-4 space-y-2 text-sm">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Remarks</p>
+                    {pickedRow.lateRemark && (
+                      <p className="rounded-xl bg-amber-50 px-3 py-2 text-amber-900"><span className="font-medium">Reason for arriving late:</span> {pickedRow.lateRemark}</p>
+                    )}
+                    {pickedRow.correctedBy && <p className="rounded-xl bg-indigo-50/60 px-3 py-2 text-slate-700">Corrected by {pickedRow.correctedBy} after a correction request.</p>}
+                    {pickedRow.autoClosed && <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700">Clocked out automatically because the day was left open.</p>}
+                    {pickedRow.stillWorking && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-emerald-900">Still working: the check-out time will appear once you clock out.</p>}
+                    {pickedRow.tasksPlanned !== null && (
+                      <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700">Tasks: {pickedRow.tasksCompleted ?? 0} done of {pickedRow.tasksPlanned} planned.</p>
+                    )}
+                    {!pickedRow.lateRemark && !pickedRow.correctedBy && !pickedRow.autoClosed && !pickedRow.stillWorking && pickedRow.tasksPlanned === null && (
+                      <p className="text-slate-400">Nothing special recorded for this day.</p>
+                    )}
+                  </div>
+                )}
                 {pickedRow.firstCheckIn && (
                   <p className="mt-4 rounded-xl bg-indigo-50/60 px-3 py-2 text-xs text-slate-500">
                     Reports and payroll call this day “{pickedRow.payrollStatus}” (they go by hours worked). Times are shown in {pickedPerson.timezone.replace("_", " ")}.

@@ -3,6 +3,7 @@ import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
+import { remarksBySession } from "../tracker/lateRemarks.js";
 import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,48 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
   const monthly = (await Promise.all(months.map(([yy, mm]) => getMonthAttendanceBulk(ids, yy, mm)))).flat();
   const byId = new Map(chosen.map((c) => [c.id, c]));
 
+  // Everything that explains a day, read in a few batched queries (never one per person). Each optional source degrades to "nothing" when its
+  // table is not available, so the calendar always loads.
+  const [sessions, leaveDays, taskGroups] = await Promise.all([
+    prisma.workSession.findMany({ where: { userId: { in: ids }, date: { gte: from, lte: to } }, select: { id: true, userId: true, date: true, autoClosed: true } }),
+    prisma.leaveDay
+      .findMany({
+        where: { userId: { in: ids }, date: { gte: from, lte: to } },
+        select: { userId: true, date: true, isHalfDay: true, isFirstHalf: true, leaveRequest: { select: { reason: true } } },
+      })
+      .catch(() => [] as { userId: string; date: Date; isHalfDay: boolean; isFirstHalf: boolean; leaveRequest: { reason: string } | null }[]),
+    prisma.dailyTask
+      .groupBy({
+        by: ["userId", "date", "status", "approvalStatus"],
+        where: { userId: { in: ids }, date: { gte: from, lte: to }, status: { not: "CANCELLED" } },
+        _count: { _all: true },
+      })
+      .catch(() => [] as { userId: string; date: Date; status: string; approvalStatus: string; _count: { _all: number } }[]),
+  ]);
+  const sessionOf = new Map(sessions.map((s) => [`${s.userId}|${s.date.toISOString().slice(0, 10)}`, s]));
+  const lateReason = await remarksBySession(sessions.map((s) => s.id));
+  const correctedBy = new Map<string, string>(); // session id -> who corrected it
+  if (sessions.length) {
+    const audits = await prisma.attendanceCorrectionAudit
+      .findMany({
+        where: { workSessionId: { in: sessions.map((s) => s.id) }, action: "APPLIED" },
+        orderBy: { createdAt: "desc" },
+        select: { workSessionId: true, actedBy: { select: { firstName: true, lastName: true } } },
+      })
+      .catch(() => [] as { workSessionId: string | null; actedBy: { firstName: string; lastName: string } }[]);
+    for (const a of audits) if (a.workSessionId && !correctedBy.has(a.workSessionId)) correctedBy.set(a.workSessionId, `${a.actedBy.firstName} ${a.actedBy.lastName}`.trim());
+  }
+  const leaveOf = new Map(leaveDays.map((l) => [`${l.userId}|${l.date.toISOString().slice(0, 10)}`, l]));
+  const tasksOf = new Map<string, { planned: number; completed: number }>();
+  for (const t of taskGroups) {
+    const k = `${t.userId}|${t.date.toISOString().slice(0, 10)}`;
+    const cur = tasksOf.get(k) ?? { planned: 0, completed: 0 };
+    const approval = String(t.approvalStatus);
+    if (approval === "APPROVED" || approval === "PENDING") cur.planned += t._count._all; // rejected proposals were never planned
+    if (approval === "APPROVED" && String(t.status) === "COMPLETED") cur.completed += t._count._all;
+    tasksOf.set(k, cur);
+  }
+
   const rows: Array<Record<string, unknown>> = [];
   const counts = emptyCounts();
   for (const month of monthly) {
@@ -103,6 +146,24 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
       const status = calendarStatus({ engineStatus: d.status, loginAt, isToday: d.date === todayIso, timezone: who.timezone });
       if (!status) continue;
       counts[status] = (counts[status] ?? 0) + 1;
+      const key = `${month.userId}|${d.date}`;
+      const session = sessionOf.get(key);
+      const lateText = session ? lateReason.get(session.id) ?? null : null;
+      const fixedBy = session ? correctedBy.get(session.id) ?? null : null;
+      const leave = leaveOf.get(key);
+      const task = tasksOf.get(key);
+      const lateBy = loginAt ? minutesAfterLimit(loginAt, who.timezone) : 0;
+      const running = !!loginAt && !d.logoutAt && d.date === todayIso;
+      // One plain line built only from what was recorded; the structured fields below carry the same facts.
+      const remarkParts: string[] = [];
+      if (running) remarkParts.push("Still working");
+      if (session?.autoClosed) remarkParts.push("Auto clocked out");
+      if (status === "LEAVE") remarkParts.push(`${d.leaveType ? `${d.leaveType.toLowerCase()} leave` : "On leave"}${leave?.isHalfDay ? " (half day)" : ""}`);
+      if (status === "HOLIDAY" && d.holidayName) remarkParts.push(d.holidayName);
+      if (lateBy > 0) remarkParts.push(`Arrived ${lateBy} min after ${ARRIVAL_RULES.presentUntil}`);
+      if (lateText) remarkParts.push(`Reason: ${lateText}`);
+      if (fixedBy) remarkParts.push(`Corrected by ${fixedBy}`);
+      if (task && task.completed > 0) remarkParts.push(`${task.completed} task${task.completed === 1 ? "" : "s"} done`);
       rows.push({
         userId: month.userId,
         date: d.date,
@@ -119,6 +180,15 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
         leaveType: d.leaveType,
         holidayName: d.holidayName,
         note: d.note,
+        // What explains the day
+        lateRemark: lateText,
+        correctedBy: fixedBy,
+        autoClosed: !!session?.autoClosed,
+        leaveHalfDay: leave?.isHalfDay ? (leave.isFirstHalf ? "first half" : "second half") : null,
+        leaveReason: leave?.leaveRequest?.reason ?? null,
+        tasksPlanned: task ? task.planned : null,
+        tasksCompleted: task ? task.completed : null,
+        remarks: remarkParts.join(" · "),
       });
     }
   }

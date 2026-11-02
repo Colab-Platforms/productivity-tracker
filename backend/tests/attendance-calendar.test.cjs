@@ -25,6 +25,9 @@ const PW = "Cal@12345678";
   const hash = await bcrypt.hash(PW, 10);
   const wipe = async () => {
     const ids = `(select id from users where "employeeCode" like 'CAL-%')`;
+    await q(`delete from late_remarks where "userId" in ${ids}`);
+    await q(`delete from leave_days where "userId" in ${ids}`);
+    await q(`delete from leave_requests where "userId" in ${ids}`);
     await q(`delete from tracker_breaks where "workSessionId" in (select id from work_sessions where "userId" in ${ids})`);
     await q(`delete from work_sessions where "userId" in ${ids}`);
     await q(`delete from team_members where "userId" in ${ids}`);
@@ -64,7 +67,10 @@ const PW = "Cal@12345678";
     return id;
   };
   await seed(P1, "09:45", "18:45", 8 * 3600, 3600);
-  await seed(P2, "09:46", "18:00", 7 * 3600, 1800);
+  const s2 = await seed(P2, "09:46", "18:00", 7 * 3600, 1800);
+  await q(`insert into late_remarks (id,"platformId","userId","sessionId",remark,"lateByMinutes","createdAt") values (gen_random_uuid(),$1,$2,$3,'Bus broke down',1,now())`, [AV, P2.id, s2]);
+  const lr = (await q(`insert into leave_requests (id,"platformId","userId","fromDate","toDate","leaveType","isHalfDay","isFirstHalf","dayCount",reason,status,"createdAt","updatedAt") values (gen_random_uuid(),$1,$2,'2026-10-29','2026-10-29','SICK',false,true,1,'Fever and a doctor visit','APPROVED',now(),now()) returning id`, [AV, P5.id]))[0].id;
+  await q(`insert into leave_days (id,"platformId","userId",date,"leaveType","isHalfDay","isFirstHalf","leaveRequestId","markedById","createdAt") values (gen_random_uuid(),$1,$2,'2026-10-29','SICK',false,true,$3,$4,now())`, [AV, P5.id, lr, HR.id]);
   await seed(P3, "10:15", "18:00", 7 * 3600, 1800);
   await seed(P4, "10:16", "13:30", 3 * 3600, 600);
 
@@ -107,6 +113,20 @@ const PW = "Cal@12345678";
   ok("HR assigned a second company sees both", hb2.b.people.some((p) => p.code === "CAL-P1") && hb2.b.people.some((p) => p.code === "CAL-EB"));
   await q(`delete from company_access where "userId"=$1`, [HRB.id]);
   ok("no sign-in = 401", (await call("GET", `/attendance-calendar`)).s === 401);
+
+  console.log("\n## 3b. Remarks and details an employee sees about their own days");
+  const own2 = await call("GET", `/attendance-calendar?from=2026-10-28&to=2026-10-29`, P2.tok);
+  const d28 = own2.b.rows.find((r) => r.date === "2026-10-28");
+  ok("the late reason the employee gave is shown on their day", d28?.lateRemark === "Bus broke down", d28);
+  ok("and is part of the plain remarks line", /Reason: Bus broke down/.test(d28?.remarks) && /Arrived 1 min after 09:45/.test(d28?.remarks), d28?.remarks);
+  ok("a day with nothing special has no made-up remark fields", m.b.rows.find((r) => r.userId === P1.id).lateRemark === null && m.b.rows.find((r) => r.userId === P1.id).correctedBy === null && m.b.rows.find((r) => r.userId === P1.id).tasksPlanned === null);
+  const own5 = await call("GET", `/attendance-calendar?from=2026-10-28&to=2026-10-29`, P5.tok);
+  const l29 = own5.b.rows.find((r) => r.date === "2026-10-29");
+  ok("an approved leave day shows as Leave with its type", l29?.status === "LEAVE" && /sick/i.test(String(l29?.leaveType)), l29);
+  ok("and the reason the employee wrote", l29?.leaveReason === "Fever and a doctor visit", l29);
+  ok("the leave shows in remarks too", /sick leave/.test(l29?.remarks), l29?.remarks);
+  ok("an employee cannot see a colleague's late reason", !JSON.stringify((await call("GET", `/attendance-calendar?from=2026-10-28&to=2026-10-28`, P1.tok)).b).includes("Bus broke down"));
+  ok("the manager of the team does see it", m.b.rows.find((r) => r.userId === P2.id).lateRemark === "Bus broke down");
 
   console.log("\n## 4. Filters");
   const f1 = await cal(HR.tok, `&teamId=${T}`);
