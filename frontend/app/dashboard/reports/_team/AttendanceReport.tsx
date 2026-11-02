@@ -150,16 +150,16 @@ export default function AttendanceReport() {
     setApplied(NO_FILTERS);
   }
 
-  // One table for both downloads, so the CSV and the Excel file always agree. The three task columns sit right
-  // after "Tasks completed"; Pending Tasks = planned - completed (a live formula in the Excel file).
-  const EXPORT_HEADER = ["Employee ID", "Employee", "Team", "Date", "Shift", "Check-in", "Check-out", "Working", "Productive", "Break", "Break over allowance", "Status", "Late arrival", "Early departure", "Tasks completed", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks", "Remarks"];
+  // One table for both downloads, so the CSV and the Excel file always agree. The task columns run Planned,
+  // Approved, Pending, then "Tasks completed", then Remarks; Pending Tasks = planned - completed (a live formula in the Excel file).
+  const EXPORT_HEADER = ["Employee ID", "Employee", "Team", "Date", "Shift", "Check-in", "Check-out", "Working", "Productive", "Break", "Break over allowance", "Status", "Late arrival", "Early departure", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks", "Tasks completed", "Remarks"];
   function exportRows(): Cell[][] {
     return rows.map((r) => [
       r.employeeCode, r.name, r.teamName, r.date, r.shiftName ? `${r.shiftName}${r.shiftStart && r.shiftEnd ? ` (${r.shiftStart}-${r.shiftEnd})` : ""}` : "Not assigned",
       clockTime(r.loginAt, tz), r.stillWorking ? "Working" : clockTime(r.logoutAt, tz), hmFromHours(r.workedHours), hmFromHours(r.productiveHours), hmFromHours(r.breakHours),
       r.breakHours !== null && r.breakHours * 3600 > r.breakBudgetSeconds ? hmFromHours(r.breakHours - r.breakBudgetSeconds / 3600) : "",
-      r.statusLabel, hmFromMinutes(r.lateMinutes), hmFromMinutes(r.earlyDepartureMinutes), r.tasksCompleted,
-      r.tasksPlanned, r.tasksApproved, r.tasksPlanned === null ? null : r.tasksPlanned - r.tasksCompleted, remarks(r),
+      r.statusLabel, hmFromMinutes(r.lateMinutes), hmFromMinutes(r.earlyDepartureMinutes),
+      r.tasksPlanned, r.tasksApproved, r.tasksPlanned === null ? null : r.tasksPlanned - r.tasksCompleted, r.tasksCompleted, remarks(r),
     ]);
   }
   function exportCsv() {
