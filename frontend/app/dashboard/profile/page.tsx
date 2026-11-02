@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
+import { MyDocuments } from "../_documents/MyDocuments";
 
 // ---------------------------------------------------------------------------
 // MY PROFILE
-// Everything about me in one place: who I am, my offer letter, my documents
-// and every payslip. Read-only — nothing here can change my own record.
+// Everything about me in one place, in sections: personal, contact, address, emergency contact, employment, and My Documents (the same
+// checklist that used to be a separate Documents page: upload, preview, verification status and HR remarks). Details are read-only here;
+// only what the system actually holds is shown. Address and emergency contact are not stored anywhere yet, so they say so instead of
+// inventing anything.
 //
 // Each section loads independently and fails independently. A missing offer
 // or an unpublished payslip must not blank the whole page.
@@ -52,8 +55,44 @@ function initials(name: string) {
     .join("");
 }
 
+type Details = {
+  firstName: string; lastName: string; email: string; phone: string | null; employeeCode: string | null; designation: string | null; role: string; status: string;
+  company: string; dateOfJoining: string | null; probationEndDate: string | null; employmentType: string | null;
+  reportsTo: { name: string; designation: string | null } | null; shift: { name: string; startTime: string; endTime: string } | null; departments: string[];
+};
+const TABS = ["Personal", "Contact", "Address", "Emergency contact", "Employment", "My Documents"] as const;
+type Tab = (typeof TABS)[number];
+const TYPE_NAME: Record<string, string> = { PERMANENT: "Permanent", PROBATION: "Probation", CONTRACT: "Contract", INTERN: "Intern" };
+const showDay = (s: string | null) => (s ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${s}T00:00:00Z`)) : null);
+
+function Fields({ rows }: { rows: [string, string | null | undefined][] }) {
+  return (
+    <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+      {rows.map(([k, v]) => (
+        <div key={k}>
+          <dt className="text-xs text-slate-400">{k}</dt>
+          <dd className="mt-0.5 text-sm font-medium text-slate-900">{v && v.trim() ? v : <span className="font-normal text-slate-400">Not provided</span>}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function NotStored({ what }: { what: string }) {
+  return <p className="rounded-xl bg-[#F6F7FE] px-4 py-6 text-center text-sm text-slate-500">{what} is not recorded in your profile yet. If HR needs it, they will ask you for it.</p>;
+}
+
 export default function ProfilePage() {
   const me = useMe();
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "Personal";
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    return TABS.find((t) => t === wanted) ?? "Personal";
+  });
+  const [details, setDetails] = useState<Details | null>(null);
+  useEffect(() => {
+    apiGet<Details>("/auth/me/profile").then(setDetails).catch(() => setDetails(null));
+  }, []);
 
   const [offer, setOffer] = useState<Offer | null>(null);
   const [slips, setSlips] = useState<Slip[]>([]);
@@ -165,6 +204,40 @@ export default function ProfilePage() {
           {notes.join(" ")}
         </div>
       )}
+
+      {/* ---- profile sections ---- */}
+      <div role="tablist" aria-label="Profile sections" className="mb-4 flex flex-wrap gap-1 rounded-xl bg-white p-1 shadow-[var(--shadow-card)] no-print">
+        {TABS.map((t) => (
+          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`rounded-lg px-3.5 py-2 text-sm font-medium ${tab === t ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <section className="mb-6 rounded-2xl bg-white p-6 shadow-[var(--shadow-card)]">
+        <h2 className="mb-4 text-sm font-semibold text-slate-900">{tab}</h2>
+        {tab === "Personal" && (
+          <Fields rows={[["First name", me.firstName], ["Last name", me.lastName], ["Employee ID", me.employeeCode], ["Company", details?.company ?? me.platform.name]]} />
+        )}
+        {tab === "Contact" && <Fields rows={[["Work email", me.email], ["Phone", details?.phone], ["Sign in with", me.employeeCode ?? me.email]]} />}
+        {tab === "Address" && <NotStored what="Your address" />}
+        {tab === "Emergency contact" && <NotStored what="Your emergency contact" />}
+        {tab === "Employment" && (
+          <Fields
+            rows={[
+              ["Designation", me.designation],
+              ["System role", ROLE_LABEL[me.role] ?? me.role],
+              ["Department / team", details?.departments.join(", ")],
+              ["Reporting manager", details?.reportsTo ? `${details.reportsTo.name}${details.reportsTo.designation ? ` (${details.reportsTo.designation})` : ""}` : null],
+              ["Date of joining", showDay(details?.dateOfJoining ?? null)],
+              ["Probation ends", showDay(details?.probationEndDate ?? null)],
+              ["Employee type", details?.employmentType ? TYPE_NAME[details.employmentType] ?? details.employmentType : null],
+              ["Shift", details?.shift ? `${details.shift.name} (${details.shift.startTime} to ${details.shift.endTime})` : null],
+            ]}
+          />
+        )}
+        {tab === "My Documents" && <MyDocuments />}
+      </section>
 
       {/* ---- offer letter ---- */}
       <section className="mb-6 overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)]">

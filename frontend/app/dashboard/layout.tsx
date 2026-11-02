@@ -229,7 +229,9 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard", label: "Dashboard", ready: true, roles: ["HR", "ADMIN"], icon: I.grid },
       { href: "/dashboard", label: "Today", ready: true, notRoles: ["HR", "ADMIN"], icon: I.today },
+      { href: "/dashboard/profile", label: "My Profile", ready: true, icon: I.user },
       { href: "/dashboard/admin", label: "Employees", ready: true, roles: ["HR", "ADMIN"], icon: I.team },
+      { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["HR", "ADMIN"], icon: I.folder },
       { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
       { href: "/dashboard/queries", label: "Query Desk", ready: true, roles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/today", label: "Productivity Tracker", ready: true, roles: ["HR", "ADMIN"], icon: I.today },
@@ -246,12 +248,10 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/huddles", label: "Team Huddle", ready: true, roles: ["MANAGER"], icon: I.huddle },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },
       { href: "/dashboard/leave", label: "Leave", ready: true, icon: I.holidays },
-      { href: "/dashboard/documents", label: "Documents", ready: true, icon: I.folder },
       { href: "/dashboard/meetings", label: "Meetings", ready: true, icon: I.video },
       { href: "/dashboard/policies", label: "Policies", ready: true, icon: I.shield },
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, icon: I.receipt },
       { href: "/dashboard/queries", label: "Complaint Centre", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
-      { href: "/dashboard/profile", label: "My Profile", ready: true, icon: I.user },
       { href: "/change-password", label: "Change password", ready: true, icon: I.lock },
     ],
   },
@@ -577,7 +577,7 @@ export default function DashboardLayout({
               H
             </div>
             <p className="truncate text-sm font-semibold text-slate-900">
-              Avatar HRMS <span className="font-normal text-slate-400">· {me.platform.name}</span>
+              Avatar HRMS
             </p>
             <div className="ml-auto flex shrink-0 items-center gap-0.5"><ThemeIconButton /><Bell /></div>
           </header>
