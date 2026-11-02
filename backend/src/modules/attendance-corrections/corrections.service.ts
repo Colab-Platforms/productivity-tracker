@@ -6,8 +6,8 @@ import { auditNote } from "../../lib/auditContext.js";
 import { sendMail } from "../../lib/mailer.js";
 import { correctionSubmittedEmail, correctionDecidedEmail } from "../../lib/emails.js";
 import { computeLate, getContext, recompute } from "../tracker/tracker.service.js";
-import { ownerCodes, viewerIsOwner } from "../../lib/owner.js";
-import { getPinnedCompany } from "../../lib/deployment.js";
+import { accessFor, deciderIdsForCompany, scopeWhere, type Access } from "../../lib/companyAccess.js";
+import { claimStep, gateForHr, isApproverOf, rowsForManager, startStep, stepViews } from "../approvals/managerStep.js";
 
 // ---------------------------------------------------------------------------
 // ATTENDANCE CORRECTIONS
@@ -57,15 +57,15 @@ async function person(userId: string) {
 }
 
 // Owner reach: sees every company. A deployment pinned to one company switches it off.
-async function ownerReach(viewerId: string) {
-  return (await viewerIsOwner(viewerId)) && !(await getPinnedCompany());
+async function ownerReach(viewerId: string): Promise<Access> {
+  return accessFor(viewerId);
 }
-const scopeOf = (v: { platformId: string }, owner: boolean) => (owner ? {} : { platformId: v.platformId });
+const scopeOf = (_v: { platformId: string }, access: Access) => scopeWhere(access);
 
 async function decider(viewerId: string) {
   const v = await person(viewerId);
   if (!DECIDERS.includes(String(v.role))) throw new Error("NOT_ALLOWED");
-  return { ...v, owner: await ownerReach(viewerId) };
+  return { ...v, access: await ownerReach(viewerId) };
 }
 
 // --- the rules that decide whether a requested change is possible --------------------
@@ -194,27 +194,20 @@ export async function submitRequest(
   const name = `${ctx.user.firstName} ${ctx.user.lastName}`.trim();
   const recorded = existing ? `In ${clock(existing.loginAt, tz)} / Out ${clock(existing.logoutAt, tz)}` : "No attendance recorded";
   const requested = `In ${reqLogin ? clock(reqLogin, tz) : "unchanged"} / Out ${reqLogout ? clock(reqLogout, tz) : "unchanged"}`;
-  const owners = (await getPinnedCompany()) ? [] : ownerCodes();
-  const hr = await prisma.user.findMany({
-    where: {
-      role: { in: ["HR", "ADMIN"] },
-      status: "ACTIVE",
-      id: { not: userId },
-      OR: [{ platformId: ctx.platformId }, ...(owners.length ? [{ employeeCode: { in: owners } }] : [])],
-    },
-    select: { id: true, email: true },
-  });
+  const hr = await prisma.user.findMany({ where: { id: { in: await deciderIdsForCompany(ctx.platformId, userId) } }, select: { id: true, email: true } });
+  // The manager answers first; HR is told when the manager approves. No manager (or an HR/Admin boss): straight to HR.
+  const approvers = await startStep("CORRECTION", created.id, { id: userId, platformId: ctx.platformId }).catch((e) => { console.error("[corrections] manager step not created:", e); return [] as string[]; });
   const notified = await notifyUsers({
     platformId: ctx.platformId,
-    userIds: hr.map((h) => h.id),
+    userIds: approvers.length ? approvers : hr.map((h) => h.id),
     type: "CORRECTION_SUBMITTED",
-    title: `Attendance correction: ${name}`,
+    title: approvers.length ? `Attendance correction for your approval: ${name}` : `Attendance correction: ${name}`,
     body: `${name} (${ctx.user.employeeCode ?? "no ID"}) asked to correct ${dateIso}: ${TYPE_LABEL[type]}. Recorded: ${recorded}. Requested: ${requested}. Reason: ${reason}`,
     link: `/dashboard/corrections?id=${created.id}`,
     data: { requestId: created.id },
   });
   const mail = correctionSubmittedEmail({ company: ctx.user.platform.name, employee: name, employeeCode: ctx.user.employeeCode ?? "no ID", date: dateIso, typeLabel: TYPE_LABEL[type], recorded, requested, reason });
-  await Promise.allSettled(hr.filter((h) => h.email && !h.email.endsWith(".local")).map((h) => sendMail({ to: h.email, ...mail })));
+  if (approvers.length === 0) await Promise.allSettled(hr.filter((h) => h.email && !h.email.endsWith(".local")).map((h) => sendMail({ to: h.email, ...mail })));
 
   return { id: created.id, status: "PENDING", notified };
 }
@@ -253,7 +246,8 @@ export async function listMine(userId: string) {
     take: 100,
     include: { reviewedBy: { select: { firstName: true, lastName: true } } },
   });
-  return { timezone: me.platform.timezone, windowDays: WINDOW_DAYS, requests: rows.map(view) };
+  const steps = await stepViews("CORRECTION", rows.map((r) => r.id));
+  return { timezone: me.platform.timezone, windowDays: WINDOW_DAYS, requests: rows.map((r) => ({ ...view(r), managerStep: steps.get(r.id) ?? null })) };
 }
 
 export async function cancelRequest(userId: string, id: string) {
@@ -268,7 +262,7 @@ export async function cancelRequest(userId: string, id: string) {
 
 export async function pendingCount(viewerId: string) {
   const v = await decider(viewerId);
-  return { pending: await prisma.attendanceCorrectionRequest.count({ where: { ...scopeOf(v, v.owner), status: "PENDING" } }) };
+  return { pending: await prisma.attendanceCorrectionRequest.count({ where: { ...scopeOf(v, v.access), status: "PENDING" } }) };
 }
 
 export async function listForReview(
@@ -284,7 +278,7 @@ export async function listForReview(
   const teamId = f.teamId ? String(f.teamId) : "";
 
   const where = {
-    ...scopeOf(v, v.owner),
+    ...scopeOf(v, v.access),
     ...(status ? { status } : {}),
     ...(from || to ? { date: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
     user: {
@@ -303,11 +297,12 @@ export async function listForReview(
         reviewedBy: { select: { firstName: true, lastName: true } },
       },
     }),
-    prisma.attendanceCorrectionRequest.groupBy({ by: ["status"], where: scopeOf(v, v.owner), _count: true }),
-    prisma.team.findMany({ where: { ...scopeOf(v, v.owner), isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.attendanceCorrectionRequest.groupBy({ by: ["status"], where: scopeOf(v, v.access), _count: true }),
+    prisma.team.findMany({ where: { ...scopeOf(v, v.access), isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
   const counts: Record<string, number> = { PENDING: 0, APPROVED: 0, REJECTED: 0, CANCELLED: 0 };
   for (const g of grouped) counts[String(g.status)] = g._count;
+  const steps = await stepViews("CORRECTION", rows.map((r) => r.id));
 
   return {
     timezone: (await person(viewerId)).platform.timezone,
@@ -315,6 +310,7 @@ export async function listForReview(
     teams,
     requests: rows.map((r) => ({
       ...view(r),
+      managerStep: steps.get(r.id) ?? null,
       employee: { id: r.user.id, name: `${r.user.firstName} ${r.user.lastName}`.trim(), employeeCode: r.user.employeeCode, designation: r.user.designation },
     })),
   };
@@ -323,9 +319,9 @@ export async function listForReview(
 export async function details(viewerId: string, id: string) {
   const v = await person(viewerId);
   const isDecider = DECIDERS.includes(String(v.role));
-  const owner = isDecider && (await ownerReach(viewerId));
+  const access: Access = isDecider ? await ownerReach(viewerId) : { all: false, ids: [v.platformId] };
   const r = await prisma.attendanceCorrectionRequest.findFirst({
-    where: { id, ...scopeOf(v, owner), ...(isDecider ? {} : { userId: v.id }) },
+    where: { id, ...scopeOf(v, access), ...(isDecider ? {} : { userId: v.id }) },
     include: {
       user: { select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true } },
       reviewedBy: { select: { firstName: true, lastName: true } },
@@ -337,9 +333,11 @@ export async function details(viewerId: string, id: string) {
     where: { userId_date: { userId: r.userId, date: r.date } },
     select: { loginAt: true, logoutAt: true, status: true, productiveSeconds: true, breakSeconds: true, wasLateLogin: true, lateByMinutes: true },
   });
+  const step = (await stepViews("CORRECTION", [r.id])).get(r.id) ?? null;
   return {
     timezone: v.platform.timezone,
     ...view(r),
+    managerStep: step,
     employee: { id: r.user.id, name: `${r.user.firstName} ${r.user.lastName}`.trim(), employeeCode: r.user.employeeCode, designation: r.user.designation },
     current,
     audits: r.audits.map((a) => ({ id: a.id, action: a.action, before: a.before, after: a.after, by: `${a.actedBy.firstName} ${a.actedBy.lastName}`.trim(), at: a.createdAt })),
@@ -350,25 +348,31 @@ export async function details(viewerId: string, id: string) {
 export async function openAttachment(viewerId: string, id: string) {
   const v = await person(viewerId);
   const isDecider = DECIDERS.includes(String(v.role));
-  const owner = isDecider && (await ownerReach(viewerId));
+  const access: Access = isDecider ? await ownerReach(viewerId) : { all: false, ids: [v.platformId] };
+  // The person themself, HR/Admin, or a manager asked in the manager step may open the evidence.
+  const asManager = !isDecider && String(v.role) === "MANAGER" && (await isApproverOf("CORRECTION", id, v.id));
   const r = await prisma.attendanceCorrectionRequest.findFirst({
-    where: { id, ...scopeOf(v, owner), ...(isDecider ? {} : { userId: v.id }) },
+    where: { id, ...scopeOf(v, access), ...(isDecider || asManager ? {} : { userId: v.id }) },
     select: { attachmentKey: true, attachmentName: true },
   });
   if (!r?.attachmentKey) throw new Error("NOT_FOUND");
   return { buffer: await readStored(r.attachmentKey), fileName: r.attachmentName ?? "evidence", mimeType: contentTypeFor(r.attachmentKey) };
 }
 
-export async function decide(viewerId: string, id: string, decision: unknown, comment: unknown) {
+export async function decide(viewerId: string, id: string, decision: unknown, comment: unknown, skip: { skipManager?: unknown; skipReason?: unknown } = {}) {
   const v = await decider(viewerId);
   if (decision !== "APPROVE" && decision !== "REJECT") throw new Error("BAD_DECISION");
   const text = String(comment ?? "").trim().slice(0, 500) || null;
   if (decision === "REJECT" && (!text || text.length < 3)) throw new Error("COMMENT_REQUIRED");
 
-  const req = await prisma.attendanceCorrectionRequest.findFirst({ where: { id, ...scopeOf(v, v.owner) } });
+  const req = await prisma.attendanceCorrectionRequest.findFirst({ where: { id, ...scopeOf(v, v.access) } });
   if (!req) throw new Error("NOT_FOUND");
   if (req.userId === v.id) throw new Error("OWN_REQUEST");
   if (String(req.status) !== "PENDING") throw new Error("ALREADY_DECIDED");
+  // The manager answers first. HR can approve only after the manager approved (or, with a written reason, without the manager);
+  // a manager's rejection can never be turned into an approval.
+  const skipReason = await gateForHr("CORRECTION", id, v.id, { ...skip, decision });
+  const viaSkip = skipReason ? ` (decided without the manager: ${skipReason})` : "";
 
   const approve = decision === "APPROVE";
   const ctx = await getContext(req.userId, { ignoreLock: true });
@@ -465,7 +469,7 @@ export async function decide(viewerId: string, id: string, decision: unknown, co
     targetUserId: req.userId,
     before: approve ? (applied as { before: unknown } | null)?.before : { status: "PENDING" },
     after: approve ? (applied as { after: unknown } | null)?.after : { status: "REJECTED", comment: text },
-    summary: `${approve ? "Approved" : "Rejected"} the ${TYPE_LABEL[String(req.correctionType)].toLowerCase()} correction for ${dateIso}`,
+    summary: `${approve ? "Approved" : "Rejected"} the ${TYPE_LABEL[String(req.correctionType)].toLowerCase()} correction for ${dateIso}${viaSkip}`,
   });
 
   // ---- tell the employee (never allowed to undo the decision) ----
@@ -485,5 +489,100 @@ export async function decide(viewerId: string, id: string, decision: unknown, co
   }
 
   return { status: approve ? "APPROVED" : "REJECTED" };
+}
+
+// --- manager step ---------------------------------------------------------------------------
+
+async function managerOnly(managerId: string) {
+  const m = await person(managerId);
+  if (String(m.role) !== "MANAGER") throw new Error("NOT_ALLOWED");
+  return m;
+}
+
+// Requests waiting for this manager, and the ones they answered recently.
+export async function managerRequests(managerId: string) {
+  const m = await managerOnly(managerId);
+  const rows = await rowsForManager("CORRECTION", managerId);
+  const ids = [...new Set(rows.map((r) => r.requestId))];
+  const reqs = ids.length
+    ? await prisma.attendanceCorrectionRequest.findMany({
+        where: { id: { in: ids }, platformId: m.platformId },
+        include: {
+          user: { select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true } },
+          reviewedBy: { select: { firstName: true, lastName: true } },
+        },
+      })
+    : [];
+  const byId = new Map(reqs.map((r) => [r.id, r]));
+  const steps = await stepViews("CORRECTION", ids);
+  const one = (id: string) => {
+    const r = byId.get(id);
+    if (!r) return null;
+    return {
+      ...view(r),
+      managerStep: steps.get(id) ?? null,
+      employee: { id: r.user.id, name: `${r.user.firstName} ${r.user.lastName}`.trim(), employeeCode: r.user.employeeCode, designation: r.user.designation },
+    };
+  };
+  const pending = rows.filter((r) => r.status === "PENDING").map((r) => one(r.requestId)).filter((x) => x && x.status === "PENDING");
+  const answered = rows.filter((r) => r.status !== "PENDING").map((r) => one(r.requestId)).filter(Boolean);
+  return { timezone: m.platform.timezone, pending, answered };
+}
+
+export async function managerDecide(managerId: string, id: string, decision: unknown, comment: unknown) {
+  const m = await managerOnly(managerId);
+  if (decision !== "APPROVE" && decision !== "REJECT") throw new Error("BAD_DECISION");
+  const text = String(comment ?? "").trim().slice(0, 500) || null;
+  if (decision === "REJECT" && (!text || text.length < 3)) throw new Error("COMMENT_REQUIRED");
+
+  const req = await prisma.attendanceCorrectionRequest.findFirst({ where: { id, platformId: m.platformId } });
+  if (!req) throw new Error("NOT_FOUND");
+  if (String(req.status) !== "PENDING") throw new Error("ALREADY_DECIDED");
+  await claimStep({ kind: "CORRECTION", requestId: id, managerId, requesterId: req.userId, decision, note: text });
+
+  const dateIso = iso(req.date);
+  const label = TYPE_LABEL[String(req.correctionType)];
+  const employee = await person(req.userId);
+  const name = `${employee.firstName} ${employee.lastName}`.trim();
+  if (decision === "REJECT") {
+    // The manager's rejection closes the request. Nothing about attendance changes.
+    await prisma.attendanceCorrectionRequest.updateMany({ where: { id, status: "PENDING" }, data: { status: "REJECTED", reviewedById: managerId, reviewedAt: new Date(), reviewComment: text } });
+    auditNote({ recordType: "AttendanceCorrection", recordId: id, targetUserId: req.userId, before: { status: "PENDING" }, after: { status: "REJECTED", by: "manager", comment: text }, summary: `Manager rejected the ${label.toLowerCase()} correction for ${dateIso}` });
+    await notifyUsers({
+      platformId: req.platformId,
+      userIds: [req.userId],
+      type: "CORRECTION_DECIDED",
+      title: "Attendance correction not approved",
+      body: `Your correction for ${dateIso} (${label}) was not approved by your manager.${text ? ` Comment: ${text}` : ""}`,
+      link: "/dashboard/corrections",
+      data: { requestId: id },
+    });
+    return { status: "REJECTED" };
+  }
+  auditNote({ recordType: "AttendanceCorrection", recordId: id, targetUserId: req.userId, before: { managerStep: "PENDING" }, after: { managerStep: "APPROVED", comment: text }, summary: `Manager approved the ${label.toLowerCase()} correction for ${dateIso}; waiting for HR` });
+  try {
+    const hr = (await deciderIdsForCompany(req.platformId, req.userId)).map((id) => ({ id }));
+    await notifyUsers({
+      platformId: req.platformId,
+      userIds: hr.map((h) => h.id),
+      type: "CORRECTION_SUBMITTED",
+      title: `Attendance correction ready for HR: ${name}`,
+      body: `${name} (${employee.employeeCode ?? "no ID"}): ${label} on ${dateIso}. Their manager approved it${text ? `: ${text}` : ""}. HR decides now.`,
+      link: `/dashboard/corrections?id=${id}`,
+      data: { requestId: id },
+    });
+    await notifyUsers({
+      platformId: req.platformId,
+      userIds: [req.userId],
+      type: "CORRECTION_DECIDED",
+      title: "Your manager approved your correction",
+      body: `Your correction for ${dateIso} (${label}) was approved by your manager. It is now waiting for HR.`,
+      link: "/dashboard/corrections",
+      data: { requestId: id },
+    });
+  } catch (e) {
+    console.error("[corrections] could not notify after manager step:", e);
+  }
+  return { status: "WAITING_FOR_HR" };
 }
 

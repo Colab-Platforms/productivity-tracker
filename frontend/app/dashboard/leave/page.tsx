@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
+import { ManagerDecisionBox, SkipManagerBox, StepNote, stepBadge, type ManagerStep } from "../_approvals/ManagerStep";
 
 // ---------------------------------------------------------------------------
 // LEAVE
@@ -27,9 +28,11 @@ type Request = {
   decisionNote: string | null;
   decidedBy: string | null;
   createdAt: string;
+  managerStep?: ManagerStep;
 };
 type Mine = { year: number; taken: Taken; pending: number; requests: Request[] };
 type Review = Request & { person: { id: string; name: string; employeeCode: string | null; designation: string | null }; takenThisYear: Taken };
+type TeamLeave = { year: number; pending: Review[]; answered: Review[] };
 type Summary = { year: number; people: { id: string; name: string; employeeCode: string | null; designation: string | null; taken: Taken; pending: number }[] };
 type PersonDetail = {
   year: number;
@@ -69,8 +72,8 @@ function useApi<T>(path: string | null, reload: number) {
   return { data: res?.data ?? null, error: res && res.path === path ? (res.error ?? "") : "", loading: path !== null && res?.path !== path };
 }
 
-function Badge({ status }: { status: string }) {
-  return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[status] ?? ""}`}>{STATUS_LABEL[status] ?? status}</span>;
+function Badge({ status, step }: { status: string; step?: ManagerStep }) {
+  return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[status] ?? ""}`}>{stepBadge(status, step) ?? STATUS_LABEL[status] ?? status}</span>;
 }
 
 function TakenChips({ t }: { t: Taken }) {
@@ -91,7 +94,8 @@ function TakenChips({ t }: { t: Taken }) {
 export default function LeavePage() {
   const me = useMe();
   const isHr = me?.role === "HR" || me?.role === "ADMIN";
-  const [tab, setTab] = useState<"mine" | "review" | "taken">("mine");
+  const isManager = me?.role === "MANAGER";
+  const [tab, setTab] = useState<"mine" | "review" | "taken" | "team">("mine");
   const [reload, setReload] = useState(0);
   const [asking, setAsking] = useState(false);
   const [notice, setNotice] = useState("");
@@ -103,6 +107,9 @@ export default function LeavePage() {
   const review = useApi<{ requests: Review[] }>(isHr && tab === "review" ? `/leave/requests?status=${status}` : null, reload);
   const pendingCount = useApi<{ requests: Review[] }>(isHr ? "/leave/requests?status=PENDING" : null, reload);
 
+  // Manager step: requests from the people who report to this manager.
+  const team = useApi<TeamLeave>(isManager ? "/leave/manager/requests" : null, reload);
+
   const [year, setYear] = useState(new Date().getFullYear());
   const [search, setSearch] = useState("");
   const summary = useApi<Summary>(isHr && tab === "taken" ? `/leave/summary?year=${year}` : null, reload);
@@ -112,12 +119,27 @@ export default function LeavePage() {
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [note, setNote] = useState("");
 
-  async function decide(id: string, decision: "APPROVE" | "REJECT") {
+  async function managerDecide(id: string, decision: "APPROVE" | "REJECT", comment: string) {
     if (busyId) return;
     setBusyId(id);
     setActionError("");
     try {
-      await apiPost(`/leave/requests/${id}/decide`, { decision, note });
+      await apiPost(`/leave/manager/requests/${id}/decide`, { decision, note: comment });
+      setNotice(decision === "APPROVE" ? "Approved. HR has been told and makes the final decision." : "Rejected. The employee has been told.");
+      setReload((n) => n + 1);
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function decide(id: string, decision: "APPROVE" | "REJECT", skipReason?: string) {
+    if (busyId) return;
+    setBusyId(id);
+    setActionError("");
+    try {
+      await apiPost(`/leave/requests/${id}/decide`, { decision, note, ...(skipReason ? { skipManager: true, skipReason } : {}) });
       setNotice(decision === "APPROVE" ? "Leave approved. Those days now count as leave in reports." : "Leave rejected.");
       setNoteFor(null);
       setNote("");
@@ -150,9 +172,12 @@ export default function LeavePage() {
   }, [summary.data, search]);
 
   const card = "rounded-2xl bg-white shadow-[var(--shadow-card)]";
+  const waitingForMe = team.data?.pending.length ?? 0;
   const tabs: [typeof tab, string][] = isHr
     ? [["mine", "My leave"], ["review", `Requests to review${pendingCount.data?.requests.length ? ` (${pendingCount.data.requests.length})` : ""}`], ["taken", "Leave taken"]]
-    : [["mine", "My leave"]];
+    : isManager
+      ? [["mine", "My leave"], ["team", `Team requests${waitingForMe ? ` (${waitingForMe})` : ""}`]]
+      : [["mine", "My leave"]];
 
   return (
     <div className="page-fluid space-y-6 p-8">
@@ -210,9 +235,10 @@ export default function LeavePage() {
                         {r.decisionNote && <> · “{r.decisionNote}”</>}
                       </p>
                     )}
+                    <StepNote step={r.managerStep} />
                   </div>
                   <div className="flex items-center gap-3">
-                    <Badge status={r.status} />
+                    <Badge status={r.status} step={r.managerStep} />
                     {r.status === "PENDING" && (
                       <button disabled={busyId === r.id} onClick={() => cancel(r.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                         Cancel
@@ -256,10 +282,14 @@ export default function LeavePage() {
                     <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
                     <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} days</p>
                     {r.decidedBy && <p className="mt-1 text-xs text-slate-400">Decided by {r.decidedBy}{r.decisionNote ? ` · “${r.decisionNote}”` : ""}</p>}
+                    <StepNote step={r.managerStep} />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge status={r.status} />
-                    {r.status === "PENDING" && r.person.id !== me?.id && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge status={r.status} step={r.managerStep} />
+                    {r.status === "PENDING" && r.person.id !== me?.id && r.managerStep?.status === "PENDING" && (
+                      <SkipManagerBox busy={busyId === r.id} onDecide={(d, reason) => decide(r.id, d, reason)} />
+                    )}
+                    {r.status === "PENDING" && r.person.id !== me?.id && r.managerStep?.status !== "PENDING" && (
                       <>
                         <button disabled={busyId === r.id} onClick={() => decide(r.id, "APPROVE")} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
                           Approve
@@ -283,6 +313,48 @@ export default function LeavePage() {
               </div>
             ))}
           </div>
+        </section>
+      )}
+
+      {/* ---------------- Manager: requests from my team ---------------- */}
+      {tab === "team" && isManager && (
+        <section className={`${card} p-6`}>
+          <h2 className="font-semibold text-slate-900">Requests from your team</h2>
+          <p className="mt-1 text-sm text-slate-500">You answer first. If you approve, HR makes the final decision; if you reject, it is closed.</p>
+          {team.error && <p className="mt-3 text-sm text-red-600">{team.error}</p>}
+          {team.data && team.data.pending.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">Nothing is waiting for you.</p>}
+          <div className="mt-4 divide-y divide-indigo-100">
+            {team.data?.pending.map((r) => (
+              <div key={r.id} className="py-4">
+                <p className="font-medium text-slate-900">
+                  {r.person.name} <span className="text-sm font-normal text-slate-400">{r.person.employeeCode}{r.person.designation ? ` · ${r.person.designation}` : ""}</span>
+                </p>
+                <p className="mt-0.5 text-sm text-slate-700">
+                  {range(r)} · {num(r.dayCount)} {r.dayCount === 1 ? "day" : "days"} · {TYPE_LABEL[r.leaveType] ?? r.leaveType}
+                  {r.isHalfDay && ` (${r.isFirstHalf ? "first" : "second"} half)`}
+                </p>
+                <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
+                <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} days</p>
+                <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => managerDecide(r.id, d, c)} />
+              </div>
+            ))}
+          </div>
+          {team.data && team.data.answered.length > 0 && (
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold text-slate-900">Answered by you</h3>
+              <div className="mt-2 divide-y divide-indigo-100">
+                {team.data.answered.map((r) => (
+                  <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{r.person.name} <span className="font-normal text-slate-400">· {range(r)}</span></p>
+                      <StepNote step={r.managerStep} />
+                    </div>
+                    <Badge status={r.status} step={r.managerStep} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 

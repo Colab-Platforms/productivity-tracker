@@ -14,6 +14,8 @@ import { requireAuth, requireRole } from "../../middlewares/auth.js";
 import * as admin from "./admin.service.js";
 import * as importer from "./employeeImport.service.js";
 import * as updater from "./employeeUpdate.service.js";
+import * as editor from "./employeeEdit.service.js";
+import * as companyAdmin from "./companyAdmin.service.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 
 const router = Router();
@@ -48,6 +50,28 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   UPDATE_FAILED: { status: 500, message: "The update failed and was rolled back. Nothing was changed. Please review and try again." },
   IMPORT_FAILED: { status: 500, message: "The import failed and was rolled back. Nothing was saved. Please review and try again." },
   MANAGER_UNRESOLVED: { status: 500, message: "A reporting manager could not be linked. Nothing was saved." },
+  // employee edit, IDs, designations, company access
+  EMPLOYEE_CODE_LOCKED: { status: 403, message: "An employee ID never changes." },
+  EMPLOYEE_CODE_ADMIN_ONLY: { status: 403, message: "Employee IDs are generated automatically. Only an Admin can enter one by hand." },
+  CODE_TAKEN: { status: 409, message: "That employee ID is already in use." },
+  CODE_ALLOCATION_FAILED: { status: 500, message: "Could not allocate an employee ID. Nothing was saved. Please try again." },
+  COMPANY_TRANSFER_NOT_SUPPORTED: { status: 400, message: "A person's company cannot be changed here, because their attendance, tasks and leave belong to it." },
+  DUPLICATE_PERSON: { status: 409, message: "Someone with this name already works in this company. If this is a different person, confirm it and save again." },
+  BAD_EMAIL: { status: 400, message: "Enter a valid email address." },
+  BAD_SALARY: { status: 400, message: "Salary must be a number from 0 to 10,000,000." },
+  SALARY_NOT_ALLOWED: { status: 403, message: "Only an Admin or top management can change a salary." },
+  SALARY_OVERWRITE_NEEDS_CONFIRM: { status: 409, message: "This person already has a salary. Confirm that you want to replace it." },
+  DESIGNATION_OVERWRITE_NEEDS_CONFIRM: { status: 409, message: "This person already has a designation. Confirm that you want to replace it." },
+  DESIGNATION_NOT_IN_LIST: { status: 400, message: "Pick a designation from this company's list, or add it to the list first." },
+  DESIGNATION_EXISTS: { status: 409, message: "That designation already exists in this company." },
+  BAD_NAME: { status: 400, message: "A name must be 2 to 80 characters." },
+  BAD_MANAGER: { status: 400, message: "Pick an active manager or admin of the same company, other than the person themselves." },
+  MANAGER_CYCLE: { status: 400, message: "That would make two people report to each other." },
+  BAD_EMPLOYMENT_TYPE: { status: 400, message: "Pick a valid employee type." },
+  FEATURES_NOT_READY: { status: 503, message: "This feature is not set up on this server yet. Ask an administrator to finish the database update." },
+  ACCESS_NOT_ALLOWED: { status: 403, message: "Only top management can change which companies a person can act on, and nobody can change their own." },
+  ACCESS_ONLY_HR_ADMIN: { status: 400, message: "Company access can only be given to HR and Admin accounts." },
+  NOTHING_TO_UPDATE_DESIGNATION: { status: 400, message: "Nothing to update." },
 };
 
 function fail(res: any, error: unknown) {
@@ -158,12 +182,77 @@ router.post("/employees/commit", async (req, res) => {
 
 // --- people ----------------------------------------------------------------
 
+// Edit Employee: the companies you may pick from, one person's edit model (details + permissions + dropdowns of THEIR company), and
+// the dropdown choices of a company. Fixed paths first so they are never read as an :id.
+router.get("/employees/companies", async (req, res) => {
+  try {
+    res.json(await editor.companiesFor(req.user!.userId));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+router.get("/employees/dropdowns", async (req, res) => {
+  try {
+    res.json(await editor.dropdownsFor(req.user!.userId, String(req.query.companyId ?? "")));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+router.get("/employees/:id/edit", async (req, res) => {
+  try {
+    res.json(await editor.editModel(req.user!.userId, id(req.params.id)));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+// Designation lists (one per company) and company access (top management only).
+router.get("/designations", async (req, res) => {
+  try {
+    res.json(await companyAdmin.listDesignations(req.user!.userId, req.query.companyId ? String(req.query.companyId) : undefined));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+router.post("/designations", async (req, res) => {
+  try {
+    res.status(201).json(await companyAdmin.addDesignation(req.user!.userId, req.body ?? {}));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+router.patch("/designations/:id", async (req, res) => {
+  try {
+    res.json(await companyAdmin.updateDesignation(req.user!.userId, id(req.params.id), req.body ?? {}));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+router.get("/company-access", async (req, res) => {
+  try {
+    res.json(await companyAdmin.listAccess(req.user!.userId));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+// PUT is the proper verb; POST does the same so the browser's plain post helper can call it.
+for (const verb of ["put", "post"] as const) {
+  router[verb]("/company-access/:userId", async (req, res) => {
+    try {
+      res.json(await companyAdmin.setAccess(req.user!.userId, id(req.params.userId), req.body ?? {}));
+    } catch (e) {
+      fail(res, e);
+    }
+  });
+}
+
 router.get("/users", async (req, res) => {
   try {
     const users = await admin.listUsers(req.user!.userId, {
       search: req.query.search ? String(req.query.search) : undefined,
       role: req.query.role ? String(req.query.role) : undefined,
       status: req.query.status ? String(req.query.status) : undefined,
+      companyId: req.query.companyId ? String(req.query.companyId) : undefined,
     });
     res.json({ users });
   } catch (e) {
@@ -182,8 +271,8 @@ router.post("/users", async (req, res) => {
 
 router.patch("/users/:id", async (req, res) => {
   try {
-    await admin.updateUser(req.user!.userId, id(req.params.id), req.body ?? {});
-    res.json({ ok: true });
+    const out = await editor.updateEmployee(req.user!.userId, id(req.params.id), req.body ?? {});
+    res.json({ ok: true, changed: out.changed });
   } catch (e) {
     fail(res, e);
   }

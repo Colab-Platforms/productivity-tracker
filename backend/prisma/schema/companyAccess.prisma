@@ -1,0 +1,47 @@
+// ===========================================================================
+// HR & COMPANY MANAGEMENT (Phase 1) - NEW TABLES ONLY, no column added to any existing table.
+//
+//  company_access          which companies a person may act on besides their own. A row with no company means ALL companies
+//                          (top management). HR gets rows for exactly the companies assigned to them. No relation to existing
+//                          models on purpose; the foreign keys live in the migration SQL.
+//  employee_code_sequences one counter per company, so new employee IDs are unique and safe when two people are created at the
+//                          same instant (the row is locked while a number is handed out). Seeded from each company's highest
+//                          existing number; existing IDs are never touched.
+//  designations            the company's list of job titles for the dropdown. People keep whatever designation they already have.
+//
+// The migration also adds three INDEXES (no columns): company names, team names per company and company prefixes cannot repeat
+// when compared without regard to upper/lower case.
+// ===========================================================================
+
+model CompanyAccess {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  platformId  String?  @db.Uuid // null = every company
+  grantedById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, platformId])
+  @@index([userId])
+  @@map("company_access")
+}
+
+model EmployeeCodeSequence {
+  platformId String   @id @db.Uuid
+  nextNumber Int      @default(1)
+  padWidth   Int      @default(4)
+  updatedAt  DateTime @updatedAt
+
+  @@map("employee_code_sequences")
+}
+
+model Designation {
+  id          String   @id @default(uuid()) @db.Uuid
+  platformId  String   @db.Uuid
+  name        String
+  isActive    Boolean  @default(true)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@index([platformId, isActive])
+  @@map("designations")
+}

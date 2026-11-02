@@ -144,6 +144,8 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
 
   const companyId = form.companyId || lookups?.defaultCompanyId || "";
   const company = lookups?.companies.find((c) => c.id === companyId);
+  // This company's own list of job titles, when it has one.
+  const designationList = (lookups?.designations ?? []).filter((d) => d.platformId === companyId).map((d) => d.name);
 
   const teams = useMemo(() => (lookups?.teams ?? []).filter((t) => t.platformId === companyId), [lookups, companyId]);
   // A manager may sit in another company, so this list is not filtered by it.
@@ -167,8 +169,8 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
   function localErrors(): Errors {
     const e: Errors = {};
     if (!form.fullName.trim()) e.fullName = "Full name is required.";
-    if (!form.employeeId.trim()) e.employeeId = "Employee ID is required.";
-    else if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,29}$/.test(form.employeeId.trim())) e.employeeId = "Use letters, numbers, dot, dash or underscore, with no spaces.";
+    // A blank ID is fine: the company's next ID is generated when saved.
+    if (form.employeeId.trim() && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,29}$/.test(form.employeeId.trim())) e.employeeId = "Use letters, numbers, dot, dash or underscore, with no spaces.";
     if (!companyId) e.companyId = "Choose a company.";
     if (!form.designation.trim()) e.designation = "Designation is required.";
     if (!form.email.trim() && !form.noEmail) e.email = "Enter a work email, or tick “No work email”.";
@@ -220,6 +222,7 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
       options: {
         // The form says what each blank means, so these are visible choices:
         blankEmailUsesPlaceholder: form.noEmail,
+        blankIdIsGenerated: !form.employeeId.trim(),
         blankTeamIsNone: true, // "Team" is optional here
         createMissingShifts: form.shiftMode === "custom" && form.createShift,
         onboarding: form.onboarding,
@@ -390,9 +393,9 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
               <Label htmlFor="ae-name" required>Full name</Label>
               <input id="ae-name" value={form.fullName} onChange={(e) => set("fullName", e.target.value)} className={inputCls(!!errors.fullName)} placeholder="e.g. Priya Nair" autoComplete="off" />
             </Field>
-            <Field error={errors.employeeId} hint="Typed exactly as given. It is never renumbered.">
-              <Label htmlFor="ae-id" required>Employee ID</Label>
-              <input id="ae-id" value={form.employeeId} onChange={(e) => set("employeeId", e.target.value)} className={inputCls(!!errors.employeeId)} placeholder="e.g. AVT-0007" autoComplete="off" />
+            <Field error={errors.employeeId} hint={form.employeeId.trim() ? "Typed exactly as given. It is never renumbered." : `Leave blank: the next ID${company?.name ? ` for ${company.name}` : ""} is generated automatically when you save.`}>
+              <Label htmlFor="ae-id">Employee ID</Label>
+              <input id="ae-id" value={form.employeeId} onChange={(e) => set("employeeId", e.target.value)} className={inputCls(!!errors.employeeId)} placeholder="Generated automatically" autoComplete="off" />
             </Field>
             <Field error={errors.email} hint={form.noEmail ? "They will sign in with their employee ID." : undefined}>
               <Label htmlFor="ae-email" required={!form.noEmail}>Work email</Label>
@@ -412,7 +415,14 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
             </Field>
             <Field error={errors.designation}>
               <Label htmlFor="ae-designation" required>Designation</Label>
+              {designationList.length > 0 ? (
+                <select id="ae-designation" value={form.designation} onChange={(e) => set("designation", e.target.value)} className={inputCls(!!errors.designation)}>
+                  <option value="">Choose a designation…</option>
+                  {designationList.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              ) : (
               <input id="ae-designation" value={form.designation} onChange={(e) => set("designation", e.target.value)} className={inputCls(!!errors.designation)} placeholder="e.g. Associate" autoComplete="off" />
+              )}
             </Field>
             <Field error={errors.teamId} hint={teams.length === 0 ? "This company has no teams yet. Add one in Admin → Teams." : "Optional. Their main team."}>
               <Label htmlFor="ae-team">Team / Department</Label>

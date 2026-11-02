@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
 
@@ -24,6 +24,7 @@ type Company = {
   isPinned: boolean;
   employees: number | null;
   canEdit: boolean;
+  canSetPrefix?: boolean;
 };
 type Data = { pinnedTo: { id: string; name: string } | null; canCreate: boolean; companies: Company[] };
 
@@ -119,6 +120,9 @@ export default function CompaniesPage() {
         </div>
       </section>
 
+      {data && <DesignationsPanel companies={data.companies} />}
+      <AccessPanel />
+
       {editing && (
         <CompanyModal
           company={editing === "new" ? null : editing}
@@ -131,6 +135,167 @@ export default function CompaniesPage() {
         />
       )}
     </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// DESIGNATIONS: the job titles offered in each company's dropdowns. Adding or renaming one never changes what a person already has.
+// ---------------------------------------------------------------------------
+type DesignationRow = { id: string; name: string; isActive: boolean; people: number };
+
+function DesignationsPanel({ companies }: { companies: Company[] }) {
+  const mine = companies.filter((c) => c.canEdit && c.isActive);
+  const [companyId, setCompanyId] = useState("");
+  const [rows, setRows] = useState<DesignationRow[]>([]);
+  const [name, setName] = useState("");
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  const active = companyId || mine[0]?.id || "";
+
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    apiGet<{ designations: DesignationRow[] }>(`/admin/designations?companyId=${active}`)
+      .then((d) => live && setRows(d.designations))
+      .catch((e: Error) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [active, reload]);
+
+  async function run(fn: () => Promise<unknown>) {
+    setError("");
+    try {
+      await fn();
+      setName("");
+      setRenaming(null);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  if (mine.length === 0) return null;
+  const input = "rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-800";
+  return (
+    <section className="rounded-2xl bg-white p-6 shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-slate-900">Designations</h2>
+          <p className="mt-0.5 text-sm text-slate-500">The job titles offered when adding or editing people. Changing the list never changes what someone already has.</p>
+        </div>
+        <select aria-label="Company" value={active} onChange={(e) => setCompanyId(e.target.value)} className={input}>
+          {mine.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+      {error && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} placeholder="Add a designation" className={`${input} w-64`} />
+        <button disabled={name.trim().length < 2} onClick={() => run(() => apiPost("/admin/designations", { companyId: active, name }))} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Add</button>
+      </div>
+      {rows.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">No list yet for this company. Until you add one, designations are typed freely.</p>}
+      <ul className="mt-4 divide-y divide-indigo-100">
+        {rows.map((d) => (
+          <li key={d.id} className={`flex flex-wrap items-center justify-between gap-2 py-2.5 ${d.isActive ? "" : "opacity-60"}`}>
+            {renaming?.id === d.id ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <input value={renaming.name} maxLength={80} onChange={(e) => setRenaming({ id: d.id, name: e.target.value })} className={`${input} w-64`} />
+                <button onClick={() => run(() => apiPatch(`/admin/designations/${d.id}`, { name: renaming.name }))} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white">Save</button>
+                <button onClick={() => setRenaming(null)} className="rounded-lg px-3 py-1.5 text-xs text-slate-500">Cancel</button>
+              </span>
+            ) : (
+              <span className="text-sm text-slate-800">{d.name} <span className="text-xs text-slate-400">· {d.people} {d.people === 1 ? "person" : "people"}</span>{!d.isActive && <span className="ml-2 text-xs text-slate-400">(hidden from dropdowns)</span>}</span>
+            )}
+            {renaming?.id !== d.id && (
+              <span className="flex gap-2">
+                <button onClick={() => setRenaming({ id: d.id, name: d.name })} className="rounded-lg border border-indigo-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Rename</button>
+                <button onClick={() => run(() => apiPatch(`/admin/designations/${d.id}`, { isActive: !d.isActive }))} className="rounded-lg border border-indigo-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">{d.isActive ? "Hide" : "Show"}</button>
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// COMPANY ACCESS (top management only): which companies each HR / Admin can act on besides their own.
+// ---------------------------------------------------------------------------
+type AccessPerson = { id: string; name: string; employeeCode: string | null; role: string; ownCompanyId: string; ownCompany: string; all: boolean; companyIds: string[] };
+type AccessData = { ready: boolean; companies: { id: string; name: string }[]; people: AccessPerson[] };
+
+function AccessPanel() {
+  const [data, setData] = useState<AccessData | null>(null);
+  const [allowed, setAllowed] = useState(true);
+  const [draft, setDraft] = useState<Record<string, { all: boolean; companyIds: string[] }>>({});
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    apiGet<AccessData>("/admin/company-access")
+      .then((d) => {
+        if (!live) return;
+        setData(d);
+        setDraft({});
+      })
+      .catch(() => live && setAllowed(false)); // not top management: the section simply does not show
+    return () => {
+      live = false;
+    };
+  }, [reload]);
+
+  if (!allowed || !data) return null;
+  const view = (p: AccessPerson) => draft[p.id] ?? { all: p.all, companyIds: p.companyIds };
+
+  async function save(p: AccessPerson) {
+    setError("");
+    setMsg("");
+    try {
+      await apiPost(`/admin/company-access/${p.id}`, view(p));
+      setMsg(`Saved for ${p.name}.`);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <section className="rounded-2xl bg-white p-6 shadow-[var(--shadow-card)]">
+      <h2 className="font-semibold text-slate-900">Company access</h2>
+      <p className="mt-0.5 text-sm text-slate-500">HR and Admin always reach their own company. Tick more companies to let them act there too, or &ldquo;All companies&rdquo; for top management. Changes apply at once.</p>
+      {!data.ready && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">Company access is not set up on this server yet (database update pending).</p>}
+      {msg && <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{msg}</p>}
+      {error && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      <div className="mt-4 divide-y divide-indigo-100">
+        {data.people.map((p) => {
+          const v = view(p);
+          const dirty = v.all !== p.all || v.companyIds.slice().sort().join() !== p.companyIds.slice().sort().join();
+          return (
+            <div key={p.id} className="py-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-slate-900">{p.name} <span className="font-normal text-slate-400">{p.employeeCode} · {p.role} · {p.ownCompany}</span></p>
+                <button disabled={!dirty || !data.ready} onClick={() => save(p)} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40">Save</button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5">
+                <label className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
+                  <input type="checkbox" checked={v.all} onChange={(e) => setDraft((d) => ({ ...d, [p.id]: { ...view(p), all: e.target.checked } }))} /> All companies
+                </label>
+                {!v.all && data.companies.filter((c) => c.id !== p.ownCompanyId).map((c) => (
+                  <label key={c.id} className="flex items-center gap-1.5 text-sm text-slate-600">
+                    <input type="checkbox" checked={v.companyIds.includes(c.id)} onChange={(e) => setDraft((d) => ({ ...d, [p.id]: { ...view(p), companyIds: e.target.checked ? [...view(p).companyIds, c.id] : view(p).companyIds.filter((x) => x !== c.id) } }))} /> {c.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -193,14 +358,14 @@ function CompanyModal({ company, onClose, onDone }: { company: Company | null; o
         <div className="grid grid-cols-2 gap-3">
           <label className="block text-sm text-slate-600">
             Employee code prefix
-            <input value={prefix} maxLength={8} onChange={(e) => setPrefix(e.target.value.toUpperCase())} placeholder="e.g. AVT" className={input} />
+            <input value={prefix} maxLength={8} disabled={company !== null && company.canSetPrefix === false} onChange={(e) => setPrefix(e.target.value.toUpperCase())} placeholder="e.g. AVT" className={`${input} disabled:bg-slate-50`} />
           </label>
           <label className="block text-sm text-slate-600">
             Timezone
             <input value={timezone} onChange={(e) => setTimezone(e.target.value)} className={input} />
           </label>
         </div>
-        <p className="text-xs text-slate-400">The prefix only affects new employee codes. The timezone decides what &ldquo;today&rdquo; means for attendance, so change it with care.</p>
+        <p className="text-xs text-slate-400">{company && company.canSetPrefix === false ? "Only an Admin or top management can change the prefix. " : ""}The prefix only affects new employee codes; existing IDs never change and two companies cannot share a prefix. The timezone decides what &ldquo;today&rdquo; means for attendance, so change it with care.</p>
         {company && (
           <label className={`flex items-center gap-2 text-sm ${canToggle ? "text-slate-600" : "text-slate-300"}`}>
             <input type="checkbox" checked={active} disabled={!canToggle} onChange={(e) => setActive(e.target.checked)} /> Active (an inactive company is closed to everyone in it)

@@ -80,7 +80,11 @@ type Person = {
   shift: { id: string; name: string } | null;
   reportsTo: { id: string; name: string } | null;
   teams: { id: string; name: string }[];
+  company?: string | null;
+  companyId?: string;
 };
+
+type CompaniesInfo = { all: boolean; ownCompanyId: string; canSwitch: boolean; companies: { id: string; name: string; employeeCodePrefix: string | null }[] };
 
 type TeamRow = {
   id: string;
@@ -261,6 +265,13 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
   const [role, setRole] = useState("");
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Person | "new" | null>(null);
+  // Several companies? Then pick one (or all of them). Someone who can act on a single company sees no picker.
+  const [companies, setCompanies] = useState<CompaniesInfo | null>(null);
+  const [companyId, setCompanyId] = useState("all");
+
+  useEffect(() => {
+    call<CompaniesInfo>("/admin/employees/companies").then(setCompanies).catch(() => setCompanies(null));
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -268,6 +279,7 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
       const query = new URLSearchParams();
       if (search.trim()) query.set("search", search.trim());
       if (role) query.set("role", role);
+      if (companies?.canSwitch && companyId !== "all") query.set("companyId", companyId);
       const data = await call<{ users: Person[] }>(`/admin/users?${query}`);
       setPeople(data.users);
     } catch (e) {
@@ -277,7 +289,7 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
     }
     // onError is stable enough for this page; re-running on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, role]);
+  }, [search, role, companyId, companies]);
 
   // Debounced so typing in the search box doesn't fire a request per keypress.
   useEffect(() => {
@@ -294,6 +306,19 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
           placeholder="Search name, email or code…"
           className="w-64 rounded-xl border border-indigo-200 px-3 py-2 text-sm outline-none focus:border-indigo-500"
         />
+        {companies?.canSwitch && (
+          <select
+            aria-label="Company"
+            value={companyId}
+            onChange={(e) => setCompanyId(e.target.value)}
+            className="rounded-xl border border-indigo-200 px-3 py-2 text-sm"
+          >
+            <option value="all">{companies.all ? "All companies" : "All my companies"}</option>
+            {companies.companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        )}
         <select
           value={role}
           onChange={(e) => setRole(e.target.value)}
@@ -326,6 +351,7 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
             <tr>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Code</th>
+              {companies?.canSwitch && companyId === "all" && <th className="px-4 py-3">Company</th>}
               <th className="px-4 py-3">Role / Designation</th>
               <th className="px-4 py-3">Team</th>
               <th className="px-4 py-3">Reports to</th>
@@ -341,6 +367,7 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
                   <div className="text-xs text-slate-500">{p.email}</div>
                 </td>
                 <td className="px-4 py-3 text-slate-600">{p.employeeCode ?? "—"}</td>
+                {companies?.canSwitch && companyId === "all" && <td className="px-4 py-3 text-slate-600">{p.company ?? "—"}</td>}
                 <td className="px-4 py-3 text-slate-600" title={`System role (permissions): ${p.role.toLowerCase()}`}>
                   {p.designation?.trim() ? p.designation : <span className="text-slate-400">Not Assigned</span>}
                 </td>
@@ -380,9 +407,21 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
         )}
       </div>
 
-      {editing && (
+      {editing && editing !== "new" && (
+        <EditPersonDrawer
+          person={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(msg) => {
+            setEditing(null);
+            onDone(msg);
+            void load();
+          }}
+          onError={onError}
+        />
+      )}
+      {editing === "new" && (
         <PersonDrawer
-          person={editing === "new" ? null : editing}
+          person={null}
           options={options}
           onClose={() => setEditing(null)}
           onSaved={(msg) => {
@@ -731,6 +770,282 @@ function PersonDrawer({
     </Drawer>
   );
 }
+
+// ===========================================================================
+// EDIT EMPLOYEE
+// Everything comes from the server: the person's details, what the person editing may change (salary, roles) and the dropdown
+// choices of THEIR company (departments, designations, reporting managers). The employee ID and the company are shown but never
+// editable. Only what was actually changed is sent; replacing an existing designation or salary needs a ticked confirmation.
+// ===========================================================================
+
+type EditModel = {
+  person: {
+    id: string; firstName: string; lastName: string; email: string; phone: string | null; employeeCode: string | null; role: string; status: string;
+    designation: string | null; dateOfJoining: string | null; reportsToId: string | null; shiftId: string | null; trackerAccessEnabled: boolean;
+    employmentType: string | null; companyId: string; company: string; departments: { id: string; name: string }[]; monthlySalary?: number | null;
+  };
+  permissions: { canEditSalary: boolean; canChangeRoles: boolean };
+  dropdowns: {
+    departments: { id: string; name: string }[]; designations: string[]; managers: { id: string; name: string; employeeCode: string | null; role: string }[];
+    shifts: { id: string; name: string; startTime: string; endTime: string }[]; statuses: string[]; employeeTypes: string[];
+  };
+};
+
+const TYPE_NAME: Record<string, string> = { PERMANENT: "Permanent", PROBATION: "Probation", CONTRACT: "Contract", INTERN: "Intern" };
+
+function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Person; onClose: () => void; onSaved: (msg: string) => void; onError: (m: string) => void }) {
+  const [model, setModel] = useState<EditModel | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [f, setF] = useState({ firstName: "", lastName: "", email: "", phone: "", role: "", status: "", designation: "", reportsToId: "", shiftId: "", dateOfJoining: "", employmentType: "", salary: "", trackerAccessEnabled: false });
+  const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [confirmDesignation, setConfirmDesignation] = useState(false);
+  const [confirmSalary, setConfirmSalary] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    call<EditModel>(`/admin/employees/${person.id}/edit`)
+      .then((m) => {
+        if (!live) return;
+        const p = m.person;
+        setModel(m);
+        setF({
+          firstName: p.firstName, lastName: p.lastName, email: p.email, phone: p.phone ?? "", role: p.role, status: p.status, designation: p.designation ?? "",
+          reportsToId: p.reportsToId ?? "", shiftId: p.shiftId ?? "", dateOfJoining: p.dateOfJoining ?? "", employmentType: p.employmentType ?? "",
+          salary: p.monthlySalary === null || p.monthlySalary === undefined ? "" : String(p.monthlySalary), trackerAccessEnabled: p.trackerAccessEnabled,
+        });
+        setTeamIds(p.departments.map((d) => d.id));
+      })
+      .catch((e: Error) => live && setLoadError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [person.id]);
+
+  const set = (k: keyof typeof f, v: unknown) => setF((cur) => ({ ...cur, [k]: v as never }));
+
+  if (!model) {
+    return (
+      <Drawer title={person.name} onClose={onClose}>
+        {loadError ? <p className="text-sm text-rose-700">{loadError}</p> : <p className="text-sm text-slate-400">Loading…</p>}
+      </Drawer>
+    );
+  }
+
+  const p = model.person;
+  const dd = model.dropdowns;
+  const origTeamIds = p.departments.map((d) => d.id);
+  const teamAdds = teamIds.filter((id) => !origTeamIds.includes(id));
+  const teamRemoves = origTeamIds.filter((id) => !teamIds.includes(id));
+  const deptName = (id: string) => dd.departments.find((d) => d.id === id)?.name ?? p.departments.find((d) => d.id === id)?.name ?? "Unknown";
+  const designationChanged = f.designation.trim() !== (p.designation ?? "");
+  const hadSalary = p.monthlySalary !== null && p.monthlySalary !== undefined;
+  const salaryChanged = model.permissions.canEditSalary && f.salary.trim() !== (hadSalary ? String(p.monthlySalary) : "");
+
+  async function save() {
+    const body: Record<string, unknown> = {};
+    if (f.firstName.trim() !== p.firstName) body.firstName = f.firstName;
+    if (f.lastName.trim() !== p.lastName) body.lastName = f.lastName;
+    if (f.email.trim().toLowerCase() !== p.email.toLowerCase()) body.email = f.email;
+    if (f.phone.trim() !== (p.phone ?? "")) body.phone = f.phone;
+    if (designationChanged) body.designation = f.designation.trim() || null;
+    if ((f.reportsToId || null) !== (p.reportsToId ?? null)) body.reportsToId = f.reportsToId || null;
+    if ((f.shiftId || null) !== (p.shiftId ?? null)) body.shiftId = f.shiftId || null;
+    if ((f.dateOfJoining || null) !== (p.dateOfJoining ?? null)) body.dateOfJoining = f.dateOfJoining || null;
+    if (f.status !== p.status) body.status = f.status;
+    if (model!.permissions.canChangeRoles && f.role !== p.role) body.role = f.role;
+    if (f.trackerAccessEnabled !== p.trackerAccessEnabled) body.trackerAccessEnabled = f.trackerAccessEnabled;
+    if ((f.employmentType || null) !== (p.employmentType ?? null)) body.employmentType = f.employmentType || null;
+    if (salaryChanged) body.monthlySalary = f.salary.trim() === "" ? null : Number(f.salary.replace(/,/g, ""));
+    if (designationChanged || salaryChanged) body.confirmOverwrite = { designation: confirmDesignation, salary: confirmSalary };
+    const bodyHasChange = Object.keys(body).filter((k) => k !== "confirmOverwrite").length > 0;
+    if (!bodyHasChange && teamAdds.length === 0 && teamRemoves.length === 0) {
+      onError("Nothing was changed.");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (bodyHasChange) await call(`/admin/users/${p.id}`, "PATCH", body);
+      try {
+        for (const id of teamAdds) await call(`/admin/teams/${id}/members`, "POST", { userId: p.id });
+        for (const id of teamRemoves) await call(`/admin/teams/${id}/members/${p.id}`, "DELETE");
+      } catch (e) {
+        throw new Error(`Details saved, but the department change failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      }
+      onSaved(`${f.firstName} ${f.lastName} updated.`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPassword() {
+    if (newPassword.length < 8) return onError("The new password must be at least 8 characters.");
+    setBusy(true);
+    try {
+      await call(`/admin/users/${p.id}/password`, "POST", { password: newPassword });
+      setNewPassword("");
+      onSaved("Password reset.");
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not reset the password");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const managerOptions = dd.managers.filter((m) => m.id !== p.id);
+  const currentManagerMissing = f.reportsToId && !managerOptions.some((m) => m.id === f.reportsToId);
+
+  return (
+    <Drawer title={person.name} onClose={onClose}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Company" hint="Cannot be changed here: attendance, tasks and leave belong to it.">
+          <Input value={p.company} onChange={() => undefined} disabled />
+        </Field>
+        <Field label="Employee ID" hint="Never changes.">
+          <Input value={p.employeeCode ?? ""} onChange={() => undefined} disabled />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="First name">
+          <Input value={f.firstName} onChange={(v) => set("firstName", v)} />
+        </Field>
+        <Field label="Last name">
+          <Input value={f.lastName} onChange={(v) => set("lastName", v)} />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Email" hint="Also their sign-in name.">
+          <Input value={f.email} onChange={(v) => set("email", v)} type="email" />
+        </Field>
+        <Field label="Phone">
+          <Input value={f.phone} onChange={(v) => set("phone", v)} />
+        </Field>
+      </div>
+
+      <Field label="Department" hint="Changes apply when you press Save changes.">
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {teamIds.length === 0 && <span className="text-sm text-slate-400">No department</span>}
+          {teamIds.map((id) => (
+            <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 py-1 pl-2.5 pr-1 text-xs text-indigo-700">
+              {deptName(id)}
+              <button type="button" onClick={() => setTeamIds((cur) => cur.filter((x) => x !== id))} aria-label={`Remove from ${deptName(id)}`} className="rounded-full p-0.5 hover:bg-indigo-100">
+                <svg viewBox="0 0 20 20" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="m5 5 10 10M15 5 5 15" /></svg>
+              </button>
+            </span>
+          ))}
+        </div>
+        <Select value="" onChange={(v) => v && setTeamIds((cur) => (cur.includes(v) ? cur : [...cur, v]))}>
+          <option value="">Add a department…</option>
+          {dd.departments.filter((d) => !teamIds.includes(d.id)).map((d) => (
+            <option key={d.id} value={d.id}>{d.name}</option>
+          ))}
+        </Select>
+        {(teamAdds.length > 0 || teamRemoves.length > 0) && (
+          <p className="mt-2 text-xs text-amber-700">
+            Not saved yet:{teamAdds.length > 0 ? ` add to ${teamAdds.map(deptName).join(", ")}.` : ""}
+            {teamRemoves.length > 0 ? ` Remove from ${teamRemoves.map(deptName).join(", ")}.` : ""}
+          </p>
+        )}
+      </Field>
+
+      <Field label="Designation" hint={dd.designations.length ? "From this company's list." : "This company has no designation list yet: type it."}>
+        {dd.designations.length > 0 ? (
+          <Select value={f.designation} onChange={(v) => { set("designation", v); setConfirmDesignation(false); }}>
+            <option value="">Not assigned</option>
+            {p.designation && !dd.designations.some((d) => d.toLowerCase() === p.designation!.toLowerCase()) && <option value={p.designation}>{p.designation} (current)</option>}
+            {dd.designations.map((d) => <option key={d} value={d}>{d}</option>)}
+          </Select>
+        ) : (
+          <Input value={f.designation} onChange={(v) => { set("designation", v); setConfirmDesignation(false); }} placeholder="Not assigned" />
+        )}
+        {designationChanged && p.designation && (
+          <div className="mt-2">
+            <Toggle checked={confirmDesignation} onChange={setConfirmDesignation} label={`Replace the current designation (${p.designation})`} hint="Required to change a designation that is already set." />
+          </div>
+        )}
+      </Field>
+
+      <Field label="Reporting manager" hint="Active managers and admins of this company.">
+        <Select value={f.reportsToId} onChange={(v) => set("reportsToId", v)}>
+          <option value="">Nobody: top of the chain</option>
+          {currentManagerMissing && <option value={f.reportsToId}>{person.reportsTo?.name ?? "Current manager"} (current)</option>}
+          {managerOptions.map((m) => (
+            <option key={m.id} value={m.id}>{m.name}{m.employeeCode ? ` (${m.employeeCode})` : ""}</option>
+          ))}
+        </Select>
+      </Field>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Joining date">
+          <Input value={f.dateOfJoining} onChange={(v) => set("dateOfJoining", v)} type="date" />
+        </Field>
+        <Field label="Shift" hint="Late login is measured against this">
+          <Select value={f.shiftId} onChange={(v) => set("shiftId", v)}>
+            <option value="">No shift</option>
+            {dd.shifts.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.startTime}–{s.endTime})</option>)}
+          </Select>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Employment status">
+          <Select value={f.status} onChange={(v) => set("status", v)}>
+            {dd.statuses.map((s) => <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</option>)}
+          </Select>
+        </Field>
+        <Field label="Employee type">
+          <Select value={f.employmentType} onChange={(v) => set("employmentType", v)}>
+            <option value="">Not set</option>
+            {dd.employeeTypes.map((t) => <option key={t} value={t}>{TYPE_NAME[t] ?? t}</option>)}
+          </Select>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="System role" hint={model.permissions.canChangeRoles ? "Decides what they can do in the app" : "Only an Admin can change this"}>
+          <Select value={f.role} onChange={(v) => set("role", v)}>
+            {(options_roles(person.role, model.permissions.canChangeRoles)).map((r) => <option key={r} value={r}>{r}</option>)}
+          </Select>
+        </Field>
+        {model.permissions.canEditSalary ? (
+          <Field label="Monthly salary" hint="Visible to Admin and top management only.">
+            <Input value={f.salary} onChange={(v) => { set("salary", v); setConfirmSalary(false); }} placeholder="Not set" />
+          </Field>
+        ) : (
+          <div />
+        )}
+      </div>
+      {salaryChanged && hadSalary && (
+        <Toggle checked={confirmSalary} onChange={setConfirmSalary} label="Replace the current salary" hint="Required to change a salary that is already set. The change is written to the audit log." />
+      )}
+
+      <Toggle checked={f.trackerAccessEnabled} onChange={(v) => set("trackerAccessEnabled", v)} label="Tracker access" hint="When off, this person can sign in but cannot clock in." />
+
+      <div className="flex gap-2 pt-2">
+        <button onClick={save} disabled={busy} className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40">
+          {busy ? "Saving…" : "Save changes"}
+        </button>
+        <button onClick={onClose} className="rounded-xl border border-indigo-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:border-slate-400">Cancel</button>
+      </div>
+
+      <div className="mt-6 border-t border-indigo-100 pt-5">
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Reset password</p>
+        <div className="flex gap-2">
+          <Input value={newPassword} onChange={setNewPassword} placeholder="New password" />
+          <button onClick={resetPassword} disabled={busy || newPassword.length < 8} className="whitespace-nowrap rounded-xl border border-indigo-200 px-3 py-2 text-sm font-medium text-slate-700 hover:border-slate-400 disabled:opacity-40">Reset</button>
+        </div>
+      </div>
+    </Drawer>
+  );
+}
+
+// Everyone sees their own role; only an Admin can pick another one.
+const options_roles = (current: string, canChange: boolean) => (canChange ? ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] : [current]);
 
 // ===========================================================================
 // TEAMS

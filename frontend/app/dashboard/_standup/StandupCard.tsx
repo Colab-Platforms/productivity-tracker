@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
-import { JoinControl, type TrackedFields } from "../meetings/_participation/Participation";
+import { InviteResponse, JoinControl, type TrackedFields } from "../meetings/_participation/Participation";
 
 // ---------------------------------------------------------------------------
 // STAND-UP CARD on the dashboard
@@ -30,11 +30,14 @@ const timeFmt = (s: string, tz: string) => new Intl.DateTimeFormat("en-US", { ti
 
 /** Which tracked meetings deserve a card right now, most urgent first. */
 export function relevant(meetings: StandupMeeting[], now: number): StandupMeeting[] {
-  const rank = (m: StandupMeeting) => (m.me?.state === "IN_MEETING" ? 0 : m.canJoin ? 1 : m.me?.state === "ENDED" ? 3 : 2);
+  const rank = (m: StandupMeeting) => (m.me?.state === "IN_MEETING" ? 0 : m.canJoin ? 1 : m.mustAccept ? 1 : m.me?.state === "ENDED" ? 3 : 2);
   return meetings
     .filter((m) => {
       // Meetings you organize count too: the organizer can mark himself in and out like everyone else.
-      if (!m.tracked || m.state === "cancelled" || !m.me) return false;
+      if (m.state === "cancelled" || m.state === "past") return false;
+      // An invitation waiting for your answer is always shown, tracked or not.
+      if (m.canRespond && m.myResponse !== "DECLINED") return true;
+      if (!m.tracked || !m.me) return false;
       if (m.me.state === "IN_MEETING" || m.me.state === "ENDED" || m.canJoin) return true;
       // not joined yet: only show it when it is about to open (or has just opened and is waiting for you)
       return m.joinWindow?.reason === "TOO_EARLY" && new Date(m.joinWindow.opensAt).getTime() - now <= SOON_MINUTES * 60_000;
@@ -53,7 +56,7 @@ export function StandupItem({ m, tz, onChanged }: { m: StandupMeeting; tz: strin
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-indigo-600">
             {inMeeting && <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden />}
-            {inMeeting ? "You are in a meeting" : "In-person meeting"}
+            {inMeeting ? "You are in a meeting" : m.tracked ? "Team Huddle invitation" : "Meeting invitation"}
           </p>
           <p className="mt-0.5 truncate text-base font-semibold text-slate-900">{m.title}</p>
           <p className="text-sm text-slate-500">
@@ -62,7 +65,10 @@ export function StandupItem({ m, tz, onChanged }: { m: StandupMeeting; tz: strin
         </div>
         <Link href={`/dashboard/meetings?id=${m.id}`} className="text-xs font-medium text-indigo-600 hover:underline">Details</Link>
       </div>
-      <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={onChanged} />
+      <InviteResponse meetingId={m.id} f={m} onChanged={onChanged} />
+      <div className={m.myStatus ? "mt-3" : ""}>
+        <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={onChanged} />
+      </div>
     </section>
   );
 }

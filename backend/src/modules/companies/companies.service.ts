@@ -1,6 +1,8 @@
 import { prisma } from "../../lib/prisma.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
+import { accessFor } from "../../lib/companyAccess.js";
+import { canAccess } from "../../lib/companyAccess.logic.js";
 
 // ---------------------------------------------------------------------------
 // COMPANY MANAGEMENT (HR and Admin only; the routes enforce the role)
@@ -9,7 +11,8 @@ import { auditNote, changedFields } from "../../lib/auditContext.js";
 // itself (name, legal name, timezone, employee-code prefix, active or not).
 //   - Everyone with HR/Admin can see the list of company names.
 //   - Employee numbers and details are only shown for the viewer's OWN company.
-//   - HR can edit their own company; Admin can edit any company.
+//   - Someone can edit only the companies they may act on: their own, the ones assigned to them (company_access), or all (top management).
+//   - The employee-ID prefix is set by an Admin or top management only; two companies can never share one, whatever the capitalisation.
 //   - Nobody can deactivate their own company, or the one this deployment is
 //     pinned to, because that would lock them out.
 // ---------------------------------------------------------------------------
@@ -48,11 +51,13 @@ function cleanPrefix(v: unknown) {
 
 export async function listCompanies(viewerId: string) {
   const v = await who(viewerId);
+  const access = await accessFor(viewerId);
   const [rows, pinned, counts] = await Promise.all([
     prisma.platform.findMany({ orderBy: { name: "asc" } }),
     getPinnedCompany(),
-    prisma.user.count({ where: { platformId: v.platformId, status: { not: "EXITED" } } }),
+    prisma.user.groupBy({ by: ["platformId"], where: { status: { not: "EXITED" } }, _count: true }),
   ]);
+  const headcount = new Map(counts.map((c) => [c.platformId, c._count]));
   return {
     pinnedTo: pinned ? { id: pinned.id, name: pinned.name } : null,
     canCreate: true,
@@ -66,9 +71,10 @@ export async function listCompanies(viewerId: string) {
       isActive: c.isActive,
       isYours: c.id === v.platformId,
       isPinned: pinned?.id === c.id,
-      // Employee numbers belong to the viewer's own company only.
-      employees: c.id === v.platformId ? counts : null,
-      canEdit: v.role === "ADMIN" || c.id === v.platformId,
+      // Employee numbers only for the companies this person may act on.
+      employees: canAccess(access, c.id) ? headcount.get(c.id) ?? 0 : null,
+      canEdit: canAccess(access, c.id),
+      canSetPrefix: canAccess(access, c.id) && (v.role === "ADMIN" || access.all),
     })),
   };
 }
@@ -86,6 +92,11 @@ export async function createCompany(viewerId: string, body: Body) {
   const clash = await prisma.platform.findFirst({ where: { OR: [{ slug }, { name: { equals: name, mode: "insensitive" } }] }, select: { id: true } });
   if (clash) throw new Error("COMPANY_EXISTS");
 
+  const newPrefix = cleanPrefix(body.employeeCodePrefix);
+  if (newPrefix) {
+    const taken = await prisma.platform.findFirst({ where: { employeeCodePrefix: { equals: newPrefix, mode: "insensitive" } }, select: { id: true } });
+    if (taken) throw new Error("PREFIX_TAKEN");
+  }
   const created = await prisma.platform.create({
     data: {
       name,
@@ -103,8 +114,9 @@ export async function updateCompany(viewerId: string, id: string, body: Body) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("NOT_FOUND");
   const company = await prisma.platform.findUnique({ where: { id } });
   if (!company) throw new Error("NOT_FOUND");
-  // HR may only touch their own company. Admin may edit any.
-  if (v.role !== "ADMIN" && company.id !== v.platformId) throw new Error("NOT_YOUR_COMPANY");
+  // Only a company this person may act on (own, assigned, or all for top management).
+  const access = await accessFor(viewerId);
+  if (!canAccess(access, company.id)) throw new Error("NOT_YOUR_COMPANY");
 
   const data: Record<string, unknown> = {};
   if (body.name !== undefined) {
@@ -117,7 +129,20 @@ export async function updateCompany(viewerId: string, id: string, body: Body) {
   }
   if (body.legalName !== undefined) data.legalName = String(body.legalName ?? "").trim() || null;
   if (body.timezone !== undefined) data.timezone = checkTimezone(String(body.timezone));
-  if (body.employeeCodePrefix !== undefined) data.employeeCodePrefix = cleanPrefix(body.employeeCodePrefix);
+  let prefixChanged = false;
+  if (body.employeeCodePrefix !== undefined) {
+    const next = cleanPrefix(body.employeeCodePrefix);
+    if (next !== (company.employeeCodePrefix ?? null)) {
+      // Setting the prefix decides how every future ID of the company looks: Admin or top management only.
+      if (v.role !== "ADMIN" && !access.all) throw new Error("PREFIX_NOT_ALLOWED");
+      if (next) {
+        const taken = await prisma.platform.findFirst({ where: { id: { not: id }, employeeCodePrefix: { equals: next, mode: "insensitive" } }, select: { id: true } });
+        if (taken) throw new Error("PREFIX_TAKEN");
+      }
+      data.employeeCodePrefix = next;
+      prefixChanged = true;
+    }
+  }
   if (body.isActive !== undefined) {
     const pinned = await getPinnedCompany();
     if (body.isActive === false && (company.id === v.platformId || pinned?.id === company.id)) throw new Error("CANNOT_DEACTIVATE");
@@ -126,6 +151,8 @@ export async function updateCompany(viewerId: string, id: string, body: Body) {
   if (Object.keys(data).length === 0) throw new Error("NOTHING_TO_UPDATE");
 
   await prisma.platform.update({ where: { id }, data });
+  // A new prefix starts its own count above the highest number it already has. Existing IDs are never touched.
+  if (prefixChanged) await prisma.employeeCodeSequence.deleteMany({ where: { platformId: id } }).catch(() => undefined);
   const diff = changedFields(company as never, { ...company, ...data } as never, ["name", "legalName", "timezone", "employeeCodePrefix", "isActive"]);
   auditNote({ platformId: company.id, recordType: "Platform", recordId: company.id, before: diff.before, after: diff.after, summary: `Edited company ${company.name}: ${Object.keys(diff.after as Record<string, unknown>).join(", ") || "no changes"}` });
   return { ok: true };

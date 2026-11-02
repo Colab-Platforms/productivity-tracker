@@ -54,3 +54,25 @@ export function actualSpan(rows: { joinedAt: Date; leftAt: Date | null }[], now:
   const end = Math.max(...rows.map((r) => (r.leftAt ? r.leftAt.getTime() : now.getTime())));
   return { seconds: Math.max(0, Math.floor((end - start) / 1000)), ongoing };
 }
+
+// ---------------------------------------------------------------------------
+// Invitation status, as the person (and the organizer) sees it. Worked out from three facts, never stored:
+//   the person's answer (none / ACCEPTED / DECLINED), their participation record (none / still in / ended), and whether the meeting is over.
+// ---------------------------------------------------------------------------
+export type InviteStatus = "INVITED" | "ACCEPTED" | "DECLINED" | "JOINED" | "COMPLETED" | "NOT_JOINED";
+
+export function inviteStatus(o: {
+  response: "ACCEPTED" | "DECLINED" | null;
+  participation: { leftAt: Date | null } | null;
+  meetingOver: boolean;
+  tracked: boolean; // "Not joined" only means something where joining is tracked
+}): InviteStatus {
+  if (o.participation) return o.participation.leftAt ? "COMPLETED" : "JOINED";
+  if (o.response === "DECLINED") return "DECLINED";
+  if (o.meetingOver && o.tracked) return "NOT_JOINED";
+  if (o.response === "ACCEPTED") return "ACCEPTED";
+  return "INVITED";
+}
+
+/** May this person still answer (accept or change their answer)? Invitees only, while the meeting is scheduled and not over. */
+export const canRespondNow = (o: { isInvitee: boolean; cancelled: boolean; meetingOver: boolean; joined: boolean }) => o.isInvitee && !o.cancelled && !o.meetingOver && !o.joined;

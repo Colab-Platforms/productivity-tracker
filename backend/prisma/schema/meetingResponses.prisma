@@ -1,0 +1,21 @@
+// ===========================================================================
+// MEETING INVITATION RESPONSES (Accept / Decline) - NEW TABLE ONLY, no column added to meeting_attendees.
+//
+// An invitation is still a row in meeting_attendees. A person's answer to it lives here: one row per invitee per meeting
+// (unique pair), ACCEPTED or DECLINED, changeable until the meeting ends. No row = not answered yet ("Invited").
+// Joining a Team Huddle requires ACCEPTED. No relations to existing models on purpose; the foreign keys live in the migration SQL.
+// ===========================================================================
+
+model MeetingResponse {
+  id          String   @id @default(uuid()) @db.Uuid
+  meetingId   String   @db.Uuid
+  platformId  String   @db.Uuid
+  userId      String   @db.Uuid
+  response    String // ACCEPTED | DECLINED
+  respondedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([meetingId, userId])
+  @@index([userId])
+  @@map("meeting_responses")
+}

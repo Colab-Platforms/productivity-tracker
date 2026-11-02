@@ -24,7 +24,9 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import readXlsxFile from "read-excel-file/node";
 import { prisma } from "../../lib/prisma.js";
-import { viewerIsOwner } from "../../lib/owner.js";
+import { accessFor, type Access } from "../../lib/companyAccess.js";
+import { canAccess } from "../../lib/companyAccess.logic.js";
+import { allocateEmployeeCode } from "./employeeCode.js";
 import { sendWelcome } from "../onboarding/onboarding.mail.js";
 
 const BCRYPT_COST = 10;
@@ -93,6 +95,7 @@ export type ImportOptions = {
   pmEndTimes?: boolean; // an end time before the start (6.30 after 09:30) means PM
   blankRoleIsEmployee?: boolean;
   blankEmailUsesPlaceholder?: boolean; // login by employee ID; address like awl-01@company.local
+  blankIdIsGenerated?: boolean; // a blank Employee ID gets the company's next ID when saved (never reuses or changes an existing one)
   blankReportsToIsNone?: boolean;
   blankTeamIsNone?: boolean;
   createMissingShifts?: boolean;
@@ -478,13 +481,13 @@ export type Viewer = {
   id: string;
   role: string;
   platformId: string;
-  owner: boolean;
+  access: Access;
 };
 
 export async function loadViewer(viewerId: string): Promise<Viewer> {
   const u = await prisma.user.findUnique({ where: { id: viewerId }, select: { id: true, role: true, platformId: true } });
   if (!u) throw new Error("NOT_FOUND");
-  return { id: u.id, role: String(u.role), platformId: u.platformId, owner: await viewerIsOwner(viewerId) };
+  return { id: u.id, role: String(u.role), platformId: u.platformId, access: await accessFor(viewerId) };
 }
 
 type ManagerRef = { kind: "file"; rowNumber: number } | { kind: "db"; userId: string } | null;
@@ -496,6 +499,7 @@ type Plan = {
   firstName: string;
   lastName: string;
   employeeCode: string;
+  autoId: boolean; // the real ID is generated when saved (employeeCode is then only a stand-in)
   email: string;
   emailIsPlaceholder: boolean;
   phone: string | null;
@@ -651,7 +655,7 @@ async function runValidation(viewer: Viewer, input: PreviewInput) {
     let platformId: string | null = null;
     if (!companyText) err("company", "REQUIRED", "Company is required.");
     else if (!platform) err("company", "UNKNOWN_COMPANY", `"${companyText}" is not a company in this system.`);
-    else if (!viewer.owner && platform.id !== viewer.platformId) {
+    else if (!canAccess(viewer.access, platform.id)) {
       err("company", "OUTSIDE_YOUR_COMPANY", `You can only add people to your own company, not "${platform.name}".`);
     } else platformId = platform.id;
 
@@ -663,8 +667,14 @@ async function runValidation(viewer: Viewer, input: PreviewInput) {
 
     // --- employee id ------------------------------------------------------------
     const code = clean("employeeId", "Employee ID");
-    if (!code) err("employeeId", "REQUIRED", "Employee ID is required.");
-    else if (!ID_RE.test(code)) {
+    let autoId = false;
+    if (!code) {
+      if (options.blankIdIsGenerated) {
+        autoId = true;
+        notes.push("Employee ID left blank: the company's next ID is generated when saved (confirmed)");
+        rule("blankIdIsGenerated");
+      } else err("employeeId", "ID_MISSING", 'Employee ID is blank. Enter one, or tick "Generate the Employee ID automatically".');
+    } else if (!ID_RE.test(code)) {
       err("employeeId", "BAD_ID", `"${code}" is not a valid employee ID (letters, numbers, dot, dash, underscore; no spaces; up to 30 characters).`);
     }
 
@@ -696,8 +706,9 @@ async function runValidation(viewer: Viewer, input: PreviewInput) {
     let email = clean("email", "Work email").toLowerCase();
     let emailIsPlaceholder = false;
     if (!email) {
-      if (options.blankEmailUsesPlaceholder && platform && code) {
-        email = `${code.toLowerCase()}@${platform.slug}.local`;
+      if (options.blankEmailUsesPlaceholder && platform && (code || autoId)) {
+        // A generated ID does not exist yet: a stand-in is used for the preview, and the real one replaces it when saved.
+        email = autoId ? `auto-${r.rowNumber}@${platform.slug}.local` : `${code.toLowerCase()}@${platform.slug}.local`;
         emailIsPlaceholder = true;
         notes.push(`No work email: sign-in is by employee ID (placeholder ${email}) (confirmed)`);
         rule("blankEmailUsesPlaceholder");
@@ -822,7 +833,7 @@ async function runValidation(viewer: Viewer, input: PreviewInput) {
         const sameCompany = platformId !== null && hit.platformId === platformId;
         const sameName = normName(`${hit.firstName} ${hit.lastName}`) === normName(fullName);
         if (sameCompany && sameName) existingUserId = hit.id;
-        else if (viewer.owner || hit.platformId === viewer.platformId) {
+        else if (canAccess(viewer.access, hit.platformId)) {
           err("employeeId", "ID_TAKEN", `Employee ID ${code} is already used by ${hit.firstName} ${hit.lastName}.`.replace(/\s+\./, "."));
         } else {
           err("employeeId", "ID_TAKEN", `Employee ID ${code} is already used in another company.`);
@@ -838,7 +849,7 @@ async function runValidation(viewer: Viewer, input: PreviewInput) {
       platform && platformId
         ? {
             platformId, platformName: platform.name, platformSlug: platform.slug, firstName, lastName,
-            employeeCode: code, email, emailIsPlaceholder, phone: mobile || null, designation, role, teamId,
+            employeeCode: autoId ? `AUTO#${r.rowNumber}` : code, autoId, email, emailIsPlaceholder, phone: mobile || null, designation, role, teamId,
             projectIds, dateOfJoining: doj.value ?? null, manager: null, shift, shiftId,
           }
         : null;
@@ -1019,6 +1030,7 @@ async function runValidation(viewer: Viewer, input: PreviewInput) {
 const CONFIRM_BY_CODE: Record<string, keyof ImportOptions> = {
   TIME_NEEDS_CONFIRMATION: "decimalTimes",
   END_BEFORE_START: "pmEndTimes",
+  ID_MISSING: "blankIdIsGenerated",
   ROLE_MISSING: "blankRoleIsEmployee",
   EMAIL_MISSING: "blankEmailUsesPlaceholder",
   MANAGER_MISSING: "blankReportsToIsNone",
@@ -1037,7 +1049,7 @@ export async function previewEmployees(viewerId: string, input: PreviewInput) {
   // the start once both times can be read at all). Nothing from this second
   // run is returned as a result: it is used purely to count.
   const everything: ImportOptions = {
-    decimalTimes: true, pmEndTimes: true, blankRoleIsEmployee: true, blankEmailUsesPlaceholder: true,
+    decimalTimes: true, pmEndTimes: true, blankRoleIsEmployee: true, blankEmailUsesPlaceholder: true, blankIdIsGenerated: true,
     blankReportsToIsNone: true, blankTeamIsNone: true, createMissingShifts: true,
   };
   const hypothetical = await runValidation(viewer, { ...input, options: { ...(input.options ?? {}), ...everything } });
@@ -1101,7 +1113,7 @@ export async function commitEmployees(viewerId: string, input: CommitInput) {
   const shiftsCreated: { company: string; name: string }[] = [];
 
   try {
-    const created = await prisma.$transaction(
+    const { idByRow: created, finalByRow } = await prisma.$transaction(
       async (tx) => {
         // 1. shifts that do not exist yet (one per distinct pattern)
         const shiftIds = new Map<string, string>();
@@ -1119,18 +1131,23 @@ export async function commitEmployees(viewerId: string, input: CommitInput) {
 
         // 2. everyone, without managers yet
         const idByRow = new Map<number, string>();
+        const finalByRow = new Map<number, { code: string; email: string }>();
         for (let i = 0; i < valid.length; i++) {
           const p = valid[i].plan!;
+          // A blank ID is generated here, inside this transaction: if anything fails the numbers go back and nothing is skipped.
+          const code = p.autoId ? await allocateEmployeeCode(tx, p.platformId) : p.employeeCode;
+          const email = p.autoId && p.emailIsPlaceholder ? `${code.toLowerCase()}@${p.platformSlug}.local` : p.email;
+          finalByRow.set(valid[i].result.rowNumber, { code, email });
           const shiftId = p.shiftId ?? (p.shift ? (shiftIds.get(`${p.platformId}|${p.shift.start}|${p.shift.end}|${p.shift.days.join()}`) ?? null) : null);
           const user = await tx.user.create({
             data: {
               platformId: p.platformId,
-              email: p.email,
+              email,
               passwordHash: hashes[i],
               firstName: p.firstName,
               lastName: p.lastName,
               phone: p.phone,
-              employeeCode: p.employeeCode,
+              employeeCode: code,
               role: p.role,
               status: "INVITED",
               designation: p.designation,
@@ -1160,7 +1177,7 @@ export async function commitEmployees(viewerId: string, input: CommitInput) {
           if (!managerId) throw new Error("MANAGER_UNRESOLVED");
           await tx.user.update({ where: { id: idByRow.get(v.result.rowNumber)! }, data: { reportsToId: managerId } });
         }
-        return idByRow;
+        return { idByRow, finalByRow };
       },
       { timeout: 120_000, maxWait: 20_000 }
     );
@@ -1192,10 +1209,10 @@ export async function commitEmployees(viewerId: string, input: CommitInput) {
       // be fetched again; HR hands each person their own line.
       credentials: credentials.map((c) => ({
         rowNumber: c.work.result.rowNumber,
-        employeeId: c.work.plan!.employeeCode,
+        employeeId: finalByRow.get(c.work.result.rowNumber)?.code ?? c.work.plan!.employeeCode,
         name: `${c.work.plan!.firstName} ${c.work.plan!.lastName}`.trim(),
         company: c.work.plan!.platformName,
-        signInWith: c.work.plan!.emailIsPlaceholder ? c.work.plan!.employeeCode : c.work.plan!.email,
+        signInWith: c.work.plan!.emailIsPlaceholder ? (finalByRow.get(c.work.result.rowNumber)?.code ?? c.work.plan!.employeeCode) : c.work.plan!.email,
         temporaryPassword: c.password,
       })),
       rows: out.work.map((w) => ({ rowNumber: w.result.rowNumber, status: w.result.status, issues: w.result.issues })),
@@ -1215,8 +1232,8 @@ export async function commitEmployees(viewerId: string, input: CommitInput) {
 // ===========================================================================
 export async function employeeLookups(viewerId: string) {
   const viewer = await loadViewer(viewerId);
-  const platformWhere = viewer.owner ? {} : { id: viewer.platformId };
-  const scope = viewer.owner ? {} : { platformId: viewer.platformId };
+  const platformWhere = viewer.access.all ? {} : { id: { in: viewer.access.ids } };
+  const scope = viewer.access.all ? {} : { platformId: { in: viewer.access.ids } };
   const year = new Date().getUTCFullYear();
 
   const [companies, teams, shifts, people, managerPool, holidays] = await Promise.all([
@@ -1249,8 +1266,13 @@ export async function employeeLookups(viewerId: string) {
   ]);
 
   const holidayCount = new Map(holidays.map((h) => [h.platformId, h._count._all]));
+  // The company's own job-title lists (empty before the migration, or for a company that has not set one up).
+  const designations = await prisma.designation
+    .findMany({ where: { isActive: true, ...scope }, select: { platformId: true, name: true }, orderBy: { name: "asc" } })
+    .catch(() => [] as { platformId: string; name: string }[]);
   return {
     year,
+    designations,
     // Only an Admin may hand out the HR or Admin role.
     roles: (viewer.role === "ADMIN" ? ROLES : (["EMPLOYEE", "MANAGER"] as const)).map((r) => r),
     companies: companies.map((c) => ({ ...c, holidaysThisYear: holidayCount.get(c.id) ?? 0 })),

@@ -17,8 +17,9 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay } from "../../lib/dates.js";
-import { viewerIsOwner } from "../../lib/owner.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
+import { accessFor, assertCompany, scopeWhere } from "../../lib/companyAccess.js";
+import { allocateEmployeeCode } from "./employeeCode.js";
 import { sendWelcome } from "../onboarding/onboarding.mail.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
 
@@ -99,26 +100,7 @@ function assertTime(value: string, field: string) {
 }
 
 // --- employee codes --------------------------------------------------------
-// AVT-0005. The prefix is an explicit column so a brand-new platform with no
-// users still produces correct codes. Reads the highest existing number and
-// adds one; the unique constraint on (platformId, employeeCode) is the real
-// guarantee if two admins ever create someone at the same instant.
-async function nextEmployeeCode(platformId: string, prefix: string | null, slug: string) {
-  const mark = (prefix ?? slug.slice(0, 3)).toUpperCase();
-
-  const existing = await prisma.user.findMany({
-    where: { platformId, employeeCode: { startsWith: `${mark}-` } },
-    select: { employeeCode: true },
-  });
-
-  let highest = 0;
-  for (const row of existing) {
-    const n = Number(row.employeeCode?.split("-")[1]);
-    if (Number.isFinite(n) && n > highest) highest = n;
-  }
-
-  return `${mark}-${String(highest + 1).padStart(4, "0")}`;
-}
+// New IDs come from employeeCode.ts (a locked per-company counter, inside the transaction that creates the person).
 
 // ===========================================================================
 // PEOPLE
@@ -126,21 +108,24 @@ async function nextEmployeeCode(platformId: string, prefix: string | null, slug:
 
 export async function listUsers(
   viewerId: string,
-  filters: { search?: string; role?: string; status?: string } = {}
+  filters: { search?: string; role?: string; status?: string; companyId?: string } = {}
 ) {
-  const viewer = await actor(viewerId);
+  const access = await accessFor(viewerId);
 
   const search = filters.search?.trim();
   const role = USER_ROLES.find((r) => r === filters.role);
   const status = USER_STATUSES.find((s) => s === filters.status);
 
-  // An owner runs every company, so the list must not stop at their own -
-  // otherwise someone they just created into Aayush simply vanishes.
-  const owner = await viewerIsOwner(viewerId);
+  // The list covers every company this person may act on (own, assigned, or all), or just the one picked.
+  let companyScope: { platformId?: string | { in: string[] } } = scopeWhere(access);
+  if (filters.companyId && filters.companyId !== "all") {
+    assertCompany(access, filters.companyId);
+    companyScope = { platformId: filters.companyId };
+  }
 
   const users = await prisma.user.findMany({
     where: {
-      ...(owner ? {} : { platformId: viewer.platformId }),
+      ...companyScope,
       ...(role ? { role } : {}),
       ...(status ? { status } : {}),
       ...(search
@@ -170,6 +155,7 @@ export async function listUsers(
       lastLoginAt: true,
             shift: { select: { id: true, name: true } },
       reportsTo: { select: { id: true, firstName: true, lastName: true } },
+      platformId: true,
       platform: { select: { name: true } },
       teamMemberships: {
         where: { isActive: true },
@@ -203,6 +189,7 @@ export async function listUsers(
       : null,
     teams: u.teamMemberships.map((m) => m.team),
     company: u.platform?.name ?? null,
+    companyId: u.platformId,
   }));
 }
 
@@ -217,6 +204,8 @@ export async function createUser(
     designation?: string;
     phone?: string;
     employeeCode?: string;
+    companyId?: string;
+    confirmNotDuplicate?: boolean;
         shiftId?: string;
     teamId?: string;
     reportsToId?: string;
@@ -241,27 +230,22 @@ export async function createUser(
   // one. Creating a TC Software person onto an Aayush team would leave every
   // report disagreeing with every other. With no team, it is the viewer's own
   // company, exactly as before.
-  const owner = await viewerIsOwner(viewerId);
-
+  // The company is the one chosen (if any), else the team's, else the viewer's own - and it must be one this person may act on.
+  const access = await accessFor(viewerId);
   let targetPlatformId = viewer.platformId;
-  let codePrefix: string | null = viewer.platform.employeeCodePrefix;
-  let codeSlug: string = viewer.platform.slug;
 
+  if (data.companyId) {
+    assertCompany(access, data.companyId);
+    targetPlatformId = data.companyId;
+  }
   if (data.teamId) {
-    const chosenTeam = await prisma.team.findUnique({
-      where: { id: data.teamId },
-      select: {
-        platformId: true,
-        platform: { select: { employeeCodePrefix: true, slug: true } },
-      },
-    });
+    const chosenTeam = await prisma.team.findUnique({ where: { id: data.teamId }, select: { platformId: true } });
     if (!chosenTeam) throw new Error("TEAM_NOT_FOUND");
-    if (!owner && chosenTeam.platformId !== viewer.platformId) {
-      throw new Error("TEAM_NOT_FOUND");
+    if (data.companyId ? chosenTeam.platformId !== targetPlatformId : false) throw new Error("TEAM_NOT_FOUND");
+    if (!data.companyId) {
+      if (access.all ? false : !access.ids.includes(chosenTeam.platformId)) throw new Error("TEAM_NOT_FOUND");
+      targetPlatformId = chosenTeam.platformId;
     }
-    targetPlatformId = chosenTeam.platformId;
-    codePrefix = chosenTeam.platform?.employeeCodePrefix ?? null;
-    codeSlug = chosenTeam.platform?.slug ?? viewer.platform.slug;
   }
 
   const clash = await prisma.user.findFirst({
@@ -270,11 +254,25 @@ export async function createUser(
   });
   if (clash) throw new Error("EMAIL_TAKEN");
 
-  // The code follows the company the person is actually joining, so somebody
-  // added to Aayush gets an Aayush code and not a TC Software one.
-  const employeeCode =
-    data.employeeCode?.trim() ||
-    (await nextEmployeeCode(targetPlatformId, codePrefix, codeSlug));
+  // The same person must not be added twice: somebody already here with this name needs an explicit "this is someone else".
+  const sameName = await prisma.user.findFirst({
+    where: {
+      platformId: targetPlatformId,
+      status: { not: "EXITED" },
+      firstName: { equals: data.firstName.trim(), mode: "insensitive" },
+      lastName: { equals: data.lastName.trim(), mode: "insensitive" },
+    },
+    select: { employeeCode: true },
+  });
+  if (sameName && data.confirmNotDuplicate !== true) throw new Error("DUPLICATE_PERSON");
+
+  // IDs are generated, never typed (only an Admin may supply one, e.g. to carry over an existing ID). A typed one must be free.
+  const typedCode = data.employeeCode?.trim().toUpperCase() || null;
+  if (typedCode) {
+    if (String(viewer.role) !== "ADMIN") throw new Error("EMPLOYEE_CODE_ADMIN_ONLY");
+    const taken = await prisma.user.findFirst({ where: { employeeCode: { equals: typedCode, mode: "insensitive" } }, select: { id: true } });
+    if (taken) throw new Error("CODE_TAKEN");
+  }
 
   const passwordHash = await bcrypt.hash(data.password, BCRYPT_COST);
 
@@ -284,6 +282,8 @@ export async function createUser(
   const skip = data.skipOnboarding === true;
 
   const created = await prisma.$transaction(async (tx) => {
+    // The number is handed out inside this transaction: if the person is not saved, the number goes back.
+    const employeeCode = typedCode ?? (await allocateEmployeeCode(tx, targetPlatformId));
     const user = await tx.user.create({
       data: {
         platformId: targetPlatformId,
@@ -342,105 +342,9 @@ export async function createUser(
   return { ...created, mail };
 }
 
-export async function updateUser(
-  viewerId: string,
-  userId: string,
-  data: {
-    firstName?: string;
-    lastName?: string;
-    phone?: string;
-    role?: string;
-    status?: string;
-    designation?: string;
-    employeeCode?: string;
-        shiftId?: string | null;
-    reportsToId?: string | null;
-    dateOfJoining?: string | null;
-    onboardingStatus?: string;
-    trackerAccessEnabled?: boolean;
-    biometricId?: string | null;
-  }
-) {
-  const viewer = await actor(viewerId);
-  await samePlatformUser(viewer.platformId, userId);
-  await assertMayChangeAccount(viewer, userId);
-
-  const role = USER_ROLES.find((r) => r === data.role);
-  assertAdminForRole(viewer.role, role);
-  // Even on their own record, a non-admin cannot change their own role, status or access.
-  if (String(viewer.role) !== "ADMIN" && userId === viewer.id && (role || data.status !== undefined || data.trackerAccessEnabled !== undefined)) {
-    throw new Error("ROLE_NOT_ALLOWED");
-  }
-  const status = USER_STATUSES.find((s) => s === data.status);
-  const onboardingStatus = ONBOARDING_STATUSES.find((s) => s === data.onboardingStatus);
-
-  // The audit trail records what each changed field WAS and what it became.
-  const AUDIT_KEYS = ["firstName", "lastName", "phone", "role", "status", "designation", "employeeCode", "shiftId", "reportsToId", "biometricId", "dateOfJoining", "onboardingStatus", "trackerAccessEnabled"];
-  const pick = { firstName: true, lastName: true, phone: true, role: true, status: true, designation: true, employeeCode: true, shiftId: true, reportsToId: true, biometricId: true, dateOfJoining: true, onboardingStatus: true, trackerAccessEnabled: true } as const;
-  const beforeRow = await prisma.user.findUnique({ where: { id: userId }, select: pick });
-
-  // Opening the gate stamps when it happened; closing it clears the stamp.
-  const gate =
-    data.trackerAccessEnabled === undefined
-      ? {}
-      : {
-          trackerAccessEnabled: data.trackerAccessEnabled,
-          accessGrantedAt: data.trackerAccessEnabled ? new Date() : null,
-        };
-
-  const updatedUser = await prisma.user.update({
-    where: { id: userId },
-    data: {
-      ...(data.firstName !== undefined ? { firstName: data.firstName.trim() } : {}),
-      ...(data.lastName !== undefined ? { lastName: data.lastName.trim() } : {}),
-      ...(data.phone !== undefined ? { phone: data.phone?.trim() || null } : {}),
-      ...(role ? { role } : {}),
-      ...(status ? { status, ...(status === "EXITED" ? { exitDate: new Date() } : {}) } : {}),
-      ...(data.designation !== undefined
-        ? { designation: data.designation?.trim() || null }
-        : {}),
-      ...(data.employeeCode !== undefined
-        ? { employeeCode: data.employeeCode?.trim() || null }
-        : {}),
-      ...(data.shiftId !== undefined ? { shiftId: data.shiftId || null } : {}),
-      ...(data.reportsToId !== undefined
-        ? { reportsToId: data.reportsToId || null }
-        : {}),
-      ...(data.biometricId !== undefined
-      ? { biometricId: data.biometricId?.trim() || null }
-      : {}),
-      ...(data.dateOfJoining !== undefined
-        ? { dateOfJoining: data.dateOfJoining ? parseDay(data.dateOfJoining) : null }
-        : {}),
-      ...(onboardingStatus ? { onboardingStatus } : {}),
-      ...gate,
-    },
-    select: { id: true },
-  });
-
-  const afterRow = await prisma.user.findUnique({ where: { id: userId }, select: pick });
-  if (beforeRow && afterRow) {
-    const diff = changedFields(beforeRow as never, afterRow as never, AUDIT_KEYS);
-    // Role, status and tracker access decide what a person can do: those are permission changes.
-    const permission = ["role", "status", "trackerAccessEnabled"].some((k) => k in (diff.after as Record<string, unknown>));
-    const names = Object.keys(diff.after as Record<string, unknown>);
-    auditNote({
-      module: "Employees",
-      action: permission ? "PERMISSION" : "UPDATE",
-      recordType: "User",
-      recordId: userId,
-      targetUserId: userId,
-      before: diff.before,
-      after: diff.after,
-      summary: names.length ? (permission ? "Changed access: " : "Updated: ") + names.join(", ") : "Saved with no changes",
-    });
-  }
-  return updatedUser;
-}
-
 export async function resetPassword(viewerId: string, userId: string, password: string) {
   const viewer = await actor(viewerId);
-  await samePlatformUser(viewer.platformId, userId);
+  assertCompany(await accessFor(viewerId), (await prisma.user.findUnique({ where: { id: userId }, select: { platformId: true } }))?.platformId);
   await assertMayChangeAccount(viewer, userId);
   if (!password || password.length < 8) throw new Error("WEAK_PASSWORD");
 
@@ -572,17 +476,16 @@ export async function updateTeam(
 }
 
 export async function addTeamMember(viewerId: string, teamId: string, userId: string) {
-  const viewer = await actor(viewerId);
-  const owner = await viewerIsOwner(viewerId);
+  const access = await accessFor(viewerId);
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
     select: { platformId: true },
   });
   if (!team) throw new Error("NOT_FOUND");
-  if (!owner && team.platformId !== viewer.platformId) throw new Error("NOT_FOUND");
+  assertCompany(access, team.platformId);
 
-  // An owner may reach across companies; nobody may mix them. The person and
+  // Someone may act on several companies; nobody may mix them. The person and
   // the team must belong to the same one.
   const target = await prisma.user.findUnique({
     where: { id: userId },
@@ -602,13 +505,14 @@ export async function addTeamMember(viewerId: string, teamId: string, userId: st
 }
 
 export async function removeTeamMember(viewerId: string, teamId: string, userId: string) {
-  const viewer = await actor(viewerId);
+  const access = await accessFor(viewerId);
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
     select: { platformId: true },
   });
-  if (!team || team.platformId !== viewer.platformId) throw new Error("NOT_FOUND");
+  if (!team) throw new Error("NOT_FOUND");
+  assertCompany(access, team.platformId);
 
   const membership = await prisma.teamMember.findUnique({
     where: { teamId_userId: { teamId, userId } },
@@ -940,11 +844,12 @@ export async function unmarkLeave(viewerId: string, userId: string, dateStr: str
 
 export async function getAdminOptions(viewerId: string) {
   const viewer = await actor(viewerId);
-  const owner = await viewerIsOwner(viewerId);
+  const access = await accessFor(viewerId);
+  const owner = access.all || access.ids.length > 1; // several companies at once: names carry the company
   const pinned = await getPinnedCompany();
 
-  // Only an owner sees other companies' teams.
-  const teamScope = owner ? {} : { platformId: viewer.platformId };
+  // Only the companies this person may act on.
+  const teamScope = scopeWhere(access);
 
   const [teams, leads, shifts] = await Promise.all([
     prisma.team.findMany({
@@ -963,8 +868,8 @@ export async function getAdminOptions(viewerId: string) {
       where: {
         role: { in: ["MANAGER", "ADMIN"] },
         status: { not: "EXITED" },
-        // A deployment pinned to one company offers only that company's managers.
-        ...(pinned ? { platformId: pinned.id } : {}),
+        // Only managers of companies this person may act on (a deployment pinned to one company offers only that company's).
+        ...(pinned ? { platformId: pinned.id } : scopeWhere(access)),
       },
       select: {
         id: true,

@@ -62,6 +62,7 @@ export type ImportOptions = {
   pmEndTimes?: boolean;
   blankRoleIsEmployee?: boolean;
   blankEmailUsesPlaceholder?: boolean;
+  blankIdIsGenerated?: boolean;
   blankReportsToIsNone?: boolean;
   blankTeamIsNone?: boolean;
   createMissingShifts?: boolean;
@@ -127,6 +128,7 @@ export type Lookups = {
   year: number;
   roles: string[];
   defaultCompanyId: string;
+  designations?: { platformId: string; name: string }[];
   companies: { id: string; name: string; slug: string; holidaysThisYear: number }[];
   teams: { id: string; name: string; platformId: string }[];
   shifts: { id: string; name: string; platformId: string; startTime: string; endTime: string; workingDays: number[] }[];
@@ -153,6 +155,10 @@ export const OPTION_COPY: Record<
   blankEmailUsesPlaceholder: {
     title: "No work email: sign in with the employee ID",
     detail: "A placeholder address (id@company.local) is stored. They sign in with their employee ID and no email is sent.",
+  },
+  blankIdIsGenerated: {
+    title: "Generate the Employee ID for rows that have none",
+    detail: "Each blank row gets its company's next ID (prefix and number) when saved. Existing IDs are never changed or reused.",
   },
   blankReportsToIsNone: {
     title: "Treat a blank “Reports to” as no reporting manager",

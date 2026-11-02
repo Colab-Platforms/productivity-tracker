@@ -1,0 +1,29 @@
+// ===========================================================================
+// MANAGER STEP for leave and attendance-correction requests.
+//
+// A request first goes to the person's manager(s); HR/Admin decide afterwards. One row per request records that first step:
+// who may answer, the answer, who gave it, when and why. If a request has NO row, it has no manager step and goes straight to HR
+// (as it always did), which is also how every request made before this migration behaves.
+//
+// NEW TABLE ONLY: no column was added to leave_requests or attendance_correction_requests. No Prisma relations to existing models
+// on purpose; the foreign keys live in the migration SQL. requestId points at either table, so it has no foreign key (kind says which).
+// ===========================================================================
+
+model RequestApproval {
+  id         String @id @default(uuid()) @db.Uuid
+  platformId String @db.Uuid
+  kind       String // LEAVE | CORRECTION
+  requestId  String @db.Uuid
+
+  status      String    @default("PENDING") // PENDING | APPROVED | REJECTED | SKIPPED (HR decided without the manager, with a reason)
+  approverIds String[]  @db.Uuid // the managers who may answer; the first answer counts
+  decidedById String?   @db.Uuid
+  decidedAt   DateTime?
+  note        String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([kind, requestId])
+  @@index([platformId, kind, status])
+  @@map("request_approvals")
+}

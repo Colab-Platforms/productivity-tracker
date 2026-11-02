@@ -66,6 +66,10 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/admin\/employees\/commit$/, module: "Employees", action: "CREATE", summary: "Imported employees" },
   { method: "POST", re: /^\/api\/admin\/users$/, module: "Employees", action: "CREATE", summary: "Created an employee account" },
   { method: "PATCH", re: /^\/api\/admin\/users\/:id$/, module: "Employees", action: "UPDATE", summary: "Updated an employee", recordType: "User", targetIsId: true },
+  { method: "POST", re: /^\/api\/admin\/designations$/, module: "Employees", action: "CREATE", summary: "Added a designation", recordType: "Designation" },
+  { method: "PATCH", re: /^\/api\/admin\/designations\/:id$/, module: "Employees", action: "UPDATE", summary: "Changed a designation", recordType: "Designation" },
+  { method: "POST", re: /^\/api\/admin\/company-access\/:userId$/, module: "Employees", action: "PERMISSION", summary: "Changed which companies a person can act on", recordType: "User", targetIsId: true },
+  { method: "PUT", re: /^\/api\/admin\/company-access\/:userId$/, module: "Employees", action: "PERMISSION", summary: "Changed which companies a person can act on", recordType: "User", targetIsId: true },
   { method: "POST", re: /^\/api\/admin\/users\/:id\/password$/, module: "Employees", action: "PASSWORD", summary: "Reset an employee's password", recordType: "User", targetIsId: true },
   { method: "POST", re: /^\/api\/admin\/teams$/, module: "Teams & rules", action: "CREATE", summary: "Created a team" },
   { method: "PATCH", re: /^\/api\/admin\/teams\/:id$/, module: "Teams & rules", action: "UPDATE", summary: "Updated a team", recordType: "Team" },
@@ -126,6 +130,8 @@ const RULES: Rule[] = [
 
   { method: "POST", re: /^\/api\/attendance-corrections$/, module: "Attendance", action: "SUBMIT", summary: "Requested an attendance correction" },
   { method: "POST", re: /^\/api\/attendance-corrections\/:id\/cancel$/, module: "Attendance", action: "CANCEL", summary: "Cancelled an attendance correction request", recordType: "AttendanceCorrection" },
+  { method: "POST", re: /^\/api\/leave\/manager\/requests\/:id\/decide$/, module: "Leave", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Manager rejected a leave request" : "Manager approved a leave request"), recordType: "LeaveRequest" },
+  { method: "POST", re: /^\/api\/attendance-corrections\/manager\/requests\/:id\/decide$/, module: "Attendance", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Manager rejected an attendance correction" : "Manager approved an attendance correction"), recordType: "AttendanceCorrection" },
   { method: "POST", re: /^\/api\/attendance-corrections\/:id\/decide$/, module: "Attendance", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Rejected an attendance correction" : "Approved an attendance correction"), recordType: "AttendanceCorrection" },
 
   { method: "PATCH", re: /^\/api\/preferences$/, module: "Other", action: "UPDATE", summary: "Chose a display theme", recordType: "Preference", skip: true },
@@ -134,6 +140,7 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/documents\/employees\/:id\/employment-type$/, module: "Employees", action: "UPDATE", summary: "Set an employee's employment type", recordType: "User", targetIsId: true },
   { method: "POST", re: /^\/api\/meetings$/, module: "Meetings", action: "CREATE", summary: "Scheduled a meeting" },
   { method: "PATCH", re: /^\/api\/meetings\/:id$/, module: "Meetings", action: "UPDATE", summary: "Changed a meeting", recordType: "Meeting" },
+  { method: "POST", re: /^\/api\/meetings\/:id\/respond$/, module: "Meetings", action: "UPDATE", summary: "Answered a meeting invitation", recordType: "Meeting" },
   { method: "POST", re: /^\/api\/meetings\/:id\/join$/, module: "Meetings", action: "UPDATE", summary: "Declared joining an in-person meeting", recordType: "Meeting" },
   { method: "POST", re: /^\/api\/meetings\/:id\/leave$/, module: "Meetings", action: "UPDATE", summary: "Declared leaving an in-person meeting", recordType: "Meeting" },
   { method: "PATCH", re: /^\/api\/meetings\/:id\/participation\/:userId$/, module: "Meetings", action: "UPDATE", summary: "Corrected meeting participation", recordType: "Meeting" },

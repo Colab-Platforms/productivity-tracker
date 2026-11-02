@@ -26,6 +26,11 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   NOT_ALLOWED: { status: 403, message: "Only HR and Admin can do that." },
   NOT_FOUND: { status: 404, message: "That request or person was not found." },
   USER_NOT_FOUND: { status: 404, message: "User not found." },
+  WAITING_FOR_MANAGER: { status: 409, message: "This request is waiting for the manager. HR can decide after the manager approves, or without the manager if you give a reason." },
+  SKIP_REASON_REQUIRED: { status: 400, message: "Give a reason (at least 5 characters) for deciding without the manager." },
+  MANAGER_REJECTED: { status: 409, message: "The manager rejected this request, so it cannot be approved. You can close it as rejected." },
+  STEP_ALREADY_DECIDED: { status: 409, message: "The manager step on this request was already answered." },
+  COMMENT_REQUIRED: { status: 400, message: "Please say why you are rejecting this request." },
 };
 
 function fail(res: Response, error: unknown) {
@@ -59,7 +64,14 @@ router.post("/requests/:id/cancel", run((req) => leave.cancelRequest(req.user!.u
 router.get("/requests", run((req) => leave.listRequests(req.user!.userId, req.query.status)));
 router.post(
   "/requests/:id/decide",
-  run((req) => leave.decideRequest(req.user!.userId, String(req.params.id), req.body?.decision, req.body?.note))
+  run((req) => leave.decideRequest(req.user!.userId, String(req.params.id), req.body?.decision, req.body?.note, { skipManager: req.body?.skipManager, skipReason: req.body?.skipReason }))
+);
+
+// Manager: requests from the people who report to them (the manager step).
+router.get("/manager/requests", run((req) => leave.managerRequests(req.user!.userId)));
+router.post(
+  "/manager/requests/:id/decide",
+  run((req) => leave.managerDecide(req.user!.userId, String(req.params.id), req.body?.decision, req.body?.note))
 );
 router.get("/summary", run((req) => leave.leaveSummary(req.user!.userId, req.query.year)));
 router.get("/person/:id", run((req) => leave.personLeave(req.user!.userId, String(req.params.id), req.query.year)));

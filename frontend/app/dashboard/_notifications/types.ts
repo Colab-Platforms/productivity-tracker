@@ -12,6 +12,7 @@ export const TYPE_LABEL: Record<string, string> = {
   TASK_PROPOSAL_RETURNED: "Task sent back",
   TASK_APPROVED: "Work approved",
   TASK_REJECTED: "Work not accepted",
+  MEETING_RESPONDED: "Invitation answer",
   LEAVE_REQUESTED: "Leave request",
   LEAVE_DECIDED: "Leave answer",
   CORRECTION_SUBMITTED: "Attendance correction",

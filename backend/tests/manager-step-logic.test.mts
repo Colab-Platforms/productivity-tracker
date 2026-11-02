@@ -1,0 +1,24 @@
+// Rules of the manager step: who is asked, and when HR may decide. No database.
+import { hrGate, pickApprovers } from "../src/modules/approvals/managerStep.logic.js";
+let pass = 0, fail = 0;
+const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n); };
+const req = { id: "e", platformId: "p1" };
+const m = (id: string, over: Partial<{ role: string; status: string; platformId: string }> = {}) => ({ id, role: "MANAGER", status: "ACTIVE", platformId: "p1", ...over });
+ok("the reports-to manager is asked", pickApprovers(req, [m("m1")]).join() === "m1");
+ok("reports-to plus a team manager: both, no duplicates", pickApprovers(req, [m("m1"), m("m2"), m("m1")]).join() === "m1,m2");
+ok("an HR/Admin boss is not a manager step (empty = straight to HR)", pickApprovers(req, [m("h", { role: "HR" }), m("a", { role: "ADMIN" })]).length === 0);
+ok("no manager at all = straight to HR", pickApprovers(req, []).length === 0);
+ok("a suspended or exited manager is not asked", pickApprovers(req, [m("x", { status: "SUSPENDED" }), m("y", { status: "EXITED" })]).length === 0);
+ok("a manager from another company is not asked", pickApprovers(req, [m("z", { platformId: "p2" })]).length === 0);
+ok("the requester is never their own approver", pickApprovers({ id: "m1", platformId: "p1" }, [m("m1")]).length === 0);
+ok("HR: no step = may decide", hrGate(null) === "OK");
+ok("HR: manager approved = may decide", hrGate({ status: "APPROVED" }) === "OK");
+ok("HR: step skipped earlier = may decide", hrGate({ status: "SKIPPED" }) === "OK");
+ok("HR: manager rejected = can never approve", hrGate({ status: "REJECTED" }) === "REJECTED_BY_MANAGER");
+ok("HR: manager rejected, even with skip, still blocked", hrGate({ status: "REJECTED" }, { skipManager: true, skipReason: "urgent please" }) === "REJECTED_BY_MANAGER");
+ok("HR: waiting for manager = blocked", hrGate({ status: "PENDING" }) === "WAITING");
+ok("HR: skip without a reason is refused", hrGate({ status: "PENDING" }, { skipManager: true }) === "SKIP_REASON_REQUIRED");
+ok("HR: skip with a too-short reason is refused", hrGate({ status: "PENDING" }, { skipManager: true, skipReason: "ok" }) === "SKIP_REASON_REQUIRED");
+ok("HR: skip with a real reason is allowed", hrGate({ status: "PENDING" }, { skipManager: true, skipReason: "Manager is on leave" }) === "SKIP");
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

@@ -23,7 +23,21 @@ export type MeInfo = {
   source?: string;
   stillActivePastEnd?: boolean;
 };
+export type InviteStatus = "INVITED" | "ACCEPTED" | "DECLINED" | "JOINED" | "COMPLETED" | "NOT_JOINED";
+export const INVITE_CHIP: Record<InviteStatus, { label: string; cls: string }> = {
+  INVITED: { label: "Invited", cls: "bg-amber-50 text-amber-700" },
+  ACCEPTED: { label: "Accepted", cls: "bg-sky-50 text-sky-700" },
+  DECLINED: { label: "Declined", cls: "bg-rose-50 text-rose-700" },
+  JOINED: { label: "Joined", cls: "bg-emerald-50 text-emerald-700" },
+  COMPLETED: { label: "Completed", cls: "bg-indigo-50 text-indigo-700" },
+  NOT_JOINED: { label: "Not joined", cls: "bg-slate-100 text-slate-600" },
+};
 export type TrackedFields = {
+  // The invited person's answer and status (every meeting you are invited to, tracked or not).
+  myResponse?: "ACCEPTED" | "DECLINED" | null;
+  myStatus?: InviteStatus;
+  canRespond?: boolean;
+  mustAccept?: boolean;
   tracked?: boolean;
   lateAfterMinutes?: number;
   joinWindow?: { open: boolean; reason: "TOO_EARLY" | "CLOSED" | null; opensAt: string; closesAt: string };
@@ -58,6 +72,52 @@ function useNow(everyMs = 1000) {
 }
 
 const SELF_REPORTED = "Self-reported: these are the times people declared. They don't prove anyone was physically there, and they are separate from attendance and working hours.";
+
+// ===========================================================================
+// EMPLOYEE: accept or decline the invitation, and where it stands
+// ===========================================================================
+
+export function InviteResponse({ meetingId, f, onChanged, compact = false }: { meetingId: string; f: TrackedFields; onChanged: () => void; compact?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!f.myStatus) return null; // not invited to this one (you organize it)
+  const chip = INVITE_CHIP[f.myStatus];
+
+  async function answer(response: "ACCEPTED" | "DECLINED") {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await apiPost(`/meetings/${meetingId}/respond`, { response });
+      onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={compact ? "mt-3" : ""}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-slate-500">Your invitation:</span>
+        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${chip.cls}`}>{chip.label}</span>
+        {f.canRespond && f.myResponse !== "ACCEPTED" && (
+          <button onClick={() => answer("ACCEPTED")} disabled={busy} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
+            {busy ? "Saving…" : f.myResponse === "DECLINED" ? "Accept instead" : "Accept invitation"}
+          </button>
+        )}
+        {f.canRespond && f.myResponse !== "DECLINED" && (
+          <button onClick={() => answer("DECLINED")} disabled={busy} className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60">
+            {f.myResponse === "ACCEPTED" ? "Change to decline" : "Decline"}
+          </button>
+        )}
+      </div>
+      {error && <p className="mt-2 rounded-lg bg-red-50 px-3 py-1.5 text-sm text-red-700">{error}</p>}
+    </div>
+  );
+}
 
 // ===========================================================================
 // EMPLOYEE: the join / end control
@@ -120,6 +180,9 @@ export function JoinControl({ meetingId, endsAt, tz, f, onChanged, compact = fal
 
   // not joined yet
   const w = f.joinWindow;
+  if (f.mustAccept && w?.reason !== "CLOSED") {
+    return <p className={`${box} bg-slate-50 text-sm text-slate-600`}>Accept the invitation first. The “Join Huddle” button appears here once you have accepted and the meeting is about to start.</p>;
+  }
   if (f.canJoin) {
     return (
       <div className={`${box} bg-indigo-50`}>
@@ -160,6 +223,7 @@ export function PastRecord({ f, tz }: { f: TrackedFields; tz: string }) {
 
 type Row = {
   userId: string; name: string; employeeCode: string | null; designation: string | null;
+  response?: "ACCEPTED" | "DECLINED" | null; status?: InviteStatus;
   state: "NOT_JOINED" | "IN_MEETING" | "ENDED"; joinedAt: string | null; leftAt: string | null; durationSeconds: number | null;
   late: boolean; minutesAfterStart: number | null; stillActivePastEnd: boolean; source: string | null; corrected: boolean;
 };
@@ -168,7 +232,7 @@ type Panel = {
   organizer?: OrganizerRow;
   meeting: { id: string; title: string; startsAt: string; endsAt: string; status: string };
   timezone: string; now: string; lateAfterMinutes: number;
-  summary: { invited: number; joined: number; notJoined: number; inMeeting: number; ended: number; late: number; stillActivePastEnd: number; actualDurationSeconds: number | null; actualDurationOngoing: boolean; averageParticipationSeconds: number | null };
+  summary: { invited: number; accepted?: number; declined?: number; awaitingAnswer?: number; joined: number; notJoined: number; inMeeting: number; ended: number; late: number; stillActivePastEnd: number; actualDurationSeconds: number | null; actualDurationOngoing: boolean; averageParticipationSeconds: number | null };
   rows: Row[];
 };
 
@@ -210,6 +274,8 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
   const s = data.summary;
   const tiles: [string, string, string?][] = [
     ["Invited", String(s.invited)],
+    ["Accepted", String(s.accepted ?? 0)],
+    ["Declined", String(s.declined ?? 0), (s.declined ?? 0) > 0 ? "text-rose-700" : undefined],
     ["Joined", String(s.joined)],
     ["Not joined", String(s.notJoined), s.notJoined > 0 ? "text-amber-700" : undefined],
     ["Late", String(s.late), s.late > 0 ? "text-amber-700" : undefined],
@@ -218,7 +284,7 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {tiles.map(([label, value, cls]) => (
           <div key={label} className="rounded-xl bg-[#F6F7FE] px-3 py-2">
             <p className="text-[11px] text-slate-500">{label}</p>
@@ -274,7 +340,7 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
                     <p className="text-xs text-slate-400">{r.employeeCode ?? "—"}{r.designation ? ` · ${r.designation}` : ""}</p>
                   </td>
                   <td className="px-3 py-2.5">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CHIP[r.state].cls}`}>{CHIP[r.state].label}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${r.status ? INVITE_CHIP[r.status].cls : CHIP[r.state].cls}`}>{r.status ? INVITE_CHIP[r.status].label : CHIP[r.state].label}</span>
                     {r.late && <span className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700" title={`Joined ${r.minutesAfterStart} min after the start`}>late +{r.minutesAfterStart}m</span>}
                     {r.stillActivePastEnd && <span className="ml-1.5 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">still active past end</span>}
                     {r.source === "MANAGER_ADDED" && <span className="ml-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">added by you</span>}

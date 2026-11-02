@@ -278,11 +278,21 @@ export async function create(userId: string, body: Fields) {
   // A meeting cannot be scheduled in the past (a few minutes of slack for the clock).
   if (startsAt.getTime() < Date.now() - 5 * 60_000) throw new Error("PAST_MEETING");
   // An in-person meeting has no link; it is tracked by "I'm in the Meeting" instead.
-  const inPerson = body.inPerson === true;
+  const attendees = await checkAttendees(body.attendeeIds, userId, v.platformId);
+  let inPerson = body.inPerson === true;
+  // Team Huddle tracking switches ON by itself when a MANAGER invites only people who report to them and gives no meeting link (a link means an
+  // online meeting). Without this, a meeting made without the tick had no Accept/Join buttons for anyone. An explicit choice is never overridden.
+  if (body.inPerson === undefined && v.role === "MANAGER" && !String(body.meetingUrl ?? "").trim() && (await part.participationReady())) {
+    try {
+      await part.assertReportingEmployees(v, attendees.map((a) => a.id));
+      inPerson = true;
+    } catch {
+      inPerson = false;
+    }
+  }
   if (inPerson && !(await part.participationReady())) throw new Error("FEATURES_NOT_READY");
   const lateAfter = inPerson ? part.cleanLateAfter(body.lateAfterMinutes) : 5;
   const link = inPerson ? null : cleanUrl(body.meetingUrl);
-  const attendees = await checkAttendees(body.attendeeIds, userId, v.platformId);
   if (inPerson) await part.assertReportingEmployees(v, attendees.map((a) => a.id));
 
   const created = await prisma.$transaction(async (tx) => {
@@ -300,7 +310,7 @@ export async function create(userId: string, body: Fields) {
     summary: `Scheduled "${t}" with ${attendees.length} ${attendees.length === 1 ? "person" : "people"}`,
     after: { title: t, startsAt, endsAt, provider: link?.provider ?? null, attendees: attendees.length, inPerson, lateAfterMinutes: inPerson ? lateAfter : undefined },
   });
-  await tell(v, created, attendees, "invited", inPerson ? "This is an in-person meeting. When you are in the room, open Meetings and press \"I'm in the Meeting\"." : null);
+  await tell(v, created, attendees, "invited", inPerson ? "This is a Team Huddle. Accept the invitation in Meetings; when you are in the room, press \"Join Huddle\" and later \"End Participation\"." : null);
   return { id: created.id, invited: attendees.length };
 }
 

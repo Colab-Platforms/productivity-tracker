@@ -7,6 +7,7 @@ import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
 import { fmtClock, fmtDur } from "../_timesheet/time";
 import RequestCorrectionModal from "../_corrections/RequestModal";
+import { ManagerDecisionBox, SkipManagerBox, StepNote, stepBadge } from "../_approvals/ManagerStep";
 import { STATUS_LABEL, STATUS_STYLE, type CorrectionDetails, type CorrectionRequest, type SessionSnapshot } from "../_corrections/types";
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,7 @@ import { STATUS_LABEL, STATUS_STYLE, type CorrectionDetails, type CorrectionRequ
 // ---------------------------------------------------------------------------
 
 type Mine = { timezone: string; windowDays: number; requests: CorrectionRequest[] };
+type TeamCorrections = { timezone: string; pending: CorrectionRequest[]; answered: CorrectionRequest[] };
 type Review = { timezone: string; counts: Record<string, number>; teams: { id: string; name: string }[]; requests: CorrectionRequest[] };
 
 const day = (s: string) => new Date(`${s}T00:00:00Z`).toLocaleDateString("en-US", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
@@ -39,8 +41,8 @@ function useApi<T>(path: string | null, reload: number) {
   return { data: res?.data ?? null, error: res && res.path === path ? (res.error ?? "") : "" };
 }
 
-function Badge({ status }: { status: string }) {
-  return <span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[status] ?? ""}`}>{STATUS_LABEL[status] ?? status}</span>;
+function Badge({ status, step }: { status: string; step?: CorrectionRequest["managerStep"] }) {
+  return <span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[status] ?? ""}`}>{stepBadge(status, step) ?? STATUS_LABEL[status] ?? status}</span>;
 }
 
 async function openEvidence(id: string) {
@@ -65,12 +67,14 @@ function Snapshot({ s, tz }: { s: SessionSnapshot | undefined; tz: string }) {
 function CorrectionsInner() {
   const me = useMe();
   const isHr = me?.role === "HR" || me?.role === "ADMIN";
+  const isManager = me?.role === "MANAGER";
   const params = useSearchParams();
   const linked = params.get("id");
 
   // The layout only renders this page once the signed-in person is known, so their role is available now:
   // HR/Admin land on the pending list, everyone else on their own requests.
-  const [tab, setTab] = useState<"PENDING" | "APPROVED" | "REJECTED" | "MINE">(isHr ? "PENDING" : "MINE");
+  const [tab, setTab] = useState<"PENDING" | "APPROVED" | "REJECTED" | "MINE" | "TEAM">(isHr ? "PENDING" : "MINE");
+  const [busyId, setBusyId] = useState("");
   const [reload, setReload] = useState(0);
   const [notice, setNotice] = useState("");
   const [asking, setAsking] = useState(false);
@@ -93,8 +97,24 @@ function CorrectionsInner() {
   if (from) qs.set("from", from);
   if (to) qs.set("to", to);
   if (teamId) qs.set("teamId", teamId);
-  const review = useApi<Review>(isHr && tab !== "MINE" ? `/attendance-corrections?${qs.toString()}` : null, reload);
+  // Manager step: requests from the people who report to this manager.
+  const team = useApi<TeamCorrections>(isManager ? "/attendance-corrections/manager/requests" : null, reload);
+  const review = useApi<Review>(isHr && tab !== "MINE" && tab !== "TEAM" ? `/attendance-corrections?${qs.toString()}` : null, reload);
   const pendingApi = useApi<{ pending: number }>(isHr ? "/attendance-corrections/pending-count" : null, reload);
+
+  async function managerDecide(id: string, decision: "APPROVE" | "REJECT", comment: string) {
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      await apiPost(`/attendance-corrections/manager/requests/${id}/decide`, { decision, comment });
+      setNotice(decision === "APPROVE" ? "Approved. HR has been told and makes the final decision." : "Rejected. The employee has been told.");
+      setReload((n) => n + 1);
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setBusyId("");
+    }
+  }
 
   async function cancel(id: string) {
     try {
@@ -107,11 +127,14 @@ function CorrectionsInner() {
   }
 
   const card = "rounded-2xl bg-white shadow-[var(--shadow-card)]";
-  const tz = (tab === "MINE" ? mine.data?.timezone : review.data?.timezone) ?? "Asia/Kolkata";
+  const tz = (tab === "MINE" ? mine.data?.timezone : tab === "TEAM" ? team.data?.timezone : review.data?.timezone) ?? "Asia/Kolkata";
   const pending = pendingApi.data?.pending ?? review.data?.counts.PENDING ?? 0;
-  const tabs: ["PENDING" | "APPROVED" | "REJECTED" | "MINE", string][] = isHr
+  const waitingForMe = team.data?.pending.length ?? 0;
+  const tabs: ["PENDING" | "APPROVED" | "REJECTED" | "MINE" | "TEAM", string][] = isHr
     ? [["PENDING", `Pending${pending ? ` (${pending})` : ""}`], ["APPROVED", "Approved"], ["REJECTED", "Rejected"], ["MINE", "My requests"]]
-    : [["MINE", "My requests"]];
+    : isManager
+      ? [["MINE", "My requests"], ["TEAM", `Team requests${waitingForMe ? ` (${waitingForMe})` : ""}`]]
+      : [["MINE", "My requests"]];
 
   return (
     <div className="page-fluid space-y-6 p-8">
@@ -159,12 +182,13 @@ function CorrectionsInner() {
                   {(r.reviewedBy || r.reviewComment) && (
                     <p className="mt-1 text-xs text-slate-500">
                       {r.reviewedBy && <>Decided by {r.reviewedBy}</>}
-                      {r.reviewComment && <> · HR comment: “{r.reviewComment}”</>}
+                      {r.reviewComment && <> · Comment: “{r.reviewComment}”</>}
                     </p>
                   )}
+                  <StepNote step={r.managerStep} />
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge status={r.status} />
+                  <Badge status={r.status} step={r.managerStep} />
                   <button onClick={() => setOpenId(r.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Details</button>
                   {r.status === "PENDING" && (
                     <button onClick={() => cancel(r.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
@@ -176,8 +200,50 @@ function CorrectionsInner() {
         </section>
       )}
 
+      {/* ---------------- Manager: requests from my team ---------------- */}
+      {tab === "TEAM" && isManager && (
+        <section className={`${card} p-6`}>
+          <h2 className="font-semibold text-slate-900">Requests from your team</h2>
+          <p className="mt-1 text-sm text-slate-500">You answer first. If you approve, HR makes the final decision; if you reject, it is closed and attendance stays as it is.</p>
+          {team.error && <p className="mt-3 text-sm text-red-600">{team.error}</p>}
+          {team.data && team.data.pending.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">Nothing is waiting for you.</p>}
+          <div className="mt-4 divide-y divide-indigo-100">
+            {team.data?.pending.map((r) => (
+              <div key={r.id} className="py-4">
+                <p className="font-medium text-slate-900">{r.employee?.name} <span className="text-sm font-normal text-slate-400">{r.employee?.employeeCode}</span></p>
+                <p className="mt-0.5 text-sm text-slate-700">{day(r.date)} · {r.typeLabel}</p>
+                <p className="mt-0.5 text-sm text-slate-600">
+                  Recorded: {t(r.originalLoginAt, tz)} – {t(r.originalLogoutAt, tz)} <span className="text-slate-400">→</span> Requested: {r.requestedLoginAt ? t(r.requestedLoginAt, tz) : "no change"} – {r.requestedLogoutAt ? t(r.requestedLogoutAt, tz) : "no change"}
+                </p>
+                <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
+                {r.attachmentName && (
+                  <button onClick={() => openEvidence(r.id).catch((e: Error) => setNotice(e.message))} className="mt-2 rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50">Open evidence: {r.attachmentName}</button>
+                )}
+                <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => managerDecide(r.id, d, c)} />
+              </div>
+            ))}
+          </div>
+          {team.data && team.data.answered.length > 0 && (
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold text-slate-900">Answered by you</h3>
+              <div className="mt-2 divide-y divide-indigo-100">
+                {team.data.answered.map((r) => (
+                  <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{r.employee?.name} <span className="font-normal text-slate-400">· {day(r.date)} · {r.typeLabel}</span></p>
+                      <StepNote step={r.managerStep} />
+                    </div>
+                    <Badge status={r.status} step={r.managerStep} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* ---------------- HR: review lists ---------------- */}
-      {tab !== "MINE" && isHr && (
+      {tab !== "MINE" && tab !== "TEAM" && isHr && (
         <section className={`${card} p-6`}>
           <div className="flex flex-wrap items-end gap-3">
             <label className="text-xs text-slate-500">
@@ -230,7 +296,7 @@ function CorrectionsInner() {
                       <td className="py-3 text-slate-700">{r.typeLabel}</td>
                       <td className="py-3 text-slate-600">{t(r.originalLoginAt, tz)} – {t(r.originalLogoutAt, tz)}</td>
                       <td className="py-3 text-slate-600">{r.requestedLoginAt ? t(r.requestedLoginAt, tz) : "–"} – {r.requestedLogoutAt ? t(r.requestedLogoutAt, tz) : "–"}</td>
-                      <td className="py-3"><Badge status={r.status} /></td>
+                      <td className="py-3"><Badge status={r.status} step={r.managerStep} /></td>
                       <td className="py-3 text-right">
                         <button onClick={() => setOpenId(r.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">View</button>
                       </td>
@@ -279,13 +345,14 @@ function DetailsModal({ id, onClose, onChanged }: { id: string; onClose: () => v
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  async function decide() {
-    if (busy || !mode) return;
+  async function decide(skipReason?: string, forced?: "APPROVE" | "REJECT") {
+    const decision = forced ?? mode;
+    if (busy || !decision) return;
     setBusy(true);
     setErr("");
     try {
-      await apiPost(`/attendance-corrections/${id}/decide`, { decision: mode, comment });
-      onChanged(mode === "APPROVE" ? "Correction approved. The attendance record, worked hours and late status were updated." : "Correction rejected. The attendance record is unchanged.");
+      await apiPost(`/attendance-corrections/${id}/decide`, { decision, comment, ...(skipReason ? { skipManager: true, skipReason } : {}) });
+      onChanged(decision === "APPROVE" ? "Correction approved. The attendance record, worked hours and late status were updated." : "Correction rejected. The attendance record is unchanged.");
     } catch (e) {
       setErr((e as Error).message);
       setBusy(false);
@@ -301,7 +368,10 @@ function DetailsModal({ id, onClose, onChanged }: { id: string; onClose: () => v
       {d && (
         <div className="space-y-5">
           <div className="flex items-center justify-between">
-            <Badge status={d.status} />
+            <div>
+              <Badge status={d.status} step={d.managerStep} />
+              <StepNote step={d.managerStep} />
+            </div>
             <p className="text-xs text-slate-400">Submitted {when(d.createdAt, tz)}</p>
           </div>
 
@@ -372,13 +442,18 @@ function DetailsModal({ id, onClose, onChanged }: { id: string; onClose: () => v
 
           {err && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
 
-          {d.canDecide && !mode && (
+          {d.canDecide && d.managerStep?.status === "PENDING" && (
+            <div className="flex justify-end">
+              <SkipManagerBox busy={busy} onDecide={(decision, reason) => decide(reason, decision)} />
+            </div>
+          )}
+          {d.canDecide && d.managerStep?.status !== "PENDING" && !mode && (
             <div className="flex justify-end gap-2">
               <button onClick={() => setMode("REJECT")} className="rounded-xl border border-red-200 px-5 py-2 text-sm font-medium text-red-600 hover:bg-red-50">Reject</button>
               <button onClick={() => setMode("APPROVE")} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700">Approve</button>
             </div>
           )}
-          {d.canDecide && mode && (
+          {d.canDecide && d.managerStep?.status !== "PENDING" && mode && (
             <div className="space-y-3 rounded-2xl border border-indigo-100 p-4">
               <p className="text-sm font-medium text-slate-900">
                 {mode === "APPROVE"
@@ -390,7 +465,7 @@ function DetailsModal({ id, onClose, onChanged }: { id: string; onClose: () => v
                 <button onClick={() => { setMode(""); setErr(""); }} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Back</button>
                 <button
                   disabled={busy || (mode === "REJECT" && comment.trim().length < 3)}
-                  onClick={decide}
+                  onClick={() => decide()}
                   className={`rounded-xl px-5 py-2 text-sm font-medium text-white disabled:opacity-50 ${mode === "APPROVE" ? "bg-indigo-600 hover:bg-indigo-700" : "bg-red-600 hover:bg-red-700"}`}
                 >
                   {busy ? "Saving…" : mode === "APPROVE" ? "Confirm approval" : "Confirm rejection"}

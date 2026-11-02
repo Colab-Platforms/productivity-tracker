@@ -6,8 +6,8 @@ import { auditNote } from "../../lib/auditContext.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { docxToHtml, viewKind } from "./policies.docs.js";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { viewerIsOwner } from "../../lib/owner.js";
-import { getPinnedCompany } from "../../lib/deployment.js";
+import { accessFor } from "../../lib/companyAccess.js";
+import { canAccess, visibleCompanies } from "../../lib/companyAccess.logic.js";
 
 // ---------------------------------------------------------------------------
 // POLICIES & INDUCTION
@@ -81,7 +81,8 @@ async function who(userId: string, actAsArg?: string) {
   let platformId = u.platformId;
   let timezone = u.platform.timezone;
   if (actAs && actAs !== u.platformId) {
-    if (!["HR", "ADMIN"].includes(String(u.role)) || !(await viewerIsOwner(userId)) || (await getPinnedCompany())) throw new Error("NOT_ALLOWED");
+    // Only HR/Admin, and only for a company assigned to them (or any company, for top management).
+    if (!["HR", "ADMIN"].includes(String(u.role)) || !canAccess(await accessFor(userId), actAs)) throw new Error("NOT_ALLOWED");
     const target = await prisma.platform.findFirst({ where: { id: actAs, isActive: true }, select: { id: true, timezone: true } });
     if (!target) throw new Error("NOT_FOUND");
     platformId = target.id;
@@ -396,10 +397,11 @@ async function categoryNames(platformId: string): Promise<string[]> {
 // The companies an owner HR/Admin can manage policies for (everyone else: no switcher).
 export async function listCompanies(userId: string) {
   const u = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, platformId: true } });
-  const pinned = await getPinnedCompany();
-  if (!u || !["HR", "ADMIN"].includes(String(u.role)) || pinned || !(await viewerIsOwner(userId))) return { canSwitch: false, ownCompanyId: u?.platformId ?? null, companies: [] as { id: string; name: string }[] };
-  const rows = await prisma.platform.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } });
-  return { canSwitch: true, ownCompanyId: u.platformId, companies: rows };
+  if (!u || !["HR", "ADMIN"].includes(String(u.role))) return { canSwitch: false, ownCompanyId: u?.platformId ?? null, companies: [] as { id: string; name: string }[] };
+  const access = await accessFor(userId);
+  const rows = visibleCompanies(access, await prisma.platform.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }));
+  // Someone who can act on only their own company has nothing to switch to.
+  return { canSwitch: rows.length > 1, ownCompanyId: u.platformId, companies: rows.length > 1 ? rows : [] };
 }
 
 export async function listCategories(viewerId: string) {

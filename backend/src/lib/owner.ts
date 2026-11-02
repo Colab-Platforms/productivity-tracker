@@ -1,32 +1,16 @@
-﻿// ===========================================================================
-// OWNER ACCESS
+// ===========================================================================
+// OWNER ACCESS (top management)
 //
-// Lives in lib, not in the admin module, because both admin and onboarding
-// need it. Putting it in admin.service made onboarding import admin while
-// admin already imported onboarding - a cycle TypeScript compiles happily
-// and Node then fails on at runtime.
-//
-// Ranjan runs all ten companies and needs to see across them; a customer's
-// admin must not. OWNER_CODES in .env decides. A customer never sets it, so
-// their admin stays scoped exactly as before.
+// "Owner" now means: HR/Admin whose employee code is in OWNER_CODES, or who holds an all-companies grant in company_access
+// (see companyAccess.ts, the one place that decides which companies a person may act on). Per-company grants (HR assigned to
+// specific companies) are read from companyAccess.ts directly by the modules that support them.
+// A deployment pinned to one company switches owner reach off.
 // ===========================================================================
 
-import { prisma } from "./prisma.js";
-import { getPinnedCompany } from "./deployment.js";
+import { accessFor } from "./companyAccess.js";
 
-export const ownerCodes = (): string[] =>
-  String(process.env.OWNER_CODES ?? "")
-    .split(",")
-    .map((c) => c.trim().toUpperCase())
-    .filter(Boolean);
+export { ownerCodes } from "./companyAccess.logic.js";
 
 export async function viewerIsOwner(viewerId: string): Promise<boolean> {
-  const codes = ownerCodes();
-  if (codes.length === 0) return false;
-
-  const me = await prisma.user.findUnique({
-    where: { id: viewerId },
-    select: { employeeCode: true },
-  });
-  return codes.includes(String(me?.employeeCode ?? "").toUpperCase());
+  return (await accessFor(viewerId)).all;
 }

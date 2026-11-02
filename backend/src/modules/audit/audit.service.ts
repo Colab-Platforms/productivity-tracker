@@ -3,6 +3,15 @@ import { parseIsoDay, zonedToUtc } from "../../lib/dates.js";
 import { ACTIONS, MODULES, classify } from "../../lib/auditCatalog.js";
 import { scrub } from "../../lib/auditContext.js";
 
+// Salaries are recorded in the audit trail (what it was, what it became) but only an Admin may read the amounts.
+function hideSalary(value: unknown, role: string): unknown {
+  if (role === "ADMIN" || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((v) => hideSalary(v, role));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = /salary/i.test(k) ? "[hidden]" : hideSalary(v, role);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // AUDIT LOG (read-only)
 //
@@ -181,10 +190,10 @@ export async function getLog(viewerId: string, id: string) {
     path: r.path,
     status: r.status,
     // Original and new values of what changed (older rows have none: those predate this capture).
-    before: r.before === null ? null : scrub(r.before),
-    after: r.after === null ? null : scrub(r.after),
+    before: r.before === null ? null : hideSalary(scrub(r.before), v.role),
+    after: r.after === null ? null : hideSalary(scrub(r.after), v.role),
     // What the client sent. Already stripped of secrets when written; scrubbed again on the way out.
-    request: r.detail === null ? null : scrub(r.detail),
+    request: r.detail === null ? null : hideSalary(scrub(r.detail), v.role),
     ip: v.role === "ADMIN" ? r.ip : null,
   };
 }

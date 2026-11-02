@@ -60,6 +60,25 @@ export async function participationReady(): Promise<boolean> {
   }
   return readyValue;
 }
+// Accept / Decline answers live in their own table. Before it exists nobody can answer and joining is not gated on an answer.
+let respReadyValue = false;
+let respCheckedAt = 0;
+export async function responsesReady(): Promise<boolean> {
+  if (respReadyValue) return true;
+  if (Date.now() - respCheckedAt < 15_000) return false;
+  respCheckedAt = Date.now();
+  try {
+    await prisma.meetingResponse.findFirst({ select: { id: true } });
+    respReadyValue = true;
+  } catch (e) {
+    const code = (e as { code?: unknown })?.code;
+    const msg = e instanceof Error ? e.message : "";
+    if (code !== "P2021" && !(/meeting_responses/.test(msg) && /does not exist|relation/.test(msg))) throw e;
+    respReadyValue = false;
+  }
+  return respReadyValue;
+}
+
 async function requireReady() {
   if (!(await participationReady())) throw new Error("FEATURES_NOT_READY");
 }
@@ -99,23 +118,46 @@ type Item = { id: string; startsAt: Date; endsAt: Date; isOrganizer: boolean; st
 /** Extra fields for meetings that have tracking on (nothing is added to the others). Never throws for a missing table. */
 export async function extrasFor(items: Item[], viewerId: string, now: Date) {
   const out = new Map<string, Record<string, unknown>>();
-  if (items.length === 0 || !(await participationReady())) return out;
+  if (items.length === 0) return out;
   const ids = items.map((i) => i.id);
-  const tracked = await prisma.meetingTracking.findMany({ where: { meetingId: { in: ids } }, select: { meetingId: true, lateAfterMinutes: true } });
-  if (tracked.length === 0) return out;
+  const itemBy = new Map(items.map((i) => [i.id, i]));
+  const partReady = await participationReady();
+  const respReady = await responsesReady();
+
+  const tracked = partReady ? await prisma.meetingTracking.findMany({ where: { meetingId: { in: ids } }, select: { meetingId: true, lateAfterMinutes: true } }) : [];
   const trackedIds = tracked.map((t) => t.meetingId);
-  const [mine, joined] = await Promise.all([
-    prisma.meetingParticipation.findMany({ where: { meetingId: { in: trackedIds }, userId: viewerId } }),
-    prisma.meetingParticipation.groupBy({ by: ["meetingId"], where: { meetingId: { in: trackedIds } }, _count: { _all: true } }),
+  const trackedSet = new Set(trackedIds);
+  const [invites, responses, mine, joined] = await Promise.all([
+    prisma.meetingAttendee.findMany({ where: { meetingId: { in: ids }, userId: viewerId }, select: { meetingId: true } }),
+    respReady ? prisma.meetingResponse.findMany({ where: { meetingId: { in: ids }, userId: viewerId }, select: { meetingId: true, response: true } }) : Promise.resolve([]),
+    trackedIds.length ? prisma.meetingParticipation.findMany({ where: { meetingId: { in: trackedIds }, userId: viewerId } }) : Promise.resolve([]),
+    trackedIds.length ? prisma.meetingParticipation.groupBy({ by: ["meetingId"], where: { meetingId: { in: trackedIds } }, _count: { _all: true } }) : Promise.resolve([]),
   ]);
+  const invitedTo = new Set(invites.map((a) => a.meetingId));
+  const answerOf = new Map(responses.map((r) => [r.meetingId, r.response as "ACCEPTED" | "DECLINED"]));
   const mineBy = new Map(mine.map((p) => [p.meetingId, p]));
   const joinedBy = new Map(joined.map((j) => [j.meetingId, j._count._all]));
-  const itemBy = new Map(items.map((i) => [i.id, i]));
+
+  // Everyone INVITED (not the organizer) gets their answer, their status and whether they may still answer: for every meeting, tracked or not.
+  for (const id of invitedTo) {
+    const it = itemBy.get(id)!;
+    const over = it.endsAt.getTime() < now.getTime();
+    const response = answerOf.get(id) ?? null;
+    const p = mineBy.get(id) ?? null;
+    out.set(id, {
+      myResponse: response,
+      myStatus: L.inviteStatus({ response, participation: p, meetingOver: over, tracked: trackedSet.has(id) }),
+      canRespond: respReady && L.canRespondNow({ isInvitee: true, cancelled: it.status !== "SCHEDULED", meetingOver: over, joined: !!p }),
+      mustAccept: respReady && trackedSet.has(id) && response !== "ACCEPTED" && !p && !over && it.status === "SCHEDULED",
+    });
+  }
   for (const t of tracked) {
     const it = itemBy.get(t.meetingId)!;
     const w = L.joinWindow(it.startsAt, it.endsAt, now);
     const p = mineBy.get(t.meetingId) ?? null;
+    const accepted = !respReady || it.isOrganizer || answerOf.get(t.meetingId) === "ACCEPTED";
     out.set(t.meetingId, {
+      ...(out.get(t.meetingId) ?? {}),
       tracked: true,
       lateAfterMinutes: t.lateAfterMinutes,
       joinWindow: { open: w.open, reason: w.reason, opensAt: w.opensAt, closesAt: w.closesAt },
@@ -131,7 +173,8 @@ export async function extrasFor(items: Item[], viewerId: string, now: Date) {
             stillActivePastEnd: L.isStillActivePastEnd(p, it.endsAt, now),
           }
         : { state: "NOT_JOINED" as const },
-      canJoin: !p && it.status === "SCHEDULED" && w.open,
+      // Joining needs an accepted invitation (the organizer needs none).
+      canJoin: !p && it.status === "SCHEDULED" && w.open && accepted,
       // How many INVITED people joined: the organizer's own record is not one of them.
       joinedCount: it.isOrganizer ? Math.max(0, (joinedBy.get(t.meetingId) ?? 0) - (p ? 1 : 0)) : undefined,
     });
@@ -171,6 +214,12 @@ export async function join(userId: string, meetingId: string) {
   if (!t) throw new Error("NOT_TRACKED");
   if (String(m.status) === "CANCELLED") throw new Error("MEETING_CANCELLED");
 
+  // An invited person must have accepted first (the organizer needs no answer). Before the answers table exists this is not asked.
+  if (m.organizerId !== userId && (await responsesReady())) {
+    const answer = await prisma.meetingResponse.findUnique({ where: { meetingId_userId: { meetingId, userId } }, select: { response: true } });
+    if (answer?.response !== "ACCEPTED") throw new Error("NOT_ACCEPTED");
+  }
+
   const now = new Date(); // ONE reading of the clock: the same instant decides the window and is recorded as the join
   const w = L.joinWindow(m.startsAt, m.endsAt, now);
   if (!w.open) throw new Error(w.reason === "TOO_EARLY" ? "JOIN_TOO_EARLY" : "JOIN_CLOSED");
@@ -184,6 +233,47 @@ export async function join(userId: string, meetingId: string) {
   auditNote({ recordType: "Meeting", recordId: meetingId, summary: `Declared joining "${m.title}"`, after: { joinedAt: now } });
   emitMeetingChange([userId, m.organizerId], meetingId);
   return { ok: true, joinedAt: now, late: L.isLate(now, m.startsAt, t.lateAfterMinutes) };
+}
+
+/** An invited person accepts or declines. Changeable until they join or the meeting ends. Every answer is kept in the audit log. */
+export async function respond(userId: string, meetingId: string, response: unknown) {
+  if (!(await responsesReady())) throw new Error("FEATURES_NOT_READY");
+  if (response !== "ACCEPTED" && response !== "DECLINED") throw new Error("BAD_RESPONSE");
+  const v = await who(userId);
+  // Only someone invited. Anyone else: it does not exist as far as they can tell.
+  const m = await prisma.meeting.findFirst({
+    where: { id: meetingId, platformId: v.platformId, attendees: { some: { userId } } },
+    select: { id: true, title: true, startsAt: true, endsAt: true, status: true, organizerId: true },
+  });
+  if (!m) throw new Error("NOT_FOUND");
+  if (String(m.status) === "CANCELLED") throw new Error("MEETING_CANCELLED");
+  const now = new Date();
+  if (m.endsAt.getTime() < now.getTime()) throw new Error("MEETING_OVER");
+  if ((await participationReady()) && (await prisma.meetingParticipation.findUnique({ where: { meetingId_userId: { meetingId, userId } }, select: { id: true } }))) throw new Error("ALREADY_JOINED");
+
+  const before = await prisma.meetingResponse.findUnique({ where: { meetingId_userId: { meetingId, userId } }, select: { response: true } });
+  await prisma.meetingResponse.upsert({
+    where: { meetingId_userId: { meetingId, userId } },
+    update: { response, respondedAt: now },
+    create: { meetingId, platformId: v.platformId, userId, response },
+  });
+  const word = response === "ACCEPTED" ? "accepted" : "declined";
+  auditNote({ recordType: "Meeting", recordId: meetingId, summary: `${response === "ACCEPTED" ? "Accepted" : "Declined"} the invitation to "${m.title}"`, before: before ? { response: before.response } : { response: null }, after: { response } });
+  emitMeetingChange([userId, m.organizerId], meetingId);
+  try {
+    await notifyUsers({
+      platformId: v.platformId,
+      userIds: [m.organizerId],
+      type: "MEETING_RESPONDED",
+      title: `${v.name} ${word} "${m.title}"`,
+      body: `${v.name} ${word} your invitation to "${m.title}".`,
+      link: `/dashboard/meetings?id=${meetingId}`,
+      data: { meetingId },
+    });
+  } catch (e) {
+    console.error("[meetings] could not notify the organizer of an answer:", e);
+  }
+  return { ok: true, response };
 }
 
 export async function leave(userId: string, meetingId: string) {
@@ -219,11 +309,14 @@ export async function list(userId: string, meetingId: string) {
   const t = await prisma.meetingTracking.findUnique({ where: { meetingId } });
   if (!t) throw new Error("NOT_TRACKED");
 
-  const [parts, changes] = await Promise.all([
+  const [parts, changes, answers] = await Promise.all([
     prisma.meetingParticipation.findMany({ where: { meetingId } }),
     prisma.meetingParticipationChange.groupBy({ by: ["userId"], where: { meetingId }, _count: { _all: true } }),
+    (await responsesReady()) ? prisma.meetingResponse.findMany({ where: { meetingId }, select: { userId: true, response: true, respondedAt: true } }) : Promise.resolve([]),
   ]);
   const now = new Date();
+  const answerBy = new Map(answers.map((a) => [a.userId, a]));
+  const over = m.endsAt.getTime() < now.getTime();
   const pBy = new Map(parts.map((p) => [p.userId, p]));
   const corrected = new Set(changes.map((c) => c.userId));
 
@@ -236,6 +329,9 @@ export async function list(userId: string, meetingId: string) {
         name: `${a.user.firstName} ${a.user.lastName}`.trim(),
         employeeCode: a.user.employeeCode,
         designation: a.user.designation,
+        response: (answerBy.get(a.user.id)?.response as "ACCEPTED" | "DECLINED" | undefined) ?? null,
+        respondedAt: answerBy.get(a.user.id)?.respondedAt ?? null,
+        status: L.inviteStatus({ response: (answerBy.get(a.user.id)?.response as "ACCEPTED" | "DECLINED" | undefined) ?? null, participation: p, meetingOver: over, tracked: true }),
         state: L.stateOf(p),
         joinedAt: p?.joinedAt ?? null,
         leftAt: p?.leftAt ?? null,
@@ -273,6 +369,9 @@ export async function list(userId: string, meetingId: string) {
     selfReported: true,
     summary: {
       invited: rows.length,
+      accepted: rows.filter((r) => r.response === "ACCEPTED").length,
+      declined: rows.filter((r) => r.response === "DECLINED").length,
+      awaitingAnswer: rows.filter((r) => r.response === null).length,
       joined: joined.length,
       notJoined: rows.length - joined.length,
       inMeeting: rows.filter((r) => r.state === "IN_MEETING").length,
@@ -450,7 +549,12 @@ export async function counts(viewerId: string, meetingId: string) {
   const m = await prisma.meeting.findFirst({ where: { id: meetingId, platformId: v.platformId }, select: { id: true, organizerId: true, _count: { select: { attendees: true } } } });
   if (!m) throw new Error("NOT_FOUND");
   if (!(await prisma.meetingTracking.findUnique({ where: { meetingId } }))) throw new Error("NOT_TRACKED");
-  return { invited: m._count.attendees, joined: await prisma.meetingParticipation.count({ where: { meetingId, userId: { not: m.organizerId } } }) };
+  const [joined, accepted, declined] = await Promise.all([
+    prisma.meetingParticipation.count({ where: { meetingId, userId: { not: m.organizerId } } }),
+    (await responsesReady()) ? prisma.meetingResponse.count({ where: { meetingId, response: "ACCEPTED" } }) : Promise.resolve(0),
+    (await responsesReady()) ? prisma.meetingResponse.count({ where: { meetingId, response: "DECLINED" } }) : Promise.resolve(0),
+  ]);
+  return { invited: m._count.attendees, accepted, declined, joined };
 }
 
 // --- productive-time breakdown (shared by the employee and manager screens) -----------------------------------------
@@ -579,6 +683,46 @@ export async function managerOverview(userId: string, dayStr?: string) {
     }),
     people,
   };
+}
+
+// --- meeting time per person for the Attendance screens ----------------------------------------------------------------
+
+type SessionForMeetings = {
+  userId: string; loginAt: Date; logoutAt: Date | null;
+  breaks: { startedAt: Date; endedAt: Date | null }[];
+  meetings: { approvalStatus: unknown; startedAt: Date | null; endedAt: Date | null }[];
+};
+
+/**
+ * For the people in `sessions` who actually have Team Huddle participation around their session: the huddle seconds and the other eligible
+ * (live, approved) meeting seconds, merged so an overlap is counted once, limited to the clocked-in period and outside breaks
+ * (the same computeBreakdown as every other screen). People with no huddle participation are NOT in the map: callers keep their
+ * existing live-meeting figure untouched. Batched: one read of participation and one of meetings. Empty before the migration.
+ */
+export async function huddleBreakdowns(sessions: SessionForMeetings[], now: Date): Promise<Map<string, { huddleSeconds: number; otherSeconds: number; openPastEnd: boolean }>> {
+  const out = new Map<string, { huddleSeconds: number; otherSeconds: number; openPastEnd: boolean }>();
+  if (sessions.length === 0 || !(await participationReady())) return out;
+  const ids = [...new Set(sessions.map((s) => s.userId))];
+  const lo = Math.min(...sessions.map((s) => s.loginAt.getTime())) - 6 * 3_600_000;
+  const hi = Math.max(...sessions.map((s) => (s.logoutAt ?? now).getTime()));
+  const parts = await prisma.meetingParticipation.findMany({
+    where: { userId: { in: ids }, joinedAt: { gte: new Date(lo), lte: new Date(hi) } },
+    select: { id: true, meetingId: true, userId: true, joinedAt: true, leftAt: true },
+  });
+  if (parts.length === 0) return out;
+  const meetings = await prisma.meeting.findMany({ where: { id: { in: [...new Set(parts.map((p) => p.meetingId))] } }, select: { id: true, endsAt: true } });
+  const endOf = new Map(meetings.map((m) => [m.id, m.endsAt]));
+  for (const s of sessions) {
+    const mineParts = parts.filter((p) => p.userId === s.userId && p.joinedAt.getTime() >= s.loginAt.getTime() - 6 * 3_600_000 && p.joinedAt.getTime() <= (s.logoutAt ?? now).getTime() && endOf.has(p.meetingId));
+    if (mineParts.length === 0) continue;
+    const b = computeBreakdown({
+      loginAt: s.loginAt, logoutAt: s.logoutAt, breaks: s.breaks,
+      liveMeetings: s.meetings.map((m) => ({ approvalStatus: String(m.approvalStatus), startedAt: m.startedAt, endedAt: m.endedAt })),
+      huddles: mineParts.map((p) => ({ id: p.id, joinedAt: p.joinedAt, leftAt: p.leftAt, expectedEnd: endOf.get(p.meetingId) as Date })), now,
+    });
+    out.set(s.userId, { huddleSeconds: b.huddleSeconds, otherSeconds: b.otherEligibleSeconds, openPastEnd: b.huddles.some((h) => h.openPastEnd) });
+  }
+  return out;
 }
 
 // --- Team Huddle seconds per person per day (for Reports and My History) -----------------------------------------------

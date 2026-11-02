@@ -367,7 +367,7 @@ export default function AttendancePage() {
                               </>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-right tabular-nums text-slate-900">{clock(meetSec)}</td>
+                          <td className="px-4 py-3 text-right tabular-nums text-slate-900" title="Live meetings plus the time the person actually spent in a Team Huddle (from joining to leaving), counted only while clocked in and outside breaks. 0:00:00 means nothing was recorded.">{clock(meetSec)}</td>
                           <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">{clock(prodSec)}</td>
                         </tr>
                       );

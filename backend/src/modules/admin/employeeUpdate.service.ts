@@ -20,6 +20,7 @@
 // ===========================================================================
 
 import { prisma } from "../../lib/prisma.js";
+import { canAccess } from "../../lib/companyAccess.logic.js";
 import {
   dayLabel,
   dayNumbers,
@@ -179,8 +180,8 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     row.name = `${user.firstName} ${user.lastName}`.trim();
     row.company = user.platform.name;
 
-    if (!viewer.owner && user.platformId !== viewer.platformId) {
-      err("employeeId", "OUTSIDE_YOUR_COMPANY", "This person belongs to another company. You can only update people in your own company.");
+    if (!canAccess(viewer.access, user.platformId)) {
+      err("employeeId", "OUTSIDE_YOUR_COMPANY", "This person belongs to a company you cannot act on.");
       row.status = "INVALID";
       continue;
     }

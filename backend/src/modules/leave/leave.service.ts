@@ -1,8 +1,9 @@
 import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { auditNote } from "../../lib/auditContext.js";
-import { ownerCodes, viewerIsOwner } from "../../lib/owner.js";
+import { accessFor, deciderIdsForCompany, scopeWhere, type Access } from "../../lib/companyAccess.js";
 import { notifyUsers } from "../../lib/notify.js";
+import { claimStep, gateForHr, rowsForManager, startStep, stepViews } from "../approvals/managerStep.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 
 // ---------------------------------------------------------------------------
@@ -78,10 +79,10 @@ function emptyTaken(): Taken {
 }
 
 // Leave per person for a calendar year, by type. Half days count 0.5.
-async function takenByUser(platformId: string | undefined, year: number, userIds?: string[]) {
+async function takenByUser(platformId: string | string[] | undefined, year: number, userIds?: string[]) {
   const rows = await prisma.leaveDay.findMany({
     where: {
-      ...(platformId ? { platformId } : {}),
+      ...(platformId ? { platformId: Array.isArray(platformId) ? { in: platformId } : platformId } : {}),
       date: { gte: new Date(Date.UTC(year, 0, 1)), lte: new Date(Date.UTC(year, 11, 31)) },
       ...(userIds ? { userId: { in: userIds } } : {}),
     },
@@ -135,20 +136,7 @@ function requestView(r: {
 
 // Who is told about a new request: HR/Admin of the person's company, plus owners who are HR/Admin (they decide every company's
 // requests). Never the requester. A pinned deployment drops the owners from other companies.
-async function deciderIdsFor(platformId: string, exceptUserId: string) {
-  const pinned = await getPinnedCompany();
-  const owners = pinned ? [] : ownerCodes();
-  const rows = await prisma.user.findMany({
-    where: {
-      role: { in: ["HR", "ADMIN"] },
-      status: "ACTIVE",
-      id: { not: exceptUserId },
-      OR: [{ platformId }, ...(owners.length ? [{ employeeCode: { in: owners } }] : [])],
-    },
-    select: { id: true },
-  });
-  return rows.map((r) => r.id);
-}
+const deciderIdsFor = (platformId: string, exceptUserId: string) => deciderIdsForCompany(platformId, exceptUserId);
 
 const dayLabel = (r: { fromDate: Date; toDate: Date }) => (iso(r.fromDate) === iso(r.toDate) ? iso(r.fromDate) : `${iso(r.fromDate)} to ${iso(r.toDate)}`);
 
@@ -207,12 +195,15 @@ export async function requestLeave(
   try {
     const person = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true, employeeCode: true } });
     const name = `${person?.firstName ?? ""} ${person?.lastName ?? ""}`.trim() || "An employee";
+    // The manager answers first; HR is told when the manager approves. No manager (or an HR/Admin boss): straight to HR.
+    const approvers = await startStep("LEAVE", created.id, { id: userId, platformId: me.platformId }).catch((e) => { console.error("[leave] manager step not created:", e); return [] as string[]; });
+    const what = `${name} (${person?.employeeCode ?? "no ID"}) asked for ${isHalfDay ? "a half day" : `${created.dayCount} day(s)`} of ${leaveType.toLowerCase()} leave, ${dayLabel(created)}. Reason: ${reason}`;
     await notifyUsers({
       platformId: me.platformId,
-      userIds: await deciderIdsFor(me.platformId, userId),
+      userIds: approvers.length ? approvers : await deciderIdsFor(me.platformId, userId),
       type: "LEAVE_REQUESTED",
-      title: `Leave request: ${name}`,
-      body: `${name} (${person?.employeeCode ?? "no ID"}) asked for ${isHalfDay ? "a half day" : `${created.dayCount} day(s)`} of ${leaveType.toLowerCase()} leave, ${dayLabel(created)}. Reason: ${reason}`,
+      title: approvers.length ? `Leave request for your approval: ${name}` : `Leave request: ${name}`,
+      body: what,
       link: "/dashboard/leave",
       data: { requestId: created.id },
     });
@@ -234,11 +225,12 @@ export async function myLeave(userId: string, yearParam?: unknown) {
     }),
     takenByUser(me.platformId, year, [userId]),
   ]);
+  const steps = await stepViews("LEAVE", requests.map((r) => r.id));
   return {
     year,
     taken: taken.get(userId) ?? emptyTaken(),
     pending: requests.filter((r) => r.status === "PENDING").length,
-    requests: requests.map(requestView),
+    requests: requests.map((r) => ({ ...requestView(r), managerStep: steps.get(r.id) ?? null })),
   };
 }
 
@@ -260,13 +252,12 @@ export async function cancelRequest(userId: string, requestId: string) {
 async function decider(viewerId: string) {
   const v = await who(viewerId);
   if (!DECIDERS.includes(v.role)) throw new Error("NOT_ALLOWED");
-  const owner = (await viewerIsOwner(viewerId)) && !(await getPinnedCompany());
-  return { ...v, owner };
+  return { ...v, access: await accessFor(viewerId) };
 }
 
 // Which companies the decider may see: their own, or all of them for an owner.
-const scopeOf = (v: { owner: boolean; platformId: string }) => (v.owner ? {} : { platformId: v.platformId });
-const takenScope = (v: { owner: boolean; platformId: string }) => (v.owner ? undefined : v.platformId);
+const scopeOf = (v: { access: Access }) => scopeWhere(v.access);
+const takenScope = (v: { access: Access }) => (v.access.all ? undefined : v.access.ids);
 
 export async function listRequests(viewerId: string, status?: unknown) {
   const v = await decider(viewerId);
@@ -279,10 +270,12 @@ export async function listRequests(viewerId: string, status?: unknown) {
   });
   const year = platformToday(v.timezone).getUTCFullYear();
   const taken = await takenByUser(takenScope(v), year, [...new Set(rows.map((r) => r.userId))]);
+  const steps = await stepViews("LEAVE", rows.map((r) => r.id));
   return {
     year,
     requests: rows.map((r) => ({
       ...requestView(r),
+      managerStep: steps.get(r.id) ?? null,
       person: {
         id: r.user.id,
         name: `${r.user.firstName} ${r.user.lastName}`.trim(),
@@ -311,7 +304,7 @@ async function tellRequester(r: { id: string; platformId: string; userId: string
   }
 }
 
-export async function decideRequest(viewerId: string, requestId: string, decision: unknown, note: unknown) {
+export async function decideRequest(viewerId: string, requestId: string, decision: unknown, note: unknown, skip: { skipManager?: unknown; skipReason?: unknown } = {}) {
   const v = await decider(viewerId);
   if (decision !== "APPROVE" && decision !== "REJECT") throw new Error("BAD_DECISION");
   const text = String(note ?? "").trim().slice(0, 500) || null;
@@ -320,6 +313,10 @@ export async function decideRequest(viewerId: string, requestId: string, decisio
   if (!r) throw new Error("NOT_FOUND");
   if (r.userId === v.id) throw new Error("OWN_REQUEST");
   if (r.status !== "PENDING") throw new Error("ALREADY_DECIDED");
+  // The manager answers first. HR can approve only after the manager approved (or, with a written reason, without the manager);
+  // a manager's rejection can never be turned into an approval.
+  const skipReason = await gateForHr("LEAVE", r.id, v.id, { ...skip, decision });
+  const viaSkip = skipReason ? ` (decided without the manager: ${skipReason})` : "";
 
   if (decision === "REJECT") {
     const res = await prisma.leaveRequest.updateMany({
@@ -327,7 +324,7 @@ export async function decideRequest(viewerId: string, requestId: string, decisio
       data: { status: "REJECTED", decidedById: v.id, decidedAt: new Date(), decisionNote: text },
     });
     if (res.count === 0) throw new Error("ALREADY_DECIDED");
-    auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { status: "PENDING" }, after: { status: "REJECTED", decisionNote: text }, summary: `Rejected leave ${iso(r.fromDate)} to ${iso(r.toDate)}` });
+    auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { status: "PENDING" }, after: { status: "REJECTED", decisionNote: text }, summary: `Rejected leave ${iso(r.fromDate)} to ${iso(r.toDate)}${viaSkip}` });
     await tellRequester(r, "REJECTED", text);
     return { status: "REJECTED" };
   }
@@ -366,9 +363,89 @@ export async function decideRequest(viewerId: string, requestId: string, decisio
       });
     }
   });
-  auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { status: "PENDING" }, after: { status: "APPROVED", days: dates.length, decisionNote: text }, summary: `Approved leave ${iso(r.fromDate)} to ${iso(r.toDate)} (${dates.length} working days)` });
+  auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { status: "PENDING" }, after: { status: "APPROVED", days: dates.length, decisionNote: text }, summary: `Approved leave ${iso(r.fromDate)} to ${iso(r.toDate)} (${dates.length} working days)${viaSkip}` });
   await tellRequester(r, "APPROVED", text);
   return { status: "APPROVED", days: dates.length };
+}
+
+// --- manager step ----------------------------------------------------------------
+
+async function managerOnly(managerId: string) {
+  const m = await who(managerId);
+  if (m.role !== "MANAGER") throw new Error("NOT_ALLOWED");
+  return m;
+}
+
+// Requests waiting for this manager, and the ones they answered recently.
+export async function managerRequests(managerId: string) {
+  const m = await managerOnly(managerId);
+  const rows = await rowsForManager("LEAVE", managerId);
+  const ids = [...new Set(rows.map((r) => r.requestId))];
+  const reqs = ids.length
+    ? await prisma.leaveRequest.findMany({ where: { id: { in: ids }, platformId: m.platformId }, include: { user: { select: personSelect }, decidedBy: deciderSelect } })
+    : [];
+  const byId = new Map(reqs.map((r) => [r.id, r]));
+  const year = platformToday(m.timezone).getUTCFullYear();
+  const taken = await takenByUser(m.platformId, year, [...new Set(reqs.map((r) => r.userId))]);
+  const steps = await stepViews("LEAVE", ids);
+  const view = (id: string) => {
+    const r = byId.get(id);
+    if (!r) return null;
+    return {
+      ...requestView(r),
+      managerStep: steps.get(id) ?? null,
+      person: { id: r.user.id, name: `${r.user.firstName} ${r.user.lastName}`.trim(), employeeCode: r.user.employeeCode, designation: r.user.designation },
+      takenThisYear: taken.get(r.userId) ?? emptyTaken(),
+    };
+  };
+  const pending = rows.filter((r) => r.status === "PENDING").map((r) => view(r.requestId)).filter((x) => x && x.status === "PENDING");
+  const answered = rows.filter((r) => r.status !== "PENDING").map((r) => view(r.requestId)).filter(Boolean);
+  return { year, pending, answered };
+}
+
+export async function managerDecide(managerId: string, requestId: string, decision: unknown, note: unknown) {
+  const m = await managerOnly(managerId);
+  if (decision !== "APPROVE" && decision !== "REJECT") throw new Error("BAD_DECISION");
+  const text = String(note ?? "").trim().slice(0, 500) || null;
+  if (decision === "REJECT" && (!text || text.length < 3)) throw new Error("COMMENT_REQUIRED");
+
+  const r = await prisma.leaveRequest.findFirst({ where: { id: requestId, platformId: m.platformId }, include: { user: { select: { firstName: true, lastName: true, employeeCode: true } } } });
+  if (!r) throw new Error("NOT_FOUND");
+  if (r.status !== "PENDING") throw new Error("ALREADY_DECIDED");
+  await claimStep({ kind: "LEAVE", requestId: r.id, managerId, requesterId: r.userId, decision, note: text });
+
+  const name = `${r.user.firstName} ${r.user.lastName}`.trim();
+  if (decision === "REJECT") {
+    // The manager's rejection closes the request. (If the person cancelled at the same moment, there is nothing left to close.)
+    await prisma.leaveRequest.updateMany({ where: { id: r.id, status: "PENDING" }, data: { status: "REJECTED", decidedById: managerId, decidedAt: new Date(), decisionNote: text } });
+    auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { status: "PENDING" }, after: { status: "REJECTED", by: "manager", decisionNote: text }, summary: `Manager rejected leave ${dayLabel(r)}` });
+    await tellRequester(r, "REJECTED", text ? `${text} (your manager)` : null);
+    return { status: "REJECTED" };
+  }
+  auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { managerStep: "PENDING" }, after: { managerStep: "APPROVED", decisionNote: text }, summary: `Manager approved leave ${dayLabel(r)}; waiting for HR` });
+  try {
+    await notifyUsers({
+      platformId: r.platformId,
+      userIds: await deciderIdsFor(r.platformId, r.userId),
+      type: "LEAVE_REQUESTED",
+      title: `Leave request ready for HR: ${name}`,
+      body: `${name} (${r.user.employeeCode ?? "no ID"}): ${dayLabel(r)}. Their manager approved it${text ? `: ${text}` : ""}. HR decides now.`,
+      link: "/dashboard/leave",
+      data: { requestId: r.id },
+    });
+    await notifyUsers({
+      platformId: r.platformId,
+      userIds: [r.userId],
+      type: "LEAVE_DECIDED",
+      title: "Your manager approved your leave",
+      body: `Your leave for ${dayLabel(r)} was approved by your manager. It is now waiting for HR.`,
+      link: "/dashboard/leave",
+      data: { requestId: r.id },
+    });
+  } catch (e) {
+    console.error("[leave] could not notify after manager step:", e);
+  }
+  return { status: "WAITING_FOR_HR" };
 }
 
 // Everyone in the company with the leave they have taken this year.

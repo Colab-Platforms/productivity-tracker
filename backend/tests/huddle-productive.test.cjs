@@ -9,10 +9,17 @@ const bcrypt = require("bcryptjs");
 const API = process.env.TEST_API ?? "http://localhost:5002/api";
 require("./_guard.cjs").assertTestDb(process.env.TEST_DATABASE_URL);
 
-const call = async (m, p, t, b) => {
+const rawCall = async (m, p, t, b) => {
   const r = await fetch(API + p, { method: m, headers: { "content-type": "application/json", ...(t ? { authorization: "Bearer " + t } : {}) }, body: b !== undefined ? JSON.stringify(b) : undefined });
   const txt = await r.text(); let j; try { j = JSON.parse(txt); } catch { j = txt; }
   return { s: r.status, b: j };
+};
+
+// Joining a Team Huddle now needs an accepted invitation. These tests are about joining, not about answering, so an invited person who
+// presses Join first answers "accept" (when that cannot be done, e.g. not invited, the join itself is still what the test checks).
+const call = async (m, p, t, b) => {
+  if (m === "POST" && t && /^\/meetings\/[0-9a-f-]{36}\/join$/.test(p)) await rawCall("POST", p.replace(/\/join$/, "/respond"), t, { response: "ACCEPTED" });
+  return rawCall(m, p, t, b);
 };
 let pass = 0, fail = 0;
 const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n + (c ? "" : "  -> " + String(JSON.stringify(x)).slice(0, 300))); };

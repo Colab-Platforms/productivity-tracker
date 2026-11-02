@@ -33,6 +33,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_LATE_MINUTES: { status: 400, message: "Choose how many minutes late counts as late: a whole number from 0 to 120." },
   JOIN_TOO_EARLY: { status: 409, message: "You can join from 15 minutes before the meeting starts." },
   JOIN_CLOSED: { status: 409, message: "Joining has closed because the meeting's expected end has passed. Ask the organizer to record it." },
+  NOT_ACCEPTED: { status: 409, message: "Accept the invitation first, then you can join." },
+  BAD_RESPONSE: { status: 400, message: "Answer must be accept or decline." },
   ALREADY_JOINED: { status: 409, message: "You have already joined this meeting. If you left and came back, ask the organizer to correct it." },
   NOT_JOINED: { status: 409, message: "You haven't joined this meeting." },
   ALREADY_ENDED: { status: 409, message: "You have already ended your participation." },
@@ -76,6 +78,7 @@ router.get("/people", run((req) => meetings.people(uid(req))));
 router.get("/huddles/overview", run((req) => participation.managerOverview(uid(req), typeof req.query.date === "string" ? req.query.date : undefined)));
 router.get("/participation/history", run((req) => participation.history(uid(req), typeof req.query.userId === "string" && req.query.userId ? req.query.userId : undefined)));
 router.get("/:id", run((req) => meetings.getOne(uid(req), String(req.params.id))));
+router.post("/:id/respond", run((req) => participation.respond(uid(req), String(req.params.id), req.body?.response)));
 router.post("/:id/join", run((req) => participation.join(uid(req), String(req.params.id))));
 router.post("/:id/leave", run((req) => participation.leave(uid(req), String(req.params.id))));
 router.get("/:id/participation", run((req) => participation.list(uid(req), String(req.params.id))));

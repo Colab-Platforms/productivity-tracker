@@ -16,6 +16,7 @@ export type CorrectionRequest = {
   applied: boolean;
   createdAt: string;
   employee?: { id: string; name: string; employeeCode: string | null; designation: string | null };
+  managerStep?: { status: string; approvers: string[]; decidedBy: string | null; decidedAt: string | null; note: string | null } | null;
 };
 
 export type SessionSnapshot = {

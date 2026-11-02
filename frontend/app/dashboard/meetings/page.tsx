@@ -6,7 +6,7 @@ import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
 import { useRealtime } from "@/lib/realtime";
-import { HistoryModal, JoinControl, ParticipationPanel, PastRecord, type TrackedFields } from "./_participation/Participation";
+import { HistoryModal, InviteResponse, JoinControl, ParticipationPanel, PastRecord, type TrackedFields } from "./_participation/Participation";
 
 // ---------------------------------------------------------------------------
 // MEETINGS
@@ -142,6 +142,11 @@ function MeetingsInner() {
                   {m.canEnd && <EndInline id={m.id} onDone={() => { setNotice("Meeting ended. It now shows under Past."); setReload((n) => n + 1); }} />}
                   <button onClick={() => setOpenId(m.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Details</button>
                 </div>
+                {m.myStatus && m.state !== "cancelled" && m.state !== "past" && (
+                  <div className="w-full">
+                    <InviteResponse meetingId={m.id} f={m} compact onChanged={() => setReload((n) => n + 1)} />
+                  </div>
+                )}
                 {m.tracked && m.state !== "cancelled" && (
                   <div className="w-full">
                     {m.state === "past" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} compact onChanged={() => setReload((n) => n + 1)} />}
@@ -240,9 +245,15 @@ function DetailsModal({ id, tz, onClose, onEdit, onChanged }: { id: string; tz: 
             <div className="flex justify-between gap-4 px-4 py-2.5"><dt className="text-slate-500">Organizer</dt><dd className="font-medium text-slate-900">{m.organizer}</dd></div>
             {m.provider && <div className="flex justify-between gap-4 px-4 py-2.5"><dt className="text-slate-500">Link</dt><dd className="font-medium text-slate-900">{m.provider}</dd></div>}
           </dl>
+          {m.myStatus && m.state !== "cancelled" && m.state !== "past" && (
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Your invitation</p>
+              <InviteResponse meetingId={m.id} f={m} onChanged={() => setRl((n) => n + 1)} />
+            </div>
+          )}
           {m.tracked && !m.isOrganizer && m.state !== "cancelled" && (
             <div>
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">In-person meeting</p>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Team Huddle</p>
               {m.state === "past" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={() => setRl((n) => n + 1)} />}
             </div>
           )}

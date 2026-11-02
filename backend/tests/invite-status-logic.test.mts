@@ -1,0 +1,23 @@
+// Invitation status and answer rules. No database.
+import { canRespondNow, inviteStatus } from "../src/modules/meetings/participation.logic.js";
+let pass = 0, fail = 0;
+const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n); };
+const base = { response: null as "ACCEPTED" | "DECLINED" | null, participation: null as { leftAt: Date | null } | null, meetingOver: false, tracked: true };
+ok("no answer yet = Invited", inviteStatus(base) === "INVITED");
+ok("accepted before the meeting = Accepted", inviteStatus({ ...base, response: "ACCEPTED" }) === "ACCEPTED");
+ok("declined = Declined", inviteStatus({ ...base, response: "DECLINED" }) === "DECLINED");
+ok("joined and still in = Joined", inviteStatus({ ...base, response: "ACCEPTED", participation: { leftAt: null } }) === "JOINED");
+ok("joined and ended = Completed", inviteStatus({ ...base, response: "ACCEPTED", participation: { leftAt: new Date() } }) === "COMPLETED");
+ok("meeting over, accepted, never joined = Not joined", inviteStatus({ ...base, response: "ACCEPTED", meetingOver: true }) === "NOT_JOINED");
+ok("meeting over, never answered, never joined = Not joined", inviteStatus({ ...base, meetingOver: true }) === "NOT_JOINED");
+ok("meeting over, declined = still Declined (not 'Not joined')", inviteStatus({ ...base, response: "DECLINED", meetingOver: true }) === "DECLINED");
+ok("a record beats everything: joined although declined earlier = Joined", inviteStatus({ ...base, response: "DECLINED", participation: { leftAt: null } }) === "JOINED");
+ok("a meeting that is not tracked never says Not joined", inviteStatus({ ...base, meetingOver: true, tracked: false }) === "INVITED" && inviteStatus({ ...base, response: "ACCEPTED", meetingOver: true, tracked: false }) === "ACCEPTED");
+const r = { isInvitee: true, cancelled: false, meetingOver: false, joined: false };
+ok("an invitee can answer", canRespondNow(r) === true);
+ok("someone who is not invited cannot", canRespondNow({ ...r, isInvitee: false }) === false);
+ok("nobody can answer a cancelled meeting", canRespondNow({ ...r, cancelled: true }) === false);
+ok("nobody can answer once it is over", canRespondNow({ ...r, meetingOver: true }) === false);
+ok("nobody can change their answer after joining", canRespondNow({ ...r, joined: true }) === false);
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

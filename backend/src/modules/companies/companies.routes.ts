@@ -17,6 +17,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   COMPANY_EXISTS: { status: 409, message: "A company with that name already exists." },
   BAD_TIMEZONE: { status: 400, message: "That timezone is not valid (for example Asia/Kolkata)." },
   BAD_PREFIX: { status: 400, message: "The employee-code prefix must be 2 to 8 letters or digits." },
+  PREFIX_TAKEN: { status: 409, message: "Another company already uses that prefix." },
+  PREFIX_NOT_ALLOWED: { status: 403, message: "Only an Admin or top management can change a company's employee-ID prefix." },
   CANNOT_DEACTIVATE: { status: 400, message: "You cannot deactivate your own company, or the one this system is set up for." },
   NOTHING_TO_UPDATE: { status: 400, message: "Nothing to update." },
 };

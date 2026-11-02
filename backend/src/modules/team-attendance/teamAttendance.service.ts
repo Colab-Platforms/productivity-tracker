@@ -10,6 +10,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
+import { huddleBreakdowns } from "../meetings/participation.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
 
@@ -149,6 +150,9 @@ export async function getLiveBoard(viewerId: string) {
   const byUser = new Map(sessions.map((s) => [s.userId, s]));
   const onLeave = new Set(leaveDays.map((l) => l.userId));
   const remarkOf = await remarksBySession(sessions.map((s) => s.id));
+  // Team Huddle time (what people actually declared: join to leave) is part of "Meetings". Only a MANAGER sees it per person, and only for the
+  // people on their own board (their reporting employees); HR/Admin keep seeing live-meeting time only and get huddle COUNTS elsewhere.
+  const huddle = String(viewer.role) === "MANAGER" ? await huddleBreakdowns(sessions as never, now) : new Map<string, { huddleSeconds: number; otherSeconds: number; openPastEnd: boolean }>();
 
   const rows = people.map((p) => {
     const t = targetsFor(p);
@@ -166,7 +170,10 @@ export async function getLiveBoard(viewerId: string) {
       const tt = totalsOf(s as SessionWithParts, now);
       productive = tt.productive;
       breakSec = tt.breakSec;
-      meeting = tt.meeting;
+      // Live meetings and Team Huddle participation, merged so an overlap counts once; inside clock-in, outside breaks. A person with no
+      // huddle record keeps exactly the figure they had before.
+      const hb = huddle.get(p.id);
+      meeting = hb ? hb.huddleSeconds + hb.otherSeconds : tt.meeting;
       startedAt = statusStartedAt(s as SessionWithParts, tt.openBreak, tt.openMeeting);
       shiftSeconds = secondsBetween(s.loginAt, s.logoutAt ?? now);
       if (s.status === "COMPLETED") status = "CLOCKED_OUT";
@@ -239,6 +246,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
   ]);
   const byUser = new Map(sessions.map((s) => [s.userId, s]));
   const onLeave = new Set(leaveDays.map((l) => l.userId));
+  const huddle = String(viewer.role) === "MANAGER" ? await huddleBreakdowns(sessions as never, now) : new Map<string, { huddleSeconds: number; otherSeconds: number; openPastEnd: boolean }>();
 
   const rows = people.map((p) => {
     const t = targetsFor(p);
@@ -269,7 +277,8 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
       working: s.status === "ACTIVE",
       shiftSeconds: secondsBetween(s.loginAt, end),
       teaSeconds: per.TEA, lunchSeconds: per.LUNCH, bioSeconds: per.BIO, otherSeconds: per.OTHER,
-      huddleSeconds: tt.meeting,
+      // Meeting time: live meetings plus actual Team Huddle participation, merged (never counted twice).
+      huddleSeconds: huddle.get(p.id) ? (huddle.get(p.id)!.huddleSeconds + huddle.get(p.id)!.otherSeconds) : tt.meeting,
       breakSeconds: tt.breakSec,
       productiveSeconds: tt.productive, productiveTargetSeconds: t.productiveTargetSeconds, breakBudgetSeconds: t.breakBudgetSeconds,
     };

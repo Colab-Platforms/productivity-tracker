@@ -34,6 +34,10 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   NOT_ALLOWED: { status: 403, message: "Only HR and Admin can do that." },
   NOT_FOUND: { status: 404, message: "That request was not found." },
   USER_NOT_FOUND: { status: 404, message: "User not found." },
+  WAITING_FOR_MANAGER: { status: 409, message: "This request is waiting for the manager. HR can decide after the manager approves, or without the manager if you give a reason." },
+  SKIP_REASON_REQUIRED: { status: 400, message: "Give a reason (at least 5 characters) for deciding without the manager." },
+  MANAGER_REJECTED: { status: 409, message: "The manager rejected this request, so it cannot be approved. You can close it as rejected." },
+  STEP_ALREADY_DECIDED: { status: 409, message: "The manager step on this request was already answered." },
   TRACKER_LOCKED: { status: 403, message: "Your attendance is not active yet." },
   UNSUPPORTED_FILE_TYPE: { status: 415, message: "Attach a PDF, JPG, PNG, WEBP or Word file." },
   EMPTY_FILE: { status: 400, message: "That file is empty." },
@@ -70,9 +74,12 @@ router.post("/", run((req) => corrections.submitRequest(uid(req), req.body ?? {}
 router.post("/:id/cancel", run((req) => corrections.cancelRequest(uid(req), pid(req))));
 
 // HR / Admin (the service checks the role and the company).
+// Manager step: requests from the people who report to this manager (fixed paths, before /:id).
+router.get("/manager/requests", run((req) => corrections.managerRequests(uid(req))));
+router.post("/manager/requests/:id/decide", run((req) => corrections.managerDecide(uid(req), pid(req), req.body?.decision, req.body?.comment)));
 router.get("/pending-count", run((req) => corrections.pendingCount(uid(req))));
 router.get("/", run((req) => corrections.listForReview(uid(req), { status: req.query.status, from: req.query.from, to: req.query.to, q: req.query.q, teamId: req.query.teamId })));
-router.post("/:id/decide", run((req) => corrections.decide(uid(req), pid(req), req.body?.decision, req.body?.comment)));
+router.post("/:id/decide", run((req) => corrections.decide(uid(req), pid(req), req.body?.decision, req.body?.comment, { skipManager: req.body?.skipManager, skipReason: req.body?.skipReason })));
 
 // The employee (own) or HR/Admin (company): one request's details, and its evidence file.
 router.get("/:id", run((req) => corrections.details(uid(req), pid(req))));
