@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
+import { managerIdsByTeam } from "../../lib/teamManagers.js";
 
 // ---------------------------------------------------------------------------
 // TASK NOTIFICATIONS
@@ -29,12 +30,14 @@ const clip = (s: string | null | undefined, n = 140) => (s ? ` — ${s.trim().sl
 async function managersOf(ownerId: string, assignedById: string | null, exclude: string[]): Promise<string[]> {
   const owner = await prisma.user.findUnique({
     where: { id: ownerId },
-    select: { reportsToId: true, teamMemberships: { where: { isActive: true, team: { isActive: true } }, select: { team: { select: { managerId: true } } } } },
+    select: { reportsToId: true, teamMemberships: { where: { isActive: true, team: { isActive: true } }, select: { teamId: true } } },
   });
   const ids = new Set<string>();
   if (assignedById) ids.add(assignedById);
   if (owner?.reportsToId) ids.add(owner.reportsToId);
-  for (const m of owner?.teamMemberships ?? []) if (m.team.managerId) ids.add(m.team.managerId);
+  // primary manager AND every co-manager of each of the person's teams
+  const byTeam = await managerIdsByTeam((owner?.teamMemberships ?? []).map((m) => m.teamId));
+  for (const list of byTeam.values()) for (const id of list) ids.add(id);
   for (const x of exclude) ids.delete(x);
   if (ids.size === 0) return [];
   // Only people who can still sign in.

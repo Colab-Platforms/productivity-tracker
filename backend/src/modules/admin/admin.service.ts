@@ -23,6 +23,7 @@ import { allocateEmployeeCode } from "./employeeCode.js";
 import { photoStamps } from "../photos/photos.service.js";
 import { sendWelcome } from "../onboarding/onboarding.mail.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
+import { coManagersByTeam } from "../../lib/teamManagers.js";
 
 export const USER_ROLES = ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] as const;
 export const USER_STATUSES = ["CANDIDATE", "INVITED", "ACTIVE", "SUSPENDED", "EXITED"] as const;
@@ -385,6 +386,8 @@ export async function listTeams(viewerId: string) {
     orderBy: [{ name: "asc" }],
   });
 
+  const coByTeam = await coManagersByTeam(teams.map((t) => t.id));
+
   return teams.map((t) => ({
     id: t.id,
     name: t.name,
@@ -393,6 +396,7 @@ export async function listTeams(viewerId: string) {
     manager: t.manager
       ? { id: t.manager.id, name: `${t.manager.firstName} ${t.manager.lastName}`.trim() }
       : null,
+    coManagers: (coByTeam.get(t.id) ?? []).map((c) => ({ id: c.id, name: c.name, employeeCode: c.employeeCode })),
     shift: t.shift,
     config: t.config,
     memberCount: t.members.length,

@@ -69,7 +69,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   MANAGER_CYCLE: { status: 400, message: "That would make two people report to each other." },
   BAD_EMPLOYMENT_TYPE: { status: 400, message: "Pick a valid employee type." },
   FEATURES_NOT_READY: { status: 503, message: "This feature is not set up on this server yet. Ask an administrator to finish the database update." },
-  ACCESS_NOT_ALLOWED: { status: 403, message: "Only top management can change which companies a person can act on, and nobody can change their own." },
+  ACCESS_NOT_ALLOWED: { status: 403, message: "Only an Admin or top management can change which companies a person can act on (Admins: HR users only, never the all-companies option), and nobody can change their own." },
   ACCESS_ONLY_HR_ADMIN: { status: 400, message: "Company access can only be given to HR and Admin accounts." },
   NOTHING_TO_UPDATE_DESIGNATION: { status: 400, message: "Nothing to update." },
 };

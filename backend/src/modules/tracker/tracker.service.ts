@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
+import { managedByWhere } from "../../lib/teamManagers.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { cleanRemark, lateRemarksReady, LateRemarkRequired, remarksBySession } from "./lateRemarks.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
@@ -703,7 +704,7 @@ export async function visibleUserIds(viewer: {
 
   const [managedTeams, reports] = await Promise.all([
     prisma.team.findMany({
-      where: { managerId: viewer.id, isActive: true },
+      where: { ...(await managedByWhere(viewer.id)), isActive: true },
       select: { members: { where: { isActive: true }, select: { userId: true } } },
     }),
     prisma.user.findMany({
