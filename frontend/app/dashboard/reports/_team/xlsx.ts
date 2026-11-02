@@ -14,7 +14,7 @@ const BORDER = "FFD9DCF0";
 const NUMERIC = new Set(["Tasks completed", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks"]);
 const TASK_COLUMNS = new Set(["Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks"]);
 const WIDTH: Record<string, number> = {
-  "Employee ID": 14, Employee: 24, Team: 20, Date: 13, Shift: 24, "Check-in": 11, "Check-out": 11, Working: 11, Productive: 11, Break: 10,
+  "Employee ID": 14, Employee: 24, Team: 20, Date: 13, Shift: 24, "Check-in": 11, "Check-out": 11, Working: 11, Productive: 11, Break: 10, Washroom: 11,
   "Break over allowance": 14, Status: 18, "Late arrival": 12, "Early departure": 14, "Tasks completed": 12, "Total Tasks Planned Today": 15,
   "Tasks Approved Today": 15, "Pending Tasks": 12, Remarks: 44,
 };

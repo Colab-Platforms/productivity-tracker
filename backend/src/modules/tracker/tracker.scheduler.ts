@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { awayOf } from "./activityClass.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { closeStaleBreaks, closeStaleMeetings } from "./tracker.service.js";
 import { localMinutes, recompute } from "./tracker.service.js";
@@ -155,6 +156,7 @@ export async function generateAlerts() {
     const sessions = await prisma.workSession.findMany({
       where: { platformId: platform.id, date: today },
       include: {
+        breaks: true,
         user: {
           include: {
             teamMemberships: {
@@ -188,8 +190,10 @@ export async function generateAlerts() {
         raised++;
       }
 
-      if (s.breakSeconds > breakBudget) {
-        const over = Math.round((s.breakSeconds - breakBudget) / 60);
+      // Washroom is not break time, so it never counts towards the budget.
+      const away = awayOf(s, new Date());
+      if (away.breakSeconds > breakBudget) {
+        const over = Math.round((away.breakSeconds - breakBudget) / 60);
         await raise(
           platform.id,
           s.userId,
@@ -197,14 +201,14 @@ export async function generateAlerts() {
           "BREAK_OVERAGE",
           over > 30 ? "CRITICAL" : "WARNING",
           `Break budget exceeded by ${over} minutes`,
-          { usedSeconds: s.breakSeconds, budgetSeconds: breakBudget }
+          { usedSeconds: away.breakSeconds, budgetSeconds: breakBudget }
         );
         raised++;
       }
 
       // Meetings are already inside productiveSeconds; adding them again would
       // fire OVERTIME early for anyone who attended a meeting.
-      const onSite = s.productiveSeconds + s.breakSeconds;
+      const onSite = s.productiveSeconds + away.breakSeconds + away.washroomSeconds;
       if (onSite > overtimeAfter) {
         const over = Math.round((onSite - dailySeconds) / 60);
         await raise(

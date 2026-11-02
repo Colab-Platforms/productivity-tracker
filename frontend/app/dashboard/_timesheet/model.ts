@@ -16,7 +16,7 @@
 import { ceilHour, floorHour, fmtHour, zonedToMs } from "./time";
 import { BREAK_LABEL, MEETING_LABEL, type TsDay, type TsSchedule } from "./types";
 
-export type SegKind = "work" | "break" | "overtime" | "late";
+export type SegKind = "work" | "break" | "washroom" | "overtime" | "late";
 export type Seg = { kind: SegKind; start: number; end: number; label: string };
 
 export type DayModel = {
@@ -37,6 +37,7 @@ export type DayModel = {
   elapsedSeconds: number;
   workSeconds: number;
   breakSeconds: number;
+  washroomSeconds: number;
   overtimeSeconds: number;
   lateMinutes: number;
   meetings: { start: number; end: number | null; label: string }[];
@@ -50,7 +51,7 @@ export function buildDayModel(day: TsDay, tz: string, schedule: TsSchedule, nowM
   const empty: DayModel = {
     date: day.date, day, hasSession: false, isToday, loginMs: 0, finishMs: 0, logoutMs: null, ongoing: false,
     missingClockOut: false, autoClosed: false, axisStart: 0, axisEnd: 0, ticks: [], segs: [], elapsedSeconds: 0,
-    workSeconds: 0, breakSeconds: 0, overtimeSeconds: 0, lateMinutes: 0, meetings: [],
+    workSeconds: 0, breakSeconds: 0, washroomSeconds: 0, overtimeSeconds: 0, lateMinutes: 0, meetings: [],
   };
   if (!s) return empty;
 
@@ -68,7 +69,7 @@ export function buildDayModel(day: TsDay, tz: string, schedule: TsSchedule, nowM
 
   // --- breaks, clipped to the session --------------------------------------------------
   const breaks = s.breaks
-    .map((b) => ({ start: Date.parse(b.startedAt), end: b.endedAt ? Date.parse(b.endedAt) : finish, label: BREAK_LABEL[b.breakType] ?? b.breakType }))
+    .map((b) => ({ start: Date.parse(b.startedAt), end: b.endedAt ? Date.parse(b.endedAt) : finish, label: BREAK_LABEL[b.breakType] ?? b.breakType, washroom: b.breakType === "WASHROOM" }))
     .map((b) => ({ ...b, start: Math.max(b.start, login), end: Math.min(b.end, finish) }))
     .filter((b) => b.end > b.start)
     .sort((a, z) => a.start - z.start);
@@ -93,7 +94,8 @@ export function buildDayModel(day: TsDay, tz: string, schedule: TsSchedule, nowM
       segs.push({ kind: "overtime", start: Math.max(w.start, overtimeStart), end: w.end, label: "Overtime" });
     } else segs.push({ kind: "work", start: w.start, end: w.end, label: "Working time" });
   }
-  for (const b of breaks) segs.push({ kind: "break", start: b.start, end: b.end, label: `${b.label} break` });
+  // Tea / Lunch / Personal are breaks; Washroom is its own neutral kind (not break time, not productive time).
+  for (const b of breaks) segs.push(b.washroom ? { kind: "washroom", start: b.start, end: b.end, label: "Washroom" } : { kind: "break", start: b.start, end: b.end, label: `${b.label} break` });
 
   // --- late (only what the tracker recorded) -------------------------------------------------------
   let lateStart: number | null = null;
@@ -131,6 +133,7 @@ export function buildDayModel(day: TsDay, tz: string, schedule: TsSchedule, nowM
     elapsedSeconds: Math.max(0, Math.round((finish - login) / 1000)),
     workSeconds: sum("work") + sum("overtime"),
     breakSeconds: sum("break"),
+    washroomSeconds: sum("washroom"),
     overtimeSeconds: sum("overtime"),
     lateMinutes: s.wasLateLogin ? s.lateByMinutes : 0,
     meetings: s.meetings
@@ -142,6 +145,7 @@ export function buildDayModel(day: TsDay, tz: string, schedule: TsSchedule, nowM
 export const SEG_COLOR: Record<SegKind, string> = {
   work: "#7c5cfc",
   break: "#38bdf8",
+  washroom: "#94a3b8",
   overtime: "#f5b324",
   late: "#ef4444",
 };

@@ -4,6 +4,7 @@ import { managedByWhere } from "../../lib/teamManagers.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { cleanRemark, lateRemarksReady, LateRemarkRequired, remarksBySession } from "./lateRemarks.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
+import { awayOf, isCountedBreak, isWashroom, splitAwayTime } from "./activityClass.js";
 
 const DEFAULTS = {
   dailyWorkHours: 9,
@@ -97,14 +98,8 @@ export async function recompute(sessionId: string, db: SessionDb = prisma) {
     Math.floor((end.getTime() - session.loginAt.getTime()) / 1000)
   );
 
-  let breakSeconds = 0;
-  for (const b of session.breaks) {
-    const bEnd = b.endedAt ?? now;
-    breakSeconds += Math.max(
-      0,
-      Math.floor((bEnd.getTime() - b.startedAt.getTime()) / 1000)
-    );
-  }
+  // Break time = Tea, Lunch, Personal, Other. Washroom is its own neutral activity: not break, not productive (see activityClass.ts).
+  const { breakSeconds, washroomSeconds } = splitAwayTime(session.breaks, now);
 
   let meetingSeconds = 0;
   for (const m of session.meetings) {
@@ -120,7 +115,8 @@ export async function recompute(sessionId: string, db: SessionDb = prisma) {
   // An APPROVED meeting is working time, so it stays inside productive time.
   // meetingSeconds is a separate view of how much of it was meetings. Only
   // breaks come out of the day.
-  const productiveSeconds = Math.max(0, elapsed - breakSeconds);
+  // Every away row (break or washroom) comes out of the day, so productive time is the same figure it always was.
+  const productiveSeconds = Math.max(0, elapsed - breakSeconds - washroomSeconds);
 
   return db.workSession.update({
     where: { id: sessionId },
@@ -156,7 +152,8 @@ export async function getActiveSession(userId: string) {
   if (!session) return { session: null, config: ctx.config, hostsOpenMeeting, projects };
 
   const fresh = await recompute(session.id);
-  return { session: fresh, config: ctx.config, hostsOpenMeeting, projects };
+  const { washroomSeconds } = splitAwayTime(fresh.breaks, new Date());
+  return { session: { ...fresh, washroomSeconds }, config: ctx.config, hostsOpenMeeting, projects };
 }
 
 export async function clockIn(userId: string, teamId?: string | null, lateRemark?: unknown) {
@@ -803,13 +800,15 @@ export async function getTeamLiveStatus(viewerId: string) {
     else status = "WORKING";
 
     let productiveSeconds = s?.productiveSeconds ?? 0;
-    let breakSeconds = s?.breakSeconds ?? 0;
+    // Break and washroom come from the break rows (an open row runs to now), so Washroom never lands in the break figure.
+    const away = s ? splitAwayTime(s.breaks, new Date(now)) : { breakSeconds: 0, washroomSeconds: 0 };
+    const breakSeconds = away.breakSeconds;
     let meetingSeconds = s?.meetingSeconds ?? 0;
 
     if (s && s.status === "ACTIVE") {
       const since = Math.max(0, Math.floor((now - s.updatedAt.getTime()) / 1000));
       if (openBreak) {
-        breakSeconds += since;
+        // the open break or washroom is already counted to now above; productive time does not run while away
       } else {
         productiveSeconds += since;
         if (openMeeting) meetingSeconds += since;
@@ -832,6 +831,7 @@ export async function getTeamLiveStatus(viewerId: string) {
       lateRemark: s ? remarkOf.get(s.id) ?? null : null,
       productiveSeconds,
       breakSeconds,
+      washroomSeconds: away.washroomSeconds,
       meetingSeconds,
       productiveTarget: (team?.config?.productiveHours ?? 8) * 3600,
       breakBudget: (team?.config?.breakBudgetMinutes ?? 60) * 60,
@@ -923,9 +923,11 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
       logoutAt: s.logoutAt,
       status: s.status,
       productiveSeconds: s.productiveSeconds,
-      breakSeconds: s.breakSeconds,
+      breakSeconds: awayOf(s, new Date()).breakSeconds,
+      washroomSeconds: awayOf(s, new Date()).washroomSeconds,
       meetingSeconds: s.meetingSeconds,
-      breakCount: s.breaks.length,
+      breakCount: s.breaks.filter((b) => isCountedBreak(String(b.breakType))).length,
+      washroomCount: s.breaks.filter((b) => isWashroom(String(b.breakType))).length,
       meetingCount: s.meetings.filter((m) => m.approvalStatus === "APPROVED").length,
       wasLateLogin: s.wasLateLogin,
       lateByMinutes: s.lateByMinutes,
@@ -962,6 +964,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
         ? Math.round(totalProductive / worked.length)
         : 0,
       totalBreak: worked.reduce((n, r) => n + r.breakSeconds, 0),
+      totalWashroom: worked.reduce((n, r) => n + r.washroomSeconds, 0),
       totalMeeting: worked.reduce((n, r) => n + r.meetingSeconds, 0),
       avgTaskScore: scored.length
         ? Math.round(

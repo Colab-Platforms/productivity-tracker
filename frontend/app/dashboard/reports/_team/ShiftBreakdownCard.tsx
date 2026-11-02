@@ -57,7 +57,7 @@ export default function ShiftBreakdownCard() {
     if (!shift) return;
     downloadCsv(
       `shift-breakdown-${shift.date}.csv`,
-      ["Employee", "Employee ID", "Date", "Login", "Logout", "Shift", "Tea", "Lunch", "Bio", "Huddle", "Other", "Total break", "Break allowance", "Break over allowance", "Productive", "Target"],
+      ["Employee", "Employee ID", "Date", "Login", "Logout", "Shift", "Tea", "Lunch", "Washroom (not break)", "Huddle", "Other", "Total break", "Break allowance", "Break over allowance", "Productive", "Target"],
       shift.rows.map((r) =>
         r.hasSession
           ? [r.name, r.employeeCode, shift.date, clockTime(r.loginAt, tz), r.working ? "Working" : clockTime(r.logoutAt, tz), hm(r.shiftSeconds), hm(r.teaSeconds), hm(r.lunchSeconds), hm(r.bioSeconds), hm(r.huddleSeconds), hm(r.otherSeconds), hm(r.breakSeconds), hm(r.breakBudgetSeconds), r.breakSeconds !== null && r.breakSeconds > r.breakBudgetSeconds ? hm(r.breakSeconds - r.breakBudgetSeconds) : "", hm(r.productiveSeconds), hm(r.productiveTargetSeconds)]
@@ -114,7 +114,7 @@ export default function ShiftBreakdownCard() {
                 <th className={`${th} text-right`}>Shift</th>
                 <th className={`${th} text-right`}>Tea</th>
                 <th className={`${th} text-right`}>Lunch</th>
-                <th className={`${th} text-right`}>Bio</th>
+                <th className={`${th} text-right`} title="Washroom time. Not a break: it is not in the break total and does not use the allowance.">Washroom</th>
                 <th className={`${th} text-right`}>Huddle</th>
                 <th className={`${th} text-right`}>Other</th>
                 <th className={`${th} text-right`}>Break total</th>

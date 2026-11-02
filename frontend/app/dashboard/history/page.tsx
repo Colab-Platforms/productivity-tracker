@@ -73,9 +73,11 @@ type Row = {
   logoutAt: string | null;
   status: string;
   productiveSeconds: number;
-  breakSeconds: number;
+  breakSeconds: number; // Tea / Lunch / Personal / Other (Washroom is separate)
+  washroomSeconds?: number;
   meetingSeconds: number;
   breakCount: number;
+  washroomCount?: number;
   meetingCount: number;
   wasLateLogin: boolean;
   lateByMinutes: number;
@@ -102,6 +104,7 @@ type Data = {
     totalProductive: number;
     avgProductive: number;
     totalBreak: number;
+    totalWashroom?: number;
     totalMeeting: number;
     avgTaskScore: number | null;
   };
@@ -145,6 +148,7 @@ export default function HistoryPage() {
       "Clock out",
       "Productive",
       "Break",
+      "Washroom",
       "Meetings",
       "Breaks taken",
       "Late by (min)",
@@ -161,6 +165,7 @@ export default function HistoryPage() {
         r.logoutAt ? formatTime(r.logoutAt) : "",
         hm(r.productiveSeconds),
         hm(r.breakSeconds),
+        hm(r.washroomSeconds ?? 0),
         hm(r.meetingSeconds),
         r.breakCount,
         r.wasLateLogin ? r.lateByMinutes : 0,
@@ -268,6 +273,9 @@ export default function HistoryPage() {
                   <th className="text-right px-4 py-3 font-medium text-slate-500">
                     Break
                   </th>
+                  <th className="text-right px-4 py-3 font-medium text-slate-500" title="Washroom time is tracked on its own. It is not break time and does not use the break allowance.">
+                    Washroom
+                  </th>
                   <th className="text-right px-4 py-3 font-medium text-slate-500">
                     Meetings
                   </th>
@@ -351,6 +359,7 @@ export default function HistoryPage() {
                           ·{r.breakCount}
                         </span>
                       </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-600">{(r.washroomSeconds ?? 0) > 0 ? hm(r.washroomSeconds ?? 0) : <span className="text-slate-300">—</span>}</td>
                       <td className="px-4 py-3 text-right text-slate-600 tabular-nums">
                         {hm(r.meetingSeconds)}
                       </td>

@@ -21,7 +21,7 @@ type LiveRow = {
   company?: string | null; shiftName?: string | null; shiftStart?: string | null; shiftEnd?: string | null;
   status: LiveStatus; statusStartedAt: string | null; loginAt: string | null; logoutAt?: string | null; pendingInvite?: boolean;
   wasLateLogin: boolean; lateByMinutes: number; lateRemark?: string | null;
-  shiftSeconds: number | null; productiveSeconds: number | null; breakSeconds: number | null; meetingSeconds: number | null;
+  shiftSeconds: number | null; productiveSeconds: number | null; breakSeconds: number | null; washroomSeconds?: number | null; meetingSeconds: number | null;
   productiveTargetSeconds: number; breakBudgetSeconds: number;
 };
 type Live = {
@@ -41,7 +41,7 @@ const STATUS: Record<LiveStatus, { label: string; dot: string; row: string }> = 
   WORKING: { label: "Working", dot: "bg-emerald-500", row: "bg-emerald-50/60" },
   TEA: { label: "Tea break", dot: "bg-amber-500", row: "bg-amber-50" },
   LUNCH: { label: "Lunch break", dot: "bg-amber-500", row: "bg-amber-50" },
-  BIO: { label: "Bio break", dot: "bg-amber-500", row: "bg-amber-50" },
+  BIO: { label: "Washroom", dot: "bg-sky-400", row: "bg-sky-50/60" },
   OTHER_BREAK: { label: "Other break", dot: "bg-amber-500", row: "bg-amber-50" },
   MEETING: { label: "In meeting", dot: "bg-indigo-500", row: "bg-indigo-50/70" },
   CLOCKED_OUT: { label: "Clocked out", dot: "bg-slate-400", row: "" },
@@ -58,7 +58,9 @@ const MEETING_TYPES = [
   { value: "OTHER", label: "Other" },
 ];
 
-const IS_BREAK = (s: LiveStatus) => s === "TEA" || s === "LUNCH" || s === "BIO" || s === "OTHER_BREAK";
+const IS_BREAK = (s: LiveStatus) => s === "TEA" || s === "LUNCH" || s === "BIO" || s === "OTHER_BREAK"; // away from the desk, any kind
+// Only these use the break allowance. Washroom (BIO) is tracked on its own and is not a break.
+const IS_COUNTED_BREAK = (s: LiveStatus) => s === "TEA" || s === "LUNCH" || s === "OTHER_BREAK";
 // A live meeting attaches to a running work session, so only people who are clocked in (working or on a break) can be invited.
 const INVITABLE = (r: LiveRow) => (r.status === "WORKING" || IS_BREAK(r.status)) && !r.pendingInvite;
 
@@ -121,10 +123,11 @@ export default function AttendancePage() {
   }, [rows]);
 
   const counts = useMemo(() => {
-    const c = { working: 0, onBreak: 0, meeting: 0, notIn: 0, leave: 0, out: 0 };
+    const c = { working: 0, onBreak: 0, washroom: 0, meeting: 0, notIn: 0, leave: 0, out: 0 };
     for (const r of rows) {
       if (r.status === "WORKING") c.working++;
-      else if (IS_BREAK(r.status)) c.onBreak++;
+      else if (IS_COUNTED_BREAK(r.status)) c.onBreak++;
+      else if (r.status === "BIO") c.washroom++;
       else if (r.status === "MEETING") c.meeting++;
       else if (r.status === "NOT_CLOCKED_IN") c.notIn++;
       else if (r.status === "ON_LEAVE") c.leave++;
@@ -180,6 +183,7 @@ export default function AttendancePage() {
   const tiles: [string, number, string][] = [
     ["Working", counts.working, "bg-emerald-500"],
     ["On break", counts.onBreak, "bg-amber-500"],
+    ["Washroom", counts.washroom, "bg-sky-400"],
     ["In a meeting", counts.meeting, "bg-indigo-500"],
     ["Clocked out", counts.out, "bg-slate-400"],
     ["Not clocked in", counts.notIn, "bg-red-500"],
@@ -205,7 +209,7 @@ export default function AttendancePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         {tiles.map(([label, n, dot]) => (
           <div key={label} className={`${card} px-4 py-3`}>
             <div className="flex items-center gap-1.5">
@@ -295,6 +299,7 @@ export default function AttendancePage() {
                   <th className={`${th} text-right`}>Clock in</th>
                   <th className={`${th} text-right`}>Clock out</th>
                   <th className={`${th} text-right`}>Break used</th>
+                  <th className={`${th} text-right`} title="Washroom time is tracked on its own. It is not a break and does not use the break allowance.">Washroom</th>
                   <th className={`${th} text-right`}>Meetings</th>
                   <th className={`${th} text-right`}>Working</th>
                 </tr>
@@ -303,7 +308,7 @@ export default function AttendancePage() {
                 {groups.map(([group, members]) => (
                   <Fragment key={group}>
                     <tr className="border-t border-indigo-100 bg-[#F6F7FE]">
-                      <td colSpan={9} className="px-4 py-2">
+                      <td colSpan={10} className="px-4 py-2">
                         <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{group}</span>
                         <span className="ml-2 text-xs text-slate-400">{members.length} {members.length === 1 ? "person" : "people"}</span>
                         {members.some(INVITABLE) && (
@@ -315,7 +320,8 @@ export default function AttendancePage() {
                       const st = STATUS[r.status];
                       const running = r.status === "WORKING" || r.status === "MEETING" || IS_BREAK(r.status);
                       const inStatus = r.statusStartedAt && r.status !== "ON_LEAVE" ? (now - new Date(r.statusStartedAt).getTime()) / 1000 : null;
-                      const breakSec = r.breakSeconds === null ? null : r.breakSeconds + (IS_BREAK(r.status) ? drift : 0);
+                      const breakSec = r.breakSeconds === null ? null : r.breakSeconds + (IS_COUNTED_BREAK(r.status) ? drift : 0);
+                      const washSec = r.washroomSeconds == null ? null : r.washroomSeconds + (r.status === "BIO" ? drift : 0);
                       const meetSec = r.meetingSeconds === null ? null : r.meetingSeconds + (r.status === "MEETING" ? drift : 0);
                       const prodSec = r.productiveSeconds === null ? null : r.productiveSeconds + (r.status === "WORKING" || r.status === "MEETING" ? drift : 0);
                       const overBudget = breakSec !== null && breakSec > r.breakBudgetSeconds;
@@ -363,16 +369,19 @@ export default function AttendancePage() {
                           <td className={`px-4 py-3 text-right tabular-nums ${overBudget ? "text-red-600" : "text-slate-900"}`}>
                             {breakSec === null ? (
                               <span className="text-slate-400" title="No session today">—</span>
-                            ) : breakSec === 0 && !IS_BREAK(r.status) ? (
+                            ) : breakSec === 0 && !IS_COUNTED_BREAK(r.status) ? (
                               <span className="text-slate-500" title="No break taken yet">None yet</span>
                             ) : (
                               <>
                                 {clock(breakSec)}<span className="ml-1 text-xs text-slate-400">/ {clock(r.breakBudgetSeconds)}</span>
                                 <p className={`text-[11px] ${overBudget ? "font-medium text-red-600" : "text-slate-400"}`}>
-                                  {IS_BREAK(r.status) ? "on break now · " : ""}{overBudget ? `exceeded by ${clock(breakSec - r.breakBudgetSeconds)}` : `${clock(r.breakBudgetSeconds - breakSec)} left`}
+                                  {IS_COUNTED_BREAK(r.status) ? "on break now · " : ""}{overBudget ? `exceeded by ${clock(breakSec - r.breakBudgetSeconds)}` : `${clock(r.breakBudgetSeconds - breakSec)} left`}
                                 </p>
                               </>
                             )}
+                          </td>
+                          <td className="px-4 py-3 text-right tabular-nums text-slate-600" title="Washroom time. Not a break, not productive time.">
+                            {washSec === null ? <span className="text-slate-400">—</span> : washSec === 0 ? <span className="text-slate-300">—</span> : <>{clock(washSec)}{r.status === "BIO" && <p className="text-[11px] text-sky-600">at the washroom now</p>}</>}
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-slate-900" title="Live meetings plus the time the person actually spent in a Team Huddle (from joining to leaving), counted only while clocked in and outside breaks. 0:00:00 means nothing was recorded.">{clock(meetSec)}</td>
                           <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">{clock(prodSec)}</td>

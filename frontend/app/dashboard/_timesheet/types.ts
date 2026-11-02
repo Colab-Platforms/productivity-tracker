@@ -26,6 +26,7 @@ export type TsSession = {
   autoClosed: boolean;
   productiveSeconds: number;
   breakSeconds: number;
+  washroomSeconds?: number;
   meetingSeconds: number;
   wasLateLogin: boolean;
   lateByMinutes: number;
@@ -72,6 +73,7 @@ export type Timesheet = {
     daysWorked: number;
     productiveSeconds: number;
     breakSeconds: number;
+    washroomSeconds?: number;
     meetingSeconds: number;
     huddleSeconds?: number;
     otherEligibleSeconds?: number;

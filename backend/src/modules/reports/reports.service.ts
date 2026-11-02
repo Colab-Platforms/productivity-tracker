@@ -20,6 +20,7 @@ import { prisma } from "../../lib/prisma.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
+import { awayOf } from "../tracker/activityClass.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
 
 export type GroupBy = "person" | "day" | "week" | "month" | "year";
@@ -171,6 +172,8 @@ export async function getTeamReport(
           logoutAt: true,
           productiveSeconds: true,
           breakSeconds: true,
+          // the rows themselves: Break and Washroom are worked out from them, for old and new days alike
+          breaks: { select: { breakType: true, startedAt: true, endedAt: true } },
           meetingSeconds: true,
           wasLateLogin: true,
           lateByMinutes: true,
@@ -281,6 +284,7 @@ export async function getTeamReport(
       autoClosedDays: 0,
       productiveSeconds: 0,
       breakSeconds: 0,
+      washroomSeconds: 0,
       meetingSeconds: 0,
       targetSeconds: 0,
       attainment: 0,
@@ -309,6 +313,7 @@ export async function getTeamReport(
         lateDays: 0,
         productiveSeconds: 0,
         breakSeconds: 0,
+      washroomSeconds: 0,
         meetingSeconds: 0,
         targetSeconds: 0,
         tasksCompleted: 0,
@@ -399,18 +404,21 @@ export async function getTeamReport(
   // Team Huddle time that counted, per person and day. A LABEL inside productive time (never added on top): the productive totals
   // below are unchanged. Same calculation as the employee and manager screens.
   const huddleMap = await huddleSecondsByDay(userIds, from, lastDay);
+  const nowDate = new Date();
 
   for (const s of sessions) {
     if (String(s.status) === "ACTIVE" && !s.logoutAt) hasOpenSessions = true;
 
     const person = byPerson.get(s.userId);
     const b = bucket(bucketKey(s.date, groupBy));
+    const away = awayOf(s, nowDate);
 
     if (person) {
       person.daysPresent += 1;
       person.productiveSeconds += s.productiveSeconds;
       person.huddleSeconds += huddleMap.get(`${s.userId}|${toKey(s.date)}`) ?? 0;
-      person.breakSeconds += s.breakSeconds;
+      person.breakSeconds += away.breakSeconds;
+      person.washroomSeconds += away.washroomSeconds;
       person.meetingSeconds += s.meetingSeconds;
       person.lateMinutes += s.lateByMinutes;
       if (s.wasLateLogin) person.lateDays += 1;
@@ -421,7 +429,8 @@ export async function getTeamReport(
     if (!managerIds.has(s.userId)) {
       b.huddleSeconds += huddleMap.get(`${s.userId}|${toKey(s.date)}`) ?? 0;
       b.productiveSeconds += s.productiveSeconds;
-      b.breakSeconds += s.breakSeconds;
+      b.breakSeconds += away.breakSeconds;
+      b.washroomSeconds += away.washroomSeconds;
       b.meetingSeconds += s.meetingSeconds;
     }
     if (s.wasLateLogin) b.lateDays += 1;
@@ -486,6 +495,7 @@ export async function getTeamReport(
       productiveSeconds: b.productiveSeconds,
       huddleSeconds: b.huddleSeconds,
       breakSeconds: b.breakSeconds,
+      washroomSeconds: b.washroomSeconds,
       meetingSeconds: b.meetingSeconds,
       targetSeconds: b.targetSeconds,
       attainment: b.targetSeconds > 0 ? b.productiveSeconds / b.targetSeconds : 0,
@@ -512,6 +522,7 @@ export async function getTeamReport(
       totals.productiveSeconds += p.productiveSeconds;
       totals.huddleSeconds += p.huddleSeconds;
       totals.breakSeconds += p.breakSeconds;
+      totals.washroomSeconds += p.washroomSeconds;
       totals.meetingSeconds += p.meetingSeconds;
       totals.targetSeconds += p.targetSeconds;
     }
@@ -571,6 +582,7 @@ type PersonRow = {
   autoClosedDays: number;
   productiveSeconds: number;
   breakSeconds: number;
+  washroomSeconds: number;
   meetingSeconds: number;
   targetSeconds: number;
   attainment: number;
@@ -594,6 +606,7 @@ type BucketRow = {
   lateDays: number;
   productiveSeconds: number;
   breakSeconds: number;
+  washroomSeconds: number;
   meetingSeconds: number;
   targetSeconds: number;
   tasksCompleted: number;
@@ -614,6 +627,7 @@ function blankTotals() {
     lateDays: 0,
     productiveSeconds: 0,
     breakSeconds: 0,
+      washroomSeconds: 0,
     meetingSeconds: 0,
     targetSeconds: 0,
     attainment: 0,

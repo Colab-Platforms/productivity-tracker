@@ -8,13 +8,13 @@ import { SEG_COLOR } from "./model";
 import { DAYS_SHORT, fmtClock, fmtDur } from "./time";
 import type { Timesheet } from "./types";
 
-const KIND_LABEL = { work: "Working time", break: "Break", overtime: "Overtime", late: "Late" } as const;
+const KIND_LABEL = { work: "Working time", break: "Break", washroom: "Washroom", overtime: "Overtime", late: "Late" } as const;
 
 // Every interval of the day, in order, with its exact start, end and length.
 function Entries({ m, tz }: { m: DayModel; tz: string }) {
   const rows = m.segs
     .filter((s) => s.kind !== "late")
-    .map((s) => ({ key: `${s.kind}-${s.start}`, color: SEG_COLOR[s.kind], name: s.kind === "break" ? s.label : KIND_LABEL[s.kind], start: s.start, end: s.end, open: m.ongoing && s.end === m.finishMs }));
+    .map((s) => ({ key: `${s.kind}-${s.start}`, color: SEG_COLOR[s.kind], name: s.kind === "break" || s.kind === "washroom" ? s.label : KIND_LABEL[s.kind], start: s.start, end: s.end, open: m.ongoing && s.end === m.finishMs }));
   return (
     <div className="mt-3 rounded-2xl border border-slate-200">
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 text-sm">
@@ -85,7 +85,7 @@ export function EntryLogModal({
               <div className="flex items-baseline justify-between">
                 <p className="font-semibold text-slate-900">{dayTitle(m.date, m.isToday)}</p>
                 <p className="text-sm text-slate-500">
-                  Total on site <b className="text-slate-900">{fmtDur(m.elapsedSeconds)}</b> · working {fmtDur(m.workSeconds)} · break {fmtDur(m.breakSeconds)}
+                  Total on site <b className="text-slate-900">{fmtDur(m.elapsedSeconds)}</b> · working {fmtDur(m.workSeconds)} · break {fmtDur(m.breakSeconds)}{m.washroomSeconds > 0 && <> · washroom {fmtDur(m.washroomSeconds)}</>}
                   {m.overtimeSeconds > 0 && <> · overtime {fmtDur(m.overtimeSeconds)}</>}
                 </p>
               </div>

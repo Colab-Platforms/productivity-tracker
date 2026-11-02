@@ -19,6 +19,7 @@
 
 import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
+import { awayOf } from "./activityClass.js";
 import { getTeamReport } from "../reports/reports.service.js";
 import { getContext } from "./tracker.service.js";
 import { remarksBySession } from "./lateRemarks.js";
@@ -38,6 +39,7 @@ export function plannedSecondsOf(people: { userId: string; targetSeconds: number
 export async function getTimesheet(userId: string, fromStr?: string, toStr?: string) {
   const ctx = await getContext(userId);
   const today = platformToday(ctx.timezone);
+  const nowDate = new Date();
 
   const to = toStr ? parseIsoDay(toStr) : today;
   const from = fromStr ? parseIsoDay(fromStr) : new Date(to.getTime() - 6 * DAY_MS);
@@ -128,7 +130,8 @@ export async function getTimesheet(userId: string, fromStr?: string, toStr?: str
             logoutAt: s.logoutAt,
             autoClosed: s.autoClosed,
             productiveSeconds: s.productiveSeconds,
-            breakSeconds: s.breakSeconds,
+            breakSeconds: awayOf(s, nowDate).breakSeconds,
+            washroomSeconds: awayOf(s, nowDate).washroomSeconds,
             meetingSeconds: s.meetingSeconds,
             wasLateLogin: s.wasLateLogin,
             lateByMinutes: s.lateByMinutes,
@@ -170,7 +173,8 @@ export async function getTimesheet(userId: string, fromStr?: string, toStr?: str
   }
 
   const productiveSeconds = sessions.reduce((n, s) => n + s.productiveSeconds, 0);
-  const breakSeconds = sessions.reduce((n, s) => n + s.breakSeconds, 0);
+  const breakSeconds = sessions.reduce((n, s) => n + awayOf(s, nowDate).breakSeconds, 0);
+  const washroomSeconds = sessions.reduce((n, s) => n + awayOf(s, nowDate).washroomSeconds, 0);
   const meetingSeconds = sessions.reduce((n, s) => n + s.meetingSeconds, 0);
   const huddleSecondsTotal = [...splitOf.values()].reduce((n, x) => n + x.breakdown.huddleSeconds, 0);
   const otherEligibleTotal = [...splitOf.values()].reduce((n, x) => n + x.breakdown.otherEligibleSeconds, 0);
@@ -199,13 +203,14 @@ export async function getTimesheet(userId: string, fromStr?: string, toStr?: str
       daysWorked: sessions.length,
       productiveSeconds,
       breakSeconds,
+      washroomSeconds,
       meetingSeconds,
       huddleSeconds: huddleSecondsTotal,
       otherEligibleSeconds: otherEligibleTotal,
       regularSeconds: Math.max(0, productiveSeconds - huddleSecondsTotal - otherEligibleTotal),
-      // Productive + break: the whole time on site. Breaks are never added to
+      // Productive + counted break + washroom: the whole time on site. Away time is never added to
       // productive time, and meetings sit inside productive time.
-      elapsedSeconds: productiveSeconds + breakSeconds,
+      elapsedSeconds: productiveSeconds + breakSeconds + washroomSeconds,
       lateDays: sessions.filter((s) => s.wasLateLogin).length,
     },
     days,

@@ -76,7 +76,8 @@ type Session = {
   loginAt: string;
   logoutAt: string | null;
   productiveSeconds: number;
-  breakSeconds: number;
+  breakSeconds: number; // Tea / Lunch / Personal / Other only; Washroom is separate
+  washroomSeconds?: number;
   meetingSeconds: number;
   wasLateLogin: boolean;
   lateByMinutes: number;
@@ -92,7 +93,8 @@ type Config = {
   breakBudgetMinutes: number;
 };
 
-// The four break types the backend accepts.
+// The activities in the "Select activity" menu that start an away timer. Tea, Lunch and Personal are breaks (they use the break
+// allowance); Washroom is tracked on its own and is NOT a break. "Meeting / Team Huddle" is the Team Huddle timer, shown separately below.
 const BREAK_TYPES = [
   { value: "TEA", label: "Tea" },
   { value: "WASHROOM", label: "Washroom" },
@@ -254,16 +256,27 @@ export default function TodayView() {
   const [correctionSent, setCorrectionSent] = useState(false);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [projectId, setProjectId] = useState("");
+  // The Team Huddle you can join right now (accepted, join window open), or whether you are already in one. From the same GET /meetings the
+  // huddle card uses; the server decides, this only shows the choice.
+  const [huddleJoin, setHuddleJoin] = useState<{ id: string; title: string } | null>(null);
+  const [inHuddle, setInHuddle] = useState(false);
   // Team Huddle time so far today, and when the current huddle began (null = not in one). Display only: it is already part of productive time.
   const [huddle, setHuddle] = useState<{ todaySeconds: number; activeSince: string | null; openPastEnd: boolean } | null>(null);
 
   const load = useCallback(async () => {
     try {
       // Session and invites are independent, so they are fetched together.
-      const [sessionRes, invitesRes] = await Promise.allSettled([
+      const [sessionRes, invitesRes, huddleRes] = await Promise.allSettled([
         apiGet<{ session: Session | null; config: Config; hostsOpenMeeting?: boolean; projects?: { id: string; name: string }[]; huddle?: { todaySeconds: number; activeSince: string | null; openPastEnd: boolean } | null }>("/tracker/session"),
         apiGet<Meeting[]>("/tracker/invites"),
+        apiGet<{ meetings: { id: string; title: string; tracked?: boolean; canJoin?: boolean; me?: { state: string } | null }[] }>("/meetings?scope=upcoming"),
       ]);
+      if (huddleRes.status === "fulfilled") {
+        const ms = huddleRes.value.meetings;
+        setInHuddle(ms.some((m) => m.me?.state === "IN_MEETING"));
+        const open = ms.find((m) => m.tracked && m.canJoin);
+        setHuddleJoin(open ? { id: open.id, title: open.title } : null);
+      }
       if (sessionRes.status === "rejected") throw sessionRes.reason;
 
       const res = sessionRes.value;
@@ -370,9 +383,12 @@ export default function TodayView() {
   // The server's numbers plus the seconds since they were fetched. A meeting is
   // working time, so only a break pauses the productive clock.
   const productive = (session?.productiveSeconds ?? 0) + (running && !openBreak ? sinceFetch : 0);
-  const breakSecs = (session?.breakSeconds ?? 0) + (openBreak ? sinceFetch : 0);
+  // Washroom is its own neutral activity: it pauses the productive clock like any time away, but it is not break time.
+  const openIsWashroom = openBreak?.breakType === "WASHROOM";
+  const breakSecs = (session?.breakSeconds ?? 0) + (openBreak && !openIsWashroom ? sinceFetch : 0);
+  const washroomSecs = (session?.washroomSeconds ?? 0) + (openBreak && openIsWashroom ? sinceFetch : 0);
   const meetingSecs = (session?.meetingSeconds ?? 0) + (openMeeting ? sinceFetch : 0);
-  const elapsed = productive + breakSecs; // everything on site, breaks included once
+  const elapsed = productive + breakSecs + washroomSecs; // everything on site: productive + counted break + washroom, each once
   // Live huddle counter: the server's figure plus the seconds since it was fetched while a huddle is running (and the person is clocked in, off a break).
   const huddleRunning = running && !openBreak && !!huddle?.activeSince;
   const huddleSecs = (huddle?.todaySeconds ?? 0) + (huddleRunning ? sinceFetch : 0);
@@ -384,7 +400,9 @@ export default function TodayView() {
       return;
     }
     document.title = openBreak
-      ? `☕ ${hms(breakSecs).slice(0, 2).join(":")} break · Avatar HRMS`
+      ? openIsWashroom
+        ? `🚻 ${hms(washroomSecs).slice(0, 2).join(":")} washroom · Avatar HRMS`
+        : `☕ ${hms(breakSecs).slice(0, 2).join(":")} break · Avatar HRMS`
       : huddleRunning
         ? `👥 ${hms(huddleSecs).slice(0, 2).join(":")} huddle · Avatar HRMS`
         : openMeeting
@@ -516,7 +534,8 @@ export default function TodayView() {
   // Period totals: stored values for past days, live values for today.
   const periodProductive = days.reduce((n, d) => n + (d.date === today && session ? productive : (d.session?.productiveSeconds ?? 0)), 0);
   const periodBreak = days.reduce((n, d) => n + (d.date === today && session ? breakSecs : (d.session?.breakSeconds ?? 0)), 0);
-  const periodElapsed = periodProductive + periodBreak;
+  const periodWashroom = days.reduce((n, d) => n + (d.date === today && session ? washroomSecs : (d.session?.washroomSeconds ?? 0)), 0);
+  const periodElapsed = periodProductive + periodBreak + periodWashroom;
   const planned = tsData ? hrsMins(tsData.totals.plannedSeconds) : { h: 0, m: 0 };
   const worked = hrsMins(periodElapsed);
 
@@ -661,7 +680,14 @@ export default function TodayView() {
                   )}
                 </p>
 
-                {session && config && <BreakBudget used={breakSecs} budget={config.breakBudgetMinutes * 60} onBreak={!!openBreak} />}
+                {session && config && <BreakBudget used={breakSecs} budget={config.breakBudgetMinutes * 60} onBreak={!!openBreak && !openIsWashroom} />}
+
+                {session && (washroomSecs > 0 || openIsWashroom) && (
+                  <div className="mx-auto mt-3 flex max-w-xs items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-2.5 text-sm text-slate-700" title="Washroom time is tracked on its own. It is not a break, so it does not use your break allowance, and it is not productive time.">
+                    <span className="font-medium">{openIsWashroom ? "Washroom in progress" : "Washroom today"}</span>
+                    <span className="tabular-nums font-semibold">{hms(washroomSecs).join(":")}</span>
+                  </div>
+                )}
 
                 {session && (huddleRunning || huddleSecs > 0) && (
                   <div className={`mx-auto mt-3 flex max-w-xs items-center justify-between gap-3 rounded-xl px-4 py-2.5 text-sm ${huddleRunning ? "bg-indigo-50 text-indigo-900" : "bg-slate-50 text-slate-700"}`} title="Team Huddle time is part of your productive time and is not a break. It does not use your break allowance.">
@@ -704,12 +730,21 @@ export default function TodayView() {
                           </button>
                           {breakOpen && (
                             <div className="absolute left-1/2 z-20 mt-2 w-44 -translate-x-1/2 overflow-hidden rounded-xl bg-white py-1.5 text-left shadow-lg ring-1 ring-slate-200">
-                              <p className="px-4 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">What kind of break?</p>
+                              <p className="px-4 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Select activity</p>
                               {BREAK_TYPES.map((b) => (
                                 <button key={b.value} onClick={() => startBreak(b.value)} className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-violet-50 hover:text-violet-700">
                                   {b.label}
                                 </button>
                               ))}
+                              <button
+                                type="button"
+                                disabled={!huddleJoin || inHuddle}
+                                onClick={() => { if (!huddleJoin || busy) return; setBreakOpen(false); void act(`/meetings/${huddleJoin.id}/join`); }}
+                                title={inHuddle ? "You are already in a Team Huddle" : huddleJoin ? `Join “${huddleJoin.title}”` : "No Team Huddle you have accepted is open to join right now"}
+                                className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-violet-50 hover:text-violet-700 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent disabled:hover:text-slate-300"
+                              >
+                                Meeting / Team Huddle
+                              </button>
                             </div>
                           )}
                         </div>
@@ -786,11 +821,12 @@ export default function TodayView() {
                   <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11.5px]">
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 ring-1 ring-slate-200"><span className="h-2 w-2 rounded-full" style={{ background: SEG_COLOR.work }} />Productive {fmtDur(periodProductive)}</span>
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 ring-1 ring-slate-200"><span className="h-2 w-2 rounded-full" style={{ background: SEG_COLOR.break }} />Break {fmtDur(periodBreak)}</span>
+                    {periodWashroom > 0 && <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 ring-1 ring-slate-200" title="Not break time and not productive time"><span className="h-2 w-2 rounded-full" style={{ background: SEG_COLOR.washroom }} />Washroom {fmtDur(periodWashroom)}</span>}
                   </div>
                 </div>
                 <p className="mt-3 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-500">
                   <span className="mt-0.5 text-slate-400">{Ico.info}</span>
-                  Total time on site = productive + break, so a break is counted once. Meetings you accepted are part of productive time.
+                  Total time on site = productive + break + washroom, each counted once. Meetings you accepted are part of productive time.
                 </p>
               </div>
             )}
@@ -817,7 +853,7 @@ export default function TodayView() {
 
           {correctionSent && <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">Correction request sent. HR has been notified. Track it under Attendance corrections.</p>}
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 py-4 text-xs text-slate-600">
-            {([["work", "Working time"], ["break", "Break"], ["overtime", "Overtime"], ["late", "Late"]] as const).map(([k, label]) => (
+            {([["work", "Working time"], ["break", "Break"], ["washroom", "Washroom"], ["overtime", "Overtime"], ["late", "Late"]] as const).map(([k, label]) => (
               <span key={k} className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: SEG_COLOR[k] }} />{label}</span>
             ))}
           </div>
