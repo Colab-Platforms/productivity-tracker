@@ -14,7 +14,7 @@ import { downloadAttendanceXlsx, type Cell } from "./xlsx";
 type Row = {
   userId: string; name: string; employeeCode: string | null; teamName: string | null; date: string;
   shiftName: string | null; shiftStart: string | null; shiftEnd: string | null;
-  loginAt: string | null; logoutAt: string | null; workedHours: number | null; productiveHours: number | null; breakHours: number | null; breakBudgetSeconds: number;
+  loginAt: string | null; logoutAt: string | null; workedHours: number | null; productiveHours: number | null; breakHours: number | null; washroomHours?: number | null; breakBudgetSeconds: number;
   stillWorking: boolean; autoClosed: boolean; note: string | null;
   status: string; statusLabel: string; leaveType: string | null; holidayName: string | null;
   lateMinutes: number | null; earlyDepartureMinutes: number | null; tasksCompleted: number;
@@ -152,11 +152,11 @@ export default function AttendanceReport() {
 
   // One table for both downloads, so the CSV and the Excel file always agree. The task columns run Planned,
   // Approved, Pending, then "Tasks completed", then Remarks; Pending Tasks = planned - completed (a live formula in the Excel file).
-  const EXPORT_HEADER = ["Employee ID", "Employee", "Team", "Date", "Shift", "Check-in", "Check-out", "Working", "Productive", "Break", "Break over allowance", "Status", "Late arrival", "Early departure", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks", "Tasks completed", "Remarks"];
+  const EXPORT_HEADER = ["Employee ID", "Employee", "Team", "Date", "Shift", "Check-in", "Check-out", "Working", "Productive", "Break", "Washroom", "Break over allowance", "Status", "Late arrival", "Early departure", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks", "Tasks completed", "Remarks"];
   function exportRows(): Cell[][] {
     return rows.map((r) => [
       r.employeeCode, r.name, r.teamName, r.date, r.shiftName ? `${r.shiftName}${r.shiftStart && r.shiftEnd ? ` (${r.shiftStart}-${r.shiftEnd})` : ""}` : "Not assigned",
-      clockTime(r.loginAt, tz), r.stillWorking ? "Working" : clockTime(r.logoutAt, tz), hmFromHours(r.workedHours), hmFromHours(r.productiveHours), hmFromHours(r.breakHours),
+      clockTime(r.loginAt, tz), r.stillWorking ? "Working" : clockTime(r.logoutAt, tz), hmFromHours(r.workedHours), hmFromHours(r.productiveHours), hmFromHours(r.breakHours), hmFromHours(r.washroomHours ?? null),
       r.breakHours !== null && r.breakHours * 3600 > r.breakBudgetSeconds ? hmFromHours(r.breakHours - r.breakBudgetSeconds / 3600) : "",
       r.statusLabel, hmFromMinutes(r.lateMinutes), hmFromMinutes(r.earlyDepartureMinutes),
       r.tasksPlanned, r.tasksApproved, r.tasksPlanned === null ? null : r.tasksPlanned - r.tasksCompleted, r.tasksCompleted, remarks(r),
@@ -326,6 +326,7 @@ export default function AttendanceReport() {
                     <th className={`${th} text-right`}>Working</th>
                     <th className={`${th} text-right`}>Productive</th>
                     <th className={`${th} text-right`}>Break</th>
+                    <th className={`${th} text-right`} title="Washroom time is tracked on its own. It is not break time and does not use the break allowance.">Washroom</th>
                     <th className={th}>Status</th>
                     <th className={th}>Remarks</th>
                   </tr>
@@ -351,6 +352,7 @@ export default function AttendanceReport() {
                             <span className="text-slate-600">{hmFromHours(r.breakHours)}</span>
                           )}
                         </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-600">{r.washroomHours ? hmFromHours(r.washroomHours) : <span className="text-slate-300">—</span>}</td>
                         <td className="px-4 py-3">
                           <span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[r.status] ?? "bg-slate-100 text-slate-600"}`}>{r.statusLabel}</span>
                         </td>

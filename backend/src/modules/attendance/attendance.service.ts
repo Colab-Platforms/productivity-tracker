@@ -5,6 +5,7 @@
 // of the truth that can drift from the first.
 
 import { prisma } from "../../lib/prisma.js";
+import { awayOf } from "../tracker/activityClass.js";
 
 // Every company here operates in India. Shift times like "10:00" mean 10:00
 // IST, while timestamps are stored in UTC, so the two are compared after
@@ -47,6 +48,7 @@ export type AttendanceDay = {
   productiveHours: number;
   meetingHours: number;
   breakHours: number;
+  washroomHours: number;
   loginAt: string | null;
   logoutAt: string | null;
   isLate: boolean;
@@ -239,6 +241,7 @@ export async function getMonthAttendanceBulk(
       logoutAt: true,
       productiveSeconds: true,
       breakSeconds: true,
+      breaks: { select: { breakType: true, startedAt: true, endedAt: true } },
       meetingSeconds: true,
       autoClosed: true,
     },
@@ -339,7 +342,10 @@ export async function getMonthAttendanceBulk(
         (sum, s) => sum + s.productiveSeconds,
         0,
       );
-      const breakSeconds = daySessions.reduce((sum, s) => sum + s.breakSeconds, 0);
+      // Break = Tea/Lunch/Personal/Other; Washroom is reported on its own and is not break time.
+      const awayNow = new Date();
+      const breakSeconds = daySessions.reduce((sum, s) => sum + awayOf(s, awayNow).breakSeconds, 0);
+      const washroomSeconds = daySessions.reduce((sum, s) => sum + awayOf(s, awayNow).washroomSeconds, 0);
       const meetingSeconds = daySessions.reduce(
         (sum, s) => sum + s.meetingSeconds,
         0,
@@ -465,6 +471,7 @@ export async function getMonthAttendanceBulk(
         productiveHours: round2(productiveSeconds / 3600),
         meetingHours: round2(meetingSeconds / 3600),
         breakHours: round2(breakSeconds / 3600),
+        washroomHours: round2(washroomSeconds / 3600),
         loginAt: firstLogin ? firstLogin.toISOString() : null,
         logoutAt: lastLogout ? lastLogout.toISOString() : null,
         isLate,

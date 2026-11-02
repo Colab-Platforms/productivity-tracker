@@ -15,7 +15,7 @@ const hm = (sec: number) => {
 };
 const clockFmt = (iso: string | null, tz: string) => (iso ? new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso)) : "—");
 
-export default function Breakdown({ totals, days, tz, today, rangeLabel }: { totals: { productiveSeconds: number; breakSeconds?: number; regularSeconds?: number; huddleSeconds?: number; otherEligibleSeconds?: number }; days: TsDay[]; tz: string; today: string; rangeLabel: string }) {
+export default function Breakdown({ totals, days, tz, today, rangeLabel }: { totals: { productiveSeconds: number; breakSeconds?: number; washroomSeconds?: number; regularSeconds?: number; huddleSeconds?: number; otherEligibleSeconds?: number }; days: TsDay[]; tz: string; today: string; rangeLabel: string }) {
   const regular = totals.regularSeconds ?? totals.productiveSeconds;
   const huddle = totals.huddleSeconds ?? 0;
   const other = totals.otherEligibleSeconds ?? 0;
@@ -24,12 +24,14 @@ export default function Breakdown({ totals, days, tz, today, rangeLabel }: { tot
   // The four totals that add up: productive work + Team Huddle + break = time on site. Huddle is never a break and is never extra.
   const productiveWork = regular + other;
   const breakSecs = totals.breakSeconds ?? 0;
-  const onSite = totals.productiveSeconds + breakSecs;
+  const washroomSecs = totals.washroomSeconds ?? 0;
+  const onSite = totals.productiveSeconds + breakSecs + washroomSecs;
   const tiles: [string, number, string][] = [
     ["Productive work", productiveWork, "Your productive time without the Team Huddle part."],
     ["Team Huddle", huddle, "Time in a Team Huddle. It counts as productive time and does not use your break allowance."],
-    ["Break", breakSecs, "Tea, lunch, washroom and personal breaks. Team Huddle is never counted here."],
-    ["Total time on site", onSite, "Clock-in to clock-out (to now if you are still in): productive work + Team Huddle + break."],
+    ["Break", breakSecs, "Tea, lunch and personal breaks. These use your daily break allowance. Washroom and Team Huddle are never counted here."],
+    ["Washroom", washroomSecs, "Washroom time is tracked on its own. It is not a break (it does not use your allowance) and it is not productive time."],
+    ["Total time on site", onSite, "Clock-in to clock-out (to now if you are still in): productive work + Team Huddle + break + washroom."],
   ];
   const rows: [string, number, string?][] = [
     ["Regular work time", regular],
@@ -42,7 +44,7 @@ export default function Breakdown({ totals, days, tz, today, rangeLabel }: { tot
         <span className="text-[15px] font-medium text-slate-900">Productive time breakdown</span>
         <span className="text-xs text-slate-400">{rangeLabel}</span>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {tiles.map(([label, sec, hint]) => (
           <div key={label} className="rounded-xl bg-slate-50 px-4 py-3" title={hint}>
             <p className="text-xs text-slate-500">{label}</p>

@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma.js";
 import { localDayOf, parseIsoDay, platformToday, zonedToUtc } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { computeBreakdown } from "../tracker/productiveBreakdown.js";
+import { splitAwayTime } from "../tracker/activityClass.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { emitMeetingChange } from "../../lib/realtime.js";
@@ -643,7 +644,8 @@ export async function managerOverview(userId: string, dayStr?: string) {
         regularSeconds: b?.regularSeconds ?? 0, huddleSeconds: b?.huddleSeconds ?? 0, otherEligibleSeconds: b?.otherEligibleSeconds ?? 0, totalSeconds: b?.productiveSeconds ?? 0,
         // Time on site = clocked in to clocked out (or now); breaks are what is left once productive time is taken out. Derived, never stored.
         onSiteSeconds,
-        breakSeconds: Math.max(0, onSiteSeconds - (b?.productiveSeconds ?? 0)),
+        // Away time is split by kind: breaks (Tea/Lunch/Personal/Other) and washroom, which is neutral and never counts as break.
+        ...(s ? (({ breakSeconds, washroomSeconds }) => ({ breakSeconds, washroomSeconds }))(splitAwayTime(s.breaks, now)) : { breakSeconds: 0, washroomSeconds: 0 }),
       };
     })
     .sort((x, y) => x.name.localeCompare(y.name));

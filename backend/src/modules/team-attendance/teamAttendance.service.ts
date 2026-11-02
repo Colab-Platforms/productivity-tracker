@@ -11,6 +11,7 @@ import { prisma } from "../../lib/prisma.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { huddleBreakdowns } from "../meetings/participation.service.js";
+import { splitAwayTime } from "../tracker/activityClass.js";
 import { photoStamps } from "../photos/photos.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
@@ -70,21 +71,24 @@ type SessionWithParts = {
 // Totals as of `now`. A finished session uses the stored columns; a running one adds the time since the last
 // recompute (same adjustment Live Team makes), so the board is live without writing anything.
 function totalsOf(s: SessionWithParts, now: Date) {
+  // Break = Tea/Lunch/Personal/Other, Washroom is its own neutral figure; both come from the break rows (an open row runs to now).
+  const away = splitAwayTime(s.breaks as never, now);
   let productive = s.productiveSeconds;
-  let breakSec = s.breakSeconds;
+  const breakSec = away.breakSeconds;
   let meeting = s.meetingSeconds;
   const openBreak = s.breaks.find((b) => !b.endedAt) ?? null;
   const openMeeting = s.meetings.find((m) => m.approvalStatus === "APPROVED" && m.startedAt && !m.endedAt) ?? null;
 
   if (s.status === "ACTIVE") {
     const since = secondsBetween(s.updatedAt, now);
-    if (openBreak) breakSec += since;
-    else {
+    if (openBreak) {
+      // already counted to now above; productive time does not run while someone is away
+    } else {
       productive += since;
       if (openMeeting) meeting += since;
     }
   }
-  return { productive, breakSec, meeting, openBreak, openMeeting };
+  return { productive, breakSec, washroomSec: away.washroomSeconds, meeting, openBreak, openMeeting };
 }
 
 // When the CURRENT status began.
@@ -163,6 +167,7 @@ export async function getLiveBoard(viewerId: string) {
     let startedAt: Date | null = null;
     let productive = 0;
     let breakSec = 0;
+    let washroomSec = 0;
     let meeting = 0;
     let shiftSeconds: number | null = null;
 
@@ -172,6 +177,7 @@ export async function getLiveBoard(viewerId: string) {
       const tt = totalsOf(s as SessionWithParts, now);
       productive = tt.productive;
       breakSec = tt.breakSec;
+      washroomSec = tt.washroomSec;
       // Live meetings and Team Huddle participation, merged so an overlap counts once; inside clock-in, outside breaks. A person with no
       // huddle record keeps exactly the figure they had before.
       const hb = huddle.get(p.id);
@@ -206,6 +212,7 @@ export async function getLiveBoard(viewerId: string) {
       shiftSeconds,
       productiveSeconds: s ? productive : null,
       breakSeconds: s ? breakSec : null,
+      washroomSeconds: s ? washroomSec : null,
       meetingSeconds: s ? meeting : null,
       productiveTargetSeconds: t.productiveTargetSeconds,
       breakBudgetSeconds: t.breakBudgetSeconds,
@@ -259,7 +266,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
         userId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), employeeCode: p.employeeCode, teamName: t.teamName,
         hasSession: false, dayState: onLeave.has(p.id) ? "ON_LEAVE" : isToday ? "NOT_CLOCKED_IN" : "NO_RECORD",
         loginAt: null, logoutAt: null, working: false, shiftSeconds: null,
-        teaSeconds: null, lunchSeconds: null, bioSeconds: null, huddleSeconds: null, otherSeconds: null, breakSeconds: null,
+        teaSeconds: null, lunchSeconds: null, bioSeconds: null, huddleSeconds: null, otherSeconds: null, breakSeconds: null, washroomSeconds: null,
         productiveSeconds: null, productiveTargetSeconds: t.productiveTargetSeconds, breakBudgetSeconds: t.breakBudgetSeconds,
       };
     }
@@ -282,7 +289,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
       teaSeconds: per.TEA, lunchSeconds: per.LUNCH, bioSeconds: per.BIO, otherSeconds: per.OTHER,
       // Meeting time: live meetings plus actual Team Huddle participation, merged (never counted twice).
       huddleSeconds: huddle.get(p.id) ? (huddle.get(p.id)!.huddleSeconds + huddle.get(p.id)!.otherSeconds) : tt.meeting,
-      breakSeconds: tt.breakSec,
+      breakSeconds: tt.breakSec, washroomSeconds: tt.washroomSec,
       productiveSeconds: tt.productive, productiveTargetSeconds: t.productiveTargetSeconds, breakBudgetSeconds: t.breakBudgetSeconds,
     };
   });
@@ -435,11 +442,12 @@ export async function getAttendanceReport(
       let note: string | null = d.note;
       let worked = d.workedHours;
       let productive = d.productiveHours;
-      let breakH = d.breakHours;
+      const breakH = d.breakHours;
+      const washroomH = d.washroomHours;
       if (live) {
         const since = Math.max(0, nowMs - live.updatedAt.getTime()) / 3_600_000;
-        if (live.breaks.length > 0) breakH += since;
-        else {
+        // An open break or washroom is already counted up to now (the engine reads the break rows); only running work time is topped up.
+        if (live.breaks.length === 0) {
           worked += since;
           productive += since;
         }
@@ -477,6 +485,7 @@ export async function getAttendanceReport(
         workedHours: hasWork ? worked : null,
         productiveHours: hasWork ? productive : null,
         breakHours: hasWork ? breakH : null,
+        washroomHours: hasWork ? washroomH : null,
         breakBudgetSeconds: who.breakBudgetSeconds,
         stillWorking: !!live,
         autoClosed: d.autoClosed,
