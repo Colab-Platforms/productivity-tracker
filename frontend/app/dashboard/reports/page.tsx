@@ -195,7 +195,8 @@ export default function ReportsPage() {
 }
 
 function SummaryReport() {
-  const [from, setFrom] = useState(firstOfMonth());
+  // Opens on Today in the HRMS timezone (nothing is restored from a previous visit); the buttons below switch the range.
+  const [from, setFrom] = useState(todayIso());
   const [to, setTo] = useState(todayIso());
   const [groupBy, setGroupBy] = useState<GroupBy>("person");
 
@@ -221,12 +222,17 @@ function SummaryReport() {
     void load();
   }, [load]);
 
-  function applyPreset(preset: "week" | "month" | "quarter" | "year") {
-    const end = todayIso();
+  function applyPreset(preset: "today" | "yesterday" | "week" | "month" | "quarter" | "year") {
+    let end = todayIso();
     const [yr, mo] = end.split("-").map(Number);
     let start = end;
 
-    if (preset === "week") {
+    if (preset === "today") {
+      start = end;
+    } else if (preset === "yesterday") {
+      end = addDaysIso(end, -1);
+      start = end;
+    } else if (preset === "week") {
       start = addDaysIso(end, -6);
     } else if (preset === "month") {
       start = firstOfMonth();
@@ -359,13 +365,13 @@ function SummaryReport() {
           </label>
 
           <div className="flex gap-1">
-            {(["week", "month", "quarter", "year"] as const).map((p) => (
+            {(["today", "yesterday", "week", "month", "quarter", "year"] as const).map((p) => (
               <button
                 key={p}
                 onClick={() => applyPreset(p)}
                 className="rounded-xl border border-indigo-100 px-3 py-2 text-xs font-medium capitalize text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
               >
-                {p === "week" ? "Last 7 days" : `This ${p}`}
+                {p === "today" ? "Today" : p === "yesterday" ? "Yesterday" : p === "week" ? "Last 7 days" : `This ${p}`}
               </button>
             ))}
           </div>

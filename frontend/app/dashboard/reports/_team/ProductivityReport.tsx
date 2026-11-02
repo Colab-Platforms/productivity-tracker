@@ -38,7 +38,8 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 const pctClass = (p: number | null) => (p === null ? "text-slate-400" : p >= 100 ? "text-emerald-600" : p >= 70 ? "text-amber-600" : "text-red-600");
 
 export default function ProductivityReport({ canSetTargets }: { canSetTargets: boolean }) {
-  const [preset, setPreset] = useState<Preset>("last7");
+  // Always opens on Today (nothing is restored from a previous visit). With no dates the server answers for today in the company timezone.
+  const [preset, setPreset] = useState<Preset>("today");
   const [single, setSingle] = useState("");
   const [custom, setCustom] = useState<{ from: string; to: string }>({ from: "", to: "" });
   const [today, setToday] = useState("");
