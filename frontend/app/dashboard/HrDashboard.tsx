@@ -355,7 +355,7 @@ export default function HrDashboard() {
     pendingTickets.length > 0 && `${pendingTickets.length} open ticket${pendingTickets.length === 1 ? "" : "s"}`,
   ].filter(Boolean) as string[];
   const attentionReady = !queue.loading && !candidates.loading && !tickets.loading;
-  const reviewHref = proposals > 0 ? "/dashboard/approvals" : docsToReview > 0 ? "/dashboard/candidates" : "/dashboard/tickets";
+  const reviewHref = proposals > 0 ? "/dashboard/approvals" : docsToReview > 0 ? "/dashboard/candidates" : "/dashboard/queries";
 
   const rangeTag = from && to ? rangeLabel(from, to) : "…";
   const dim = report.loading && report.data ? "opacity-60 transition-opacity" : "transition-opacity";
@@ -394,8 +394,8 @@ export default function HrDashboard() {
                 <>
                   {proposals > 0 && <ApprovalRow href="/dashboard/approvals" label="Task proposals" count={proposals} tone="violet" />}
                   {docsToReview > 0 && <ApprovalRow href="/dashboard/candidates" label="Joiner documents" count={docsToReview} tone="sky" />}
-                  {pendingTickets.length > 0 && <ApprovalRow href="/dashboard/tickets" label="Open tickets" count={pendingTickets.length} tone="amber" />}
-                  {corrections > 0 && <ApprovalRow href="/dashboard/corrections" label="Attendance corrections" count={corrections} tone="indigo" />}
+                  {pendingTickets.length > 0 && <ApprovalRow href="/dashboard/queries" label="Open queries" count={pendingTickets.length} tone="amber" />}
+                  {corrections > 0 && <ApprovalRow href="/dashboard/queries?category=ATTENDANCE_CORRECTION" label="Attendance corrections" count={corrections} tone="indigo" />}
                   {visibleAlerts.length > 0 && <ApprovalRow href="/dashboard/team-attendance" label="Alerts today" count={visibleAlerts.length} tone="rose" />}
                 </>
               )}
@@ -449,7 +449,7 @@ export default function HrDashboard() {
                   ["/dashboard/offers", "Send an offer letter"],
                   ["/dashboard/holidays", "Add a holiday"],
                   ["/dashboard/projects", "Create a project"],
-                  ["/dashboard/tickets", "Raise a ticket"],
+                  ["/dashboard/queries", "Query Desk"],
                 ].map(([href, label]) => (
                   <Link
                     key={href}
@@ -762,12 +762,12 @@ export default function HrDashboard() {
                 <ApprovalRow href="/dashboard/candidates" label="Joiner documents" detail="Submitted, waiting for HR review" count={docsToReview} tone="sky" />
               )}
               {corrections > 0 && (
-                <ApprovalRow href="/dashboard/corrections" label="Attendance corrections" detail="Employees asking HR to correct attendance" count={corrections} tone="indigo" />
+                <ApprovalRow href="/dashboard/queries?category=ATTENDANCE_CORRECTION" label="Attendance corrections" detail="Employees asking HR to correct attendance" count={corrections} tone="indigo" />
               )}
               {pendingTickets.length > 0 && (
                 <ApprovalRow
-                  href="/dashboard/tickets"
-                  label="Open tickets"
+                  href="/dashboard/queries"
+                  label="Open queries"
                   detail={overdueTickets > 0 ? `${overdueTickets} past due` : "All within their due time"}
                   count={pendingTickets.length}
                   tone="amber"

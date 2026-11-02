@@ -216,7 +216,7 @@ type NavItem = {
   // so the "Today" entry that other roles see is replaced for them.
   notRoles?: string[];
   // A live count shown beside the label (HR: requests waiting for a decision).
-  badge?: "corrections";
+  badge?: "queries";
   icon: (p: IconProps) => React.ReactElement;
 };
 
@@ -231,7 +231,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard", label: "Today", ready: true, notRoles: ["HR", "ADMIN"], icon: I.today },
       { href: "/dashboard/admin", label: "Employees", ready: true, roles: ["HR", "ADMIN"], icon: I.team },
       { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
-      { href: "/dashboard/corrections", label: "Corrections", ready: true, roles: ["HR", "ADMIN"], badge: "corrections", icon: I.edit },
+      { href: "/dashboard/queries", label: "Query Desk", ready: true, roles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/today", label: "Productivity Tracker", ready: true, roles: ["HR", "ADMIN"], icon: I.today },
       { href: "/dashboard/approvals", label: "Tasks & Performance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.approvals },
       { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.reports },
@@ -245,13 +245,12 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
       { href: "/dashboard/huddles", label: "Team Huddle", ready: true, roles: ["MANAGER"], icon: I.huddle },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },
-      { href: "/dashboard/corrections", label: "Corrections", ready: true, notRoles: ["HR", "ADMIN"], icon: I.edit },
       { href: "/dashboard/leave", label: "Leave", ready: true, icon: I.holidays },
       { href: "/dashboard/documents", label: "Documents", ready: true, icon: I.folder },
       { href: "/dashboard/meetings", label: "Meetings", ready: true, icon: I.video },
       { href: "/dashboard/policies", label: "Policies", ready: true, icon: I.shield },
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, icon: I.receipt },
-      { href: "/dashboard/tickets", label: "Tickets", ready: true, icon: I.ticket },
+      { href: "/dashboard/queries", label: "Complaint Centre", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/profile", label: "My Profile", ready: true, icon: I.user },
       { href: "/change-password", label: "Change password", ready: true, icon: I.lock },
     ],
@@ -305,7 +304,7 @@ export default function DashboardLayout({
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
-  const [pendingCorrections, setPendingCorrections] = useState(0);
+  const [pendingQueries, setPendingQueries] = useState(0);
 
   useEffect(() => {
     if (!getToken()) {
@@ -342,13 +341,14 @@ export default function DashboardLayout({
     document.title = item ? `${item.label} | Avatar HRMS` : "Avatar HRMS";
   }, [pathname, me?.role]);
 
-  // HR/Admin: how many correction requests are waiting. Refreshed every minute and when the tab is focused.
-  const isReviewer = me?.role === "HR" || me?.role === "ADMIN";
+  // Query Desk / Complaint Centre: how many items are waiting for this person (queries to answer, corrections to decide, information asked of them).
+  // Refreshed every minute and when the tab is focused.
+  const hasMe = !!me;
   useEffect(() => {
-    if (!isReviewer) return;
+    if (!hasMe) return;
     const load = () => {
-      apiGet<{ pending: number }>("/attendance-corrections/pending-count")
-        .then((r) => setPendingCorrections(r.pending))
+      apiGet<{ badge: number }>("/queries/counts")
+        .then((r) => setPendingQueries(r.badge))
         .catch(() => undefined);
     };
     load();
@@ -358,7 +358,7 @@ export default function DashboardLayout({
       clearInterval(timer);
       window.removeEventListener("focus", load);
     };
-  }, [isReviewer, pathname]);
+  }, [hasMe, pathname]);
 
   // Close the mobile drawer on navigation, otherwise it covers the page you
   // just asked for.
@@ -486,8 +486,8 @@ export default function DashboardLayout({
                       }`}
                     />
                     <span className="truncate">{item.label}</span>
-                    {item.badge === "corrections" && pendingCorrections > 0 && (
-                      <span data-testid="corrections-badge" className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{Math.min(99, pendingCorrections)}</span>
+                    {item.badge === "queries" && pendingQueries > 0 && (
+                      <span data-testid="queries-badge" className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{Math.min(99, pendingQueries)}</span>
                     )}
                     {/* The reference marks the current page with a bar on the
                         card's outer edge, readable from across a desk. */}
