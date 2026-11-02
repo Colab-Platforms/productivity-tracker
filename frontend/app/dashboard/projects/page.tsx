@@ -27,6 +27,7 @@ type Project = {
   company: string | null;
   managerId: string | null;
   manager: string | null;
+  coManagers: { id: string; name: string; employeeCode: string | null }[];
   members: Member[];
 };
 
@@ -35,10 +36,14 @@ type Person = {
   name: string;
   employeeCode: string | null;
   designation: string | null;
+  role: string;
   company: string | null;
 };
 
+type ManagerPick = { id: string; name: string; employeeCode: string | null; role: string; company: string | null };
+
 type Data = {
+  managers: ManagerPick[];
   canManage: boolean;
   companies: { id: string; name: string }[];
   assignable: Person[];
@@ -52,6 +57,10 @@ const MESSAGES: Record<string, string> = {
   NOT_ALLOWED: "Only HR and Admin can change projects.",
   NOT_A_MEMBER: "They're not on that project.",
   USER_REQUIRED: "Pick somebody first.",
+  ALREADY_PRIMARY_MANAGER: "That person is already this project's main manager.",
+  FEATURES_NOT_READY: "Co-managers are not switched on in this database yet.",
+  MANAGER_NOT_FOUND: "That person can't be a manager.",
+  NOT_A_MANAGER: "Only a Manager or an Admin can be a manager. Change their role in Admin first.",
 };
 
 const say = (err: unknown) => {
@@ -68,6 +77,7 @@ export default function ProjectsPage() {
   const [busy, setBusy] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState("");
+  const [coAdding, setCoAdding] = useState("");
 
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: "", companyId: "", managerId: "" });
@@ -213,7 +223,7 @@ export default function ProjectsPage() {
                 className="rounded-xl border border-indigo-100 px-3 py-2 text-sm text-slate-900"
               >
                 <option value="">Decide later</option>
-                {(data?.assignable ?? []).map((p) => (
+                {(data?.managers ?? []).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name} {p.employeeCode ? `(${p.employeeCode})` : ""}
                   </option>
@@ -284,7 +294,11 @@ export default function ProjectsPage() {
                           <p className="font-medium text-slate-900">{p.name}</p>
                           <p className="mt-0.5 text-xs text-slate-400">
                             {p.manager
-                              ? `Managed by ${p.manager}`
+                              ? `Managed by ${p.manager}${
+                                  p.coManagers.length
+                                    ? ` + ${p.coManagers.map((c) => c.name).join(", ")}`
+                                    : ""
+                                }`
                               : "No manager — nobody approves this work"}
                           </p>
                         </div>
@@ -367,12 +381,98 @@ export default function ProjectsPage() {
                                 className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-900"
                               >
                                 <option value="">No manager</option>
-                                {(data?.assignable ?? []).map((a) => (
+                                {/* the current manager stays listed even if they are not a Manager/Admin by role */}
+                                {p.managerId && p.manager && !(data?.managers ?? []).some((a) => a.id === p.managerId) && (
+                                  <option value={p.managerId}>Manager: {p.manager} (current)</option>
+                                )}
+                                {(data?.managers ?? [])
+                                  .map((a) => (
                                   <option key={a.id} value={a.id}>
                                     Manager: {a.name}
                                   </option>
                                 ))}
                               </select>
+                            </div>
+                          )}
+
+                          {(canManage || p.coManagers.length > 0) && (
+                            <div className="mb-4 rounded-xl bg-white p-3 shadow-[var(--shadow-card)]">
+                              <p className="text-xs font-medium text-slate-600">
+                                Co-managers{" "}
+                                <span className="font-normal text-slate-400">
+                                  — same authority as the main manager
+                                </span>
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                {p.coManagers.length === 0 && (
+                                  <span className="text-xs text-slate-400">None</span>
+                                )}
+                                {p.coManagers.map((c) => (
+                                  <span
+                                    key={c.id}
+                                    className="inline-flex items-center gap-1.5 rounded-full bg-[#EEF0FD] px-2.5 py-1 text-xs text-slate-700"
+                                  >
+                                    {c.name}
+                                    {canManage && (
+                                      <button
+                                        disabled={busy}
+                                        onClick={() =>
+                                          run(
+                                            () =>
+                                              apiPost<Data>(
+                                                `/projects/${p.id}/co-managers/${c.id}/remove`,
+                                                {}
+                                              ),
+                                            "Co-manager removed."
+                                          )
+                                        }
+                                        className="text-slate-400 hover:text-red-600"
+                                        aria-label={`Remove ${c.name}`}
+                                      >
+                                        ×
+                                      </button>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                              {canManage && (
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  <select
+                                    value={openId === p.id ? coAdding : ""}
+                                    onChange={(e) => setCoAdding(e.target.value)}
+                                    className="min-w-56 flex-1 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-900"
+                                  >
+                                    <option value="">Choose a co-manager…</option>
+                                    {(data?.managers ?? [])
+                                      .filter(
+                                        (a) =>
+                                          a.id !== p.managerId &&
+                                          !p.coManagers.some((c) => c.id === a.id)
+                                      )
+                                      .map((a) => (
+                                        <option key={a.id} value={a.id}>
+                                          {a.name}
+                                          {a.employeeCode ? ` · ${a.employeeCode}` : ""}
+                                        </option>
+                                      ))}
+                                  </select>
+                                  <button
+                                    disabled={busy || !coAdding}
+                                    onClick={() =>
+                                      run(
+                                        () =>
+                                          apiPost<Data>(`/projects/${p.id}/co-managers`, {
+                                            userId: coAdding,
+                                          }),
+                                        "Co-manager added."
+                                      ).then(() => setCoAdding(""))
+                                    }
+                                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                                  >
+                                    Add co-manager
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
 
