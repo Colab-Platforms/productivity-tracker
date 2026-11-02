@@ -12,6 +12,7 @@
 // ===========================================================================
 
 import { prisma } from "../../lib/prisma.js";
+import { notifySlipsPublished } from "./payroll.generate.js";
 import { saveUpload, readStored, deleteStored, contentTypeFor } from "../../lib/storage.js";
 
 const PAYROLL_ROLES = new Set(["HR", "ADMIN"]);
@@ -276,6 +277,14 @@ export async function publishSlips(
   assertPayrollStaff(String(viewer.role));
   if (slipIds.length === 0) return { updated: 0 };
 
+  // Slips that are about to become visible for the first time get a notification.
+  const fresh = publish
+    ? await prisma.salarySlip.findMany({
+        where: { id: { in: slipIds }, platformId: viewer.platformId, publishedAt: null, NOT: NOT_YET_APPROVED },
+        select: { id: true, userId: true, month: true, year: true },
+      })
+    : [];
+
   const result = await prisma.salarySlip.updateMany({
     where: {
       id: { in: slipIds },
@@ -285,6 +294,8 @@ export async function publishSlips(
     data: { publishedAt: publish ? new Date() : null },
   });
 
+  await notifySlipsPublished(viewer.platformId, fresh);
+
   return { updated: result.count, skipped: slipIds.length - result.count };
 }
 
@@ -292,6 +303,11 @@ export async function publishMonth(viewerId: string, month: number, year: number
   const viewer = await actor(viewerId);
   assertPayrollStaff(String(viewer.role));
   assertPeriod(month, year);
+
+  const fresh = await prisma.salarySlip.findMany({
+    where: { platformId: viewer.platformId, month, year, publishedAt: null, NOT: NOT_YET_APPROVED },
+    select: { id: true, userId: true, month: true, year: true },
+  });
 
   const result = await prisma.salarySlip.updateMany({
     where: {
@@ -303,6 +319,8 @@ export async function publishMonth(viewerId: string, month: number, year: number
     },
     data: { publishedAt: new Date() },
   });
+
+  await notifySlipsPublished(viewer.platformId, fresh);
 
   const waiting = await prisma.salarySlip.count({
     where: { platformId: viewer.platformId, month, year, publishedAt: null, ...NOT_YET_APPROVED },

@@ -94,6 +94,7 @@ type TeamRow = {
   teamType: string;
   isActive: boolean;
   manager: { id: string; name: string } | null;
+  coManagers: { id: string; name: string; employeeCode: string | null }[];
   shift: { id: string; name: string; startTime: string; endTime: string } | null;
   config: Record<string, number | string | boolean> | null;
   memberCount: number;
@@ -1063,6 +1064,20 @@ const options_roles = (current: string, canChange: boolean) => (canChange ? ["EM
 // TEAMS
 // ===========================================================================
 
+// The projects service answers with short codes; turn them into sentences.
+function coManagerMessage(e: unknown) {
+  const code = e instanceof Error ? e.message : "";
+  const map: Record<string, string> = {
+    NOT_A_MANAGER: "Only a Manager or an Admin can be a manager. Change their role first.",
+    ALREADY_PRIMARY_MANAGER: "That person is already this team's main manager.",
+    NOT_YOUR_COMPANY: "You can only pick managers from companies you handle.",
+    FEATURES_NOT_READY: "Co-managers are not switched on in this database yet.",
+    MANAGER_NOT_FOUND: "That person can't be a manager.",
+    NOT_ALLOWED: "Only HR and Admin can change managers.",
+  };
+  return map[code] ?? (code || "Could not change co-managers");
+}
+
 function TeamsTab({ options, onError, onDone }: TabProps) {
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -1072,6 +1087,30 @@ function TeamsTab({ options, onError, onDone }: TabProps) {
   const [managerId, setManagerId] = useState("");
   const [shiftId, setShiftId] = useState("");
   const [addTo, setAddTo] = useState<Record<string, string>>({});
+  const [coAdd, setCoAdd] = useState<Record<string, string>>({});
+
+  async function addCoManager(teamId: string) {
+    const userId = coAdd[teamId];
+    if (!userId) return;
+    try {
+      await call(`/projects/${teamId}/co-managers`, "POST", { userId });
+      setCoAdd((s) => ({ ...s, [teamId]: "" }));
+      onDone("Co-manager added.");
+      void load();
+    } catch (e) {
+      onError(coManagerMessage(e));
+    }
+  }
+
+  async function removeCoManager(teamId: string, userId: string) {
+    try {
+      await call(`/projects/${teamId}/co-managers/${userId}/remove`, "POST", {});
+      onDone("Co-manager removed.");
+      void load();
+    } catch (e) {
+      onError(coManagerMessage(e));
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -1154,6 +1193,44 @@ function TeamsTab({ options, onError, onDone }: TabProps) {
                   {t.manager.name}
                 </span>
               )}
+            </div>
+
+            <div className="mt-3 rounded-xl border border-indigo-100 p-3">
+              <p className="text-xs font-medium text-slate-600">
+                Co-managers <span className="font-normal text-slate-400">— same authority as the main manager</span>
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {t.coManagers.length === 0 && <span className="text-xs text-slate-400">None</span>}
+                {t.coManagers.map((c) => (
+                  <span key={c.id} className="inline-flex items-center gap-1 rounded-full bg-[#EEF0FD] py-1 pl-2.5 pr-1.5 text-xs text-slate-700">
+                    {c.name}
+                    <button type="button" onClick={() => removeCoManager(t.id, c.id)} aria-label={`Remove ${c.name}`} className="text-slate-400 hover:text-rose-600">×</button>
+                  </span>
+                ))}
+              </div>
+              <div className="mt-2 flex gap-2">
+                <select
+                  value={coAdd[t.id] ?? ""}
+                  onChange={(e) => setCoAdd((s) => ({ ...s, [t.id]: e.target.value }))}
+                  className="flex-1 rounded-xl border border-indigo-200 px-3 py-1.5 text-sm"
+                >
+                  <option value="">Add a co-manager…</option>
+                  {(options?.managers ?? [])
+                    .filter((m) => m.id !== t.manager?.id && !t.coManagers.some((c) => c.id === m.id))
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.role.toLowerCase()})
+                      </option>
+                    ))}
+                </select>
+                <button
+                  onClick={() => addCoManager(t.id)}
+                  disabled={!coAdd[t.id]}
+                  className="rounded-xl border border-indigo-200 px-3 py-1.5 text-sm text-slate-700 hover:border-slate-400 disabled:opacity-40"
+                >
+                  Add
+                </button>
+              </div>
             </div>
 
             <ul className="mt-4 divide-y divide-indigo-50 border-t border-indigo-50">

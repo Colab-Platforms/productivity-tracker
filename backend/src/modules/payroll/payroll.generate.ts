@@ -16,6 +16,7 @@
 
 import { prisma } from "../../lib/prisma.js";
 import { viewerIsOwner } from "../../lib/owner.js";
+import { notifyUsers } from "../../lib/notify.js";
 import {
   getMonthAttendance,
   getMonthAttendanceBulk,
@@ -81,6 +82,167 @@ async function resolvePlatform(
   return actor.platformId;
 }
 
+/** Every team id must exist in this company. Empty list = whole company. */
+async function validateTeams(platformId: string, teamIds: string[]): Promise<string[]> {
+  const ids = [...new Set(teamIds.map(String).filter(Boolean))];
+  if (ids.length === 0) return [];
+  const found = await prisma.team.count({ where: { id: { in: ids }, platformId } });
+  if (found !== ids.length) throw new Error("NOT_YOUR_COMPANY");
+  return ids;
+}
+
+/** Teams of the viewer's company, for the department picker. */
+export async function listPayrollTeams(actorId: string) {
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { platformId: true },
+  });
+  if (!actor) throw new Error("USER_NOT_FOUND");
+  return prisma.team.findMany({
+    where: { platformId: actor.platformId, isActive: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+}
+
+/**
+ * One-click release: approve every DRAFT slip in scope, publish every approved
+ * unpublished generated slip in scope, then tell each employee once.
+ * Uploaded-PDF slips (storageKey set) are left exactly as they are.
+ */
+export async function releaseMonth(
+  actorId: string,
+  month: number,
+  year: number,
+  teamIds: string[] = [],
+) {
+  if (month < 1 || month > 12) throw new Error("BAD_MONTH");
+  if (year < 2020 || year > 2100) throw new Error("BAD_YEAR");
+
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { platformId: true },
+  });
+  if (!actor) throw new Error("USER_NOT_FOUND");
+  const teams = await validateTeams(actor.platformId, teamIds);
+
+  const scopeWhere = {
+    platformId: actor.platformId,
+    month,
+    year,
+    storageKey: null,
+    ...(teams.length
+      ? { user: { teamMemberships: { some: { teamId: { in: teams }, isActive: true } } } }
+      : {}),
+  };
+
+  const now = new Date();
+  const released = await prisma.$transaction(async (tx) => {
+    const approved = await tx.salarySlip.updateMany({
+      where: { ...scopeWhere, status: "DRAFT" },
+      data: { status: "APPROVED", approvedAt: now },
+    });
+    const toPublish = await tx.salarySlip.findMany({
+      where: { ...scopeWhere, status: "APPROVED", publishedAt: null },
+      select: { id: true, userId: true },
+    });
+    if (toPublish.length) {
+      await tx.salarySlip.updateMany({
+        where: { id: { in: toPublish.map((s) => s.id) } },
+        data: { publishedAt: now },
+      });
+    }
+    return { approved: approved.count, slips: toPublish };
+  });
+
+  await notifySlipsPublished(
+    actor.platformId,
+    released.slips.map((s) => ({ ...s, month, year })),
+  );
+
+  return { approved: released.approved, published: released.slips.length };
+}
+
+/**
+ * Take released slips back (same department scope as release). The employee can no
+ * longer see them, and their "slip is ready" notification is removed so it does not
+ * point at nothing; releasing again notifies afresh. Slips stay APPROVED, so HR can
+ * release again without regenerating. Uploaded-PDF slips are not touched here.
+ */
+export async function unreleaseMonth(
+  actorId: string,
+  month: number,
+  year: number,
+  teamIds: string[] = [],
+) {
+  if (month < 1 || month > 12) throw new Error("BAD_MONTH");
+  if (year < 2020 || year > 2100) throw new Error("BAD_YEAR");
+
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { platformId: true },
+  });
+  if (!actor) throw new Error("USER_NOT_FOUND");
+  const teams = await validateTeams(actor.platformId, teamIds);
+
+  const where = {
+    platformId: actor.platformId,
+    month,
+    year,
+    storageKey: null,
+    publishedAt: { not: null },
+    ...(teams.length
+      ? { user: { teamMemberships: { some: { teamId: { in: teams }, isActive: true } } } }
+      : {}),
+  };
+  const slips = await prisma.salarySlip.findMany({ where, select: { id: true } });
+  if (slips.length === 0) return { unreleased: 0 };
+
+  const ids = slips.map((s) => s.id);
+  await prisma.salarySlip.updateMany({ where: { id: { in: ids } }, data: { publishedAt: null } });
+
+  try {
+    await prisma.$executeRaw`DELETE FROM notifications WHERE "platformId" = ${actor.platformId}::uuid AND type = 'PAYSLIP_PUBLISHED' AND data->>'dedupeKey' = ANY(${ids.map((i) => `payslip:${i}:published`)})`;
+  } catch (err) {
+    console.error("[payroll] could not clear notifications", err);
+  }
+  return { unreleased: ids.length };
+}
+
+/**
+ * Tell each employee their slip is ready. Used by EVERY way of publishing
+ * (one-click release, release approved, release month, publish a chosen set).
+ * A failure here must never undo a release.
+ */
+export async function notifySlipsPublished(
+  platformId: string,
+  slips: { id: string; userId: string; month: number; year: number }[],
+) {
+  try {
+    await Promise.all(
+      slips.map((s) =>
+        notifyUsers({
+          platformId,
+          userIds: [s.userId],
+          type: "PAYSLIP_PUBLISHED",
+          title: `Your salary slip for ${MONTHS[s.month - 1]} ${s.year} is ready`,
+          body: "Open My Payslips to view or download it.",
+          link: "/dashboard/payslips",
+          data: { slipId: s.id, month: s.month, year: s.year },
+          dedupeKey: `payslip:${s.id}:published`,
+        }),
+      ),
+    );
+  } catch (err) {
+    console.error("[payroll] notify failed", err);
+  }
+}
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 /**
  * Generate or refresh DRAFT slips for one company and one month.
  * Running it twice is safe: a DRAFT is recalculated, an approved slip is left
@@ -91,11 +253,13 @@ export async function generateMonth(
   month: number,
   year: number,
   platformId?: string,
+  teamIds: string[] = [],
 ): Promise<GenerateResult> {
   if (month < 1 || month > 12) throw new Error("BAD_MONTH");
   if (year < 2020 || year > 2100) throw new Error("BAD_YEAR");
 
   const scope = await resolvePlatform(actorId, platformId);
+  const teams = await validateTeams(scope, teamIds);
 
   // A month that has not finished can still be generated — HR often wants a
   // preview — but the result says so, because the remaining days are counted
@@ -106,7 +270,13 @@ export async function generateMonth(
     (year === now.getUTCFullYear() && month < now.getUTCMonth() + 1);
 
   const employees = await prisma.user.findMany({
-    where: { platformId: scope, status: "ACTIVE" },
+    where: {
+      platformId: scope,
+      status: "ACTIVE",
+      ...(teams.length
+        ? { teamMemberships: { some: { teamId: { in: teams }, isActive: true } } }
+        : {}),
+    },
     select: {
       id: true,
       firstName: true,

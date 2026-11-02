@@ -128,6 +128,7 @@ model User {
 
   teamMemberships   TeamMember[]
   managedTeams      Team[]                     @relation("TeamManager")
+  coManagedTeams    TeamManager[]              @relation("TeamCoManager")
   workSessions      WorkSession[]
   dailyTasks        DailyTask[]
   tasksApproved     DailyTask[]                @relation("TaskApprover")
@@ -216,6 +217,7 @@ model Team {
   updatedAt DateTime @updatedAt
 
   members TeamMember[]
+  coManagers TeamManager[]
     dailyTasks DailyTask[]
   workSessions WorkSession[] @relation("SessionProject")
   config  TeamConfig?
@@ -241,6 +243,23 @@ model TeamMember {
   @@index([userId, isActive])
   @@map("team_members")
 
+}
+
+// Extra managers of a team. Team.managerId stays the PRIMARY manager (shown first,
+// reporting line follows it); every row here is a co-manager with the same
+// authority over that team. New table only, so nothing existing changes shape.
+model TeamManager {
+  id     String @id @default(uuid()) @db.Uuid
+  teamId String @db.Uuid
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId String @db.Uuid
+  user   User   @relation("TeamCoManager", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@map("team_managers")
 }
 
 // Per-team targets and alert thresholds. EVERY alert reads from here â€”

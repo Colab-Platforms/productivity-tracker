@@ -1,5 +1,6 @@
 import { emitTaskChange } from "../../lib/realtime.js";
 import { taskNotice } from "./tasks.notify.js";
+import { managedByWhere, isTeamManager } from "../../lib/teamManagers.js";
 import { prisma } from "../../lib/prisma.js";
 import { inPinnedCompany, onlyPinnedCompany } from "../../lib/deployment.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
@@ -59,11 +60,7 @@ async function assertCanReviewTask(
 ) {
   if (!(await inPinnedCompany(task.userId))) throw new Error("NOT_YOUR_TEAM");
   if (task.teamId) {
-    const team = await prisma.team.findUnique({
-      where: { id: task.teamId },
-      select: { managerId: true },
-    });
-    if (team?.managerId === actor.id) return;
+    if (await isTeamManager(actor.id, task.teamId)) return;
   }
 
   const target = await prisma.user.findUnique({
@@ -108,7 +105,7 @@ async function assertCanManage(
     where: {
       userId: targetUserId,
       isActive: true,
-      team: { managerId: actor.id, isActive: true },
+      team: { ...(await managedByWhere(actor.id)), isActive: true },
     },
     select: { id: true },
   });
@@ -126,7 +123,7 @@ export async function manageableUserIds(actor: {
   // companies - at Avatar one person heads teams in several of them.
   const [managedTeams, reports] = await Promise.all([
     prisma.team.findMany({
-      where: { managerId: actor.id, isActive: true },
+      where: { ...(await managedByWhere(actor.id)), isActive: true },
       select: {
         members: { where: { isActive: true }, select: { userId: true } },
       },
@@ -647,7 +644,7 @@ export async function listForApproval(
     prisma.team.findMany({
       where:
         ctx.role === "MANAGER"
-          ? { managerId, isActive: true }
+          ? { ...(await managedByWhere(managerId)), isActive: true }
           : { platformId: ctx.platformId, isActive: true },
       select: { id: true, name: true, platform: { select: { name: true } } },
       orderBy: { name: "asc" },

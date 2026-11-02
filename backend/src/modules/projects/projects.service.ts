@@ -1,6 +1,7 @@
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { prisma } from "../../lib/prisma.js";
 import { isUuid } from "../../lib/params.js";
+import { managedByWhere, coManagersByTeam } from "../../lib/teamManagers.js";
 
 // ---------------------------------------------------------------------------
 // PROJECTS
@@ -49,7 +50,7 @@ export async function listProjects(viewerId: string) {
   const teams = await prisma.team.findMany({
     where: isStaff
       ? { platformId: { in: platformIds } }
-      : { managerId: viewerId, ...(pinned ? { platformId: pinned.id } : {}) },
+      : { ...(await managedByWhere(viewerId)), ...(pinned ? { platformId: pinned.id } : {}) },
     select: {
       id: true,
       name: true,
@@ -79,6 +80,22 @@ export async function listProjects(viewerId: string) {
     orderBy: [{ isActive: "desc" }, { name: "asc" }],
   });
 
+  const coByTeam = await coManagersByTeam(teams.map((t) => t.id));
+
+  // Who can be picked as a manager: Managers AND Admins (Admins run teams too) who can sign in, in the companies this
+  // person can act on. Not just people already listed as managers: a company may have none yet.
+  const managerCandidates = isStaff
+    ? await prisma.user.findMany({
+        where: {
+          platformId: { in: platformIds },
+          role: { in: ["MANAGER", "ADMIN"] as never },
+          status: { in: ["ACTIVE", "INVITED"] },
+        },
+        select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, platform: { select: { name: true } } },
+        orderBy: [{ firstName: "asc" }],
+      })
+    : [];
+
   // Everyone the staff member could put on a project, grouped by company on
   // screen. Includes people from other companies for Admin, because the
   // reporting line deliberately crosses them.
@@ -94,6 +111,7 @@ export async function listProjects(viewerId: string) {
           lastName: true,
           employeeCode: true,
           designation: true,
+          role: true,
           platform: { select: { name: true } },
         },
         orderBy: [{ firstName: "asc" }],
@@ -109,11 +127,19 @@ export async function listProjects(viewerId: string) {
   return {
     canManage: isStaff,
     companies,
+    managers: managerCandidates.map((u) => ({
+      id: u.id,
+      name: `${u.firstName} ${u.lastName}`.trim(),
+      employeeCode: u.employeeCode,
+      role: String(u.role),
+      company: u.platform?.name ?? null,
+    })),
     assignable: assignable.map((u) => ({
       id: u.id,
       name: `${u.firstName} ${u.lastName}`.trim(),
       employeeCode: u.employeeCode,
       designation: u.designation,
+      role: String(u.role),
       company: u.platform?.name ?? null,
     })),
     projects: teams.map((t) => ({
@@ -128,6 +154,7 @@ export async function listProjects(viewerId: string) {
         ? `${t.manager.firstName} ${t.manager.lastName}`.trim()
         : null,
       managerCode: pinned && t.manager?.platformId !== pinned.id ? null : (t.manager?.employeeCode ?? null),
+      coManagers: (coByTeam.get(t.id) ?? []).filter((c) => !pinned || c.platformId === pinned.id),
       members: t.members.map((m) => ({
         id: m.user.id,
         name: `${m.user.firstName} ${m.user.lastName}`.trim(),
@@ -166,6 +193,13 @@ export async function saveProject(
     if (!m) throw new Error("MANAGER_NOT_FOUND");
     if (a.role !== "ADMIN" && m.platformId !== a.platformId) {
       throw new Error("NOT_YOUR_COMPANY");
+    }
+    // Managers and Admins can run a team. A project's CURRENT manager may stay as they are.
+    if (!["MANAGER", "ADMIN"].includes(String(m.role))) {
+      const current = id
+        ? (await prisma.team.findUnique({ where: { id }, select: { managerId: true } }))?.managerId
+        : null;
+      if (current !== managerId) throw new Error("NOT_A_MANAGER");
     }
   }
 
@@ -244,6 +278,55 @@ async function promoteToManager(userId: string) {
       data: { role: "MANAGER" as never },
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// CO-MANAGERS
+// Extra managers with the same authority as the primary one (see lib/teamManagers.ts).
+// Only HR/Admin set them, within their own company (Admin: any), like the primary manager.
+// ---------------------------------------------------------------------------
+async function coManagerContext(viewerId: string, teamId: string, userId: string) {
+  const a = await actor(viewerId);
+  assertStaff(a.role);
+  if (!isUuid(teamId) || !isUuid(userId)) throw new Error("NOT_FOUND");
+  const platformIds = await visiblePlatformIds(a);
+  const team = await prisma.team.findUnique({ where: { id: teamId } });
+  if (!team || !platformIds.includes(team.platformId)) throw new Error("NOT_FOUND");
+  const person = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { platformId: true, role: true, status: true },
+  });
+  if (!person) throw new Error("MANAGER_NOT_FOUND");
+  if (a.role !== "ADMIN" && person.platformId !== a.platformId) throw new Error("NOT_YOUR_COMPANY");
+  return { a, team, person };
+}
+
+export async function addCoManager(viewerId: string, teamId: string, userId: string) {
+  const { team, person } = await coManagerContext(viewerId, teamId, userId);
+  if (!["ACTIVE", "INVITED"].includes(String(person.status))) throw new Error("MANAGER_NOT_FOUND");
+  // Managers and Admins only. Employees are never promoted by this action.
+  if (!["MANAGER", "ADMIN"].includes(String(person.role))) throw new Error("NOT_A_MANAGER");
+  if (team.managerId === userId) throw new Error("ALREADY_PRIMARY_MANAGER");
+  try {
+    await prisma.teamManager.upsert({
+      where: { teamId_userId: { teamId, userId } },
+      create: { teamId, userId },
+      update: {},
+    });
+  } catch {
+    throw new Error("FEATURES_NOT_READY"); // migration not applied yet
+  }
+  return listProjects(viewerId);
+}
+
+export async function removeCoManager(viewerId: string, teamId: string, userId: string) {
+  await coManagerContext(viewerId, teamId, userId);
+  try {
+    await prisma.teamManager.deleteMany({ where: { teamId, userId } });
+  } catch {
+    throw new Error("FEATURES_NOT_READY");
+  }
+  return listProjects(viewerId);
 }
 
 export async function addMember(

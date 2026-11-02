@@ -103,6 +103,11 @@ const RULES: Rule[] = [
 
   { method: "POST", re: /^\/api\/payroll\/upload$/, module: "Payroll", action: "UPLOAD", summary: "Uploaded a payslip" },
   { method: "POST", re: /^\/api\/payroll\/publish$/, module: "Payroll", action: "UPDATE", summary: "Published or unpublished payslips" },
+  { method: "POST", re: /^\/api\/payroll\/generate$/, module: "Payroll", action: "CREATE", summary: "Generated salary slips" },
+  { method: "POST", re: /^\/api\/payroll\/approve$/, module: "Payroll", action: "APPROVE", summary: "Approved salary slips" },
+  { method: "POST", re: /^\/api\/payroll\/unrelease$/, module: "Payroll", action: "UPDATE", summary: "Took released salary slips back" },
+  { method: "POST", re: /^\/api\/payroll\/release$/, module: "Payroll", action: "APPROVE", summary: "Approved and released salary slips" },
+  { method: "POST", re: /^\/api\/payroll\/[^/]+\/deduction$/, module: "Payroll", action: "UPDATE", summary: "Changed a salary slip deduction", recordType: "SalarySlip" },
   { method: "POST", re: /^\/api\/payroll\/publish-month$/, module: "Payroll", action: "UPDATE", summary: "Published a month's payslips" },
   { method: "POST", re: /^\/api\/payroll\/:id\/delete$/, module: "Payroll", action: "DELETE", summary: "Deleted a payslip", recordType: "SalarySlip" },
   { method: "DELETE", re: /^\/api\/payroll\/:id$/, module: "Payroll", action: "DELETE", summary: "Deleted a payslip", recordType: "SalarySlip" },
@@ -117,6 +122,8 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/offers\/:id\/send$/, module: "Offers", action: "SUBMIT", summary: "Sent an offer", recordType: "Offer" },
 
   { method: "POST", re: /^\/api\/projects$/, module: "Projects", action: "UPDATE", summary: "Saved a project" },
+  { method: "POST", re: /^\/api\/projects\/:id\/co-managers$/, module: "Projects", action: "UPDATE", summary: "Added a co-manager to a project", recordType: "Team" },
+  { method: "POST", re: /^\/api\/projects\/:id\/co-managers\/:id\/remove$/, module: "Projects", action: "UPDATE", summary: "Removed a co-manager from a project", recordType: "Team" },
   { method: "POST", re: /^\/api\/projects\/:id\/members$/, module: "Projects", action: "UPDATE", summary: "Added a project member", recordType: "Team" },
   { method: "POST", re: /^\/api\/projects\/:id\/members\/:id\/primary$/, module: "Projects", action: "UPDATE", summary: "Made a project primary", recordType: "Team" },
   { method: "POST", re: /^\/api\/projects\/:id\/members\/:id\/remove$/, module: "Projects", action: "UPDATE", summary: "Removed a project member", recordType: "Team" },
