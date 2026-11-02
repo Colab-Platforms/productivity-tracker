@@ -244,7 +244,8 @@ export default function TodayView() {
 
   // ---- the timesheet (range, schedule, history) -----------------------------------------
   const [reloadTs, setReloadTs] = useState(0);
-  const [preset, setPreset] = useState<Preset>("LAST_7");
+  // Always opens on Today (a refresh or coming back resets it); "today" is the company-timezone day the server reports.
+  const [preset, setPreset] = useState<Preset>("TODAY");
   const [custom, setCustom] = useState({ from: "", to: "" });
   const [openLog, setOpenLog] = useState<"all" | string | null>(null);
   const [openSchedule, setOpenSchedule] = useState(false);
@@ -380,8 +381,8 @@ export default function TodayView() {
   });
 
   // ---- the range ---------------------------------------------------------------------------
-  // The default load (the last 7 days ending today) also tells us what "today"
-  // is in the company's timezone, which every other range is built from.
+  // The first load (the server's default window, the last 7 days ending today) tells us what "today"
+  // is in the company's timezone, which every range, including the default Today, is built from.
   const base = useApi<Timesheet>("/tracker/timesheet", reloadTs);
   const todayStr = base.data?.today ?? null;
   const range = todayStr ? presetRange(preset, todayStr, custom) : null;
