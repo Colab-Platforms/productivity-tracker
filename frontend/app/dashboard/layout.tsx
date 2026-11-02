@@ -438,6 +438,7 @@ export default function DashboardLayout({
         </div>
         <div className="min-w-0">
           <p className="whitespace-nowrap text-[17px] font-bold leading-tight tracking-tight text-slate-900">Avatar HRMS</p>
+          <p className="truncate text-[12px] font-semibold text-slate-700" title={fullName}>{fullName}</p>
           <Link
             href="/dashboard/profile"
             aria-current={pathname === "/dashboard/profile" ? "page" : undefined}
