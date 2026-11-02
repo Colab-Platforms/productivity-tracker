@@ -20,6 +20,7 @@ import { parseIsoDay } from "../../lib/dates.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { accessFor, assertCompany, scopeWhere } from "../../lib/companyAccess.js";
 import { allocateEmployeeCode } from "./employeeCode.js";
+import { photoStamps } from "../photos/photos.service.js";
 import { sendWelcome } from "../onboarding/onboarding.mail.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
 
@@ -165,8 +166,10 @@ export async function listUsers(
     orderBy: [{ firstName: "asc" }],
   });
 
+  const stamps = await photoStamps(users.map((u) => u.id));
   return users.map((u) => ({
     id: u.id,
+    photoAt: stamps.get(u.id) ?? null,
     name: `${u.firstName} ${u.lastName}`.trim(),
     firstName: u.firstName,
     lastName: u.lastName,

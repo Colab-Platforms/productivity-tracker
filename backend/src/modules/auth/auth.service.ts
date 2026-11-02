@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../lib/prisma.js";
+import { photoStamps } from "../photos/photos.service.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { auditNote } from "../../lib/auditContext.js";
 
@@ -100,7 +101,9 @@ export async function getMe(userId: string) {
     include: { platform: true },
   });
 
-  return user ? publicUser(user) : null;
+  if (!user) return null;
+  const photoAt = (await photoStamps([user.id])).get(user.id) ?? null;
+  return { ...publicUser(user), photoAt };
 }
 
 function publicUser(user: any) {

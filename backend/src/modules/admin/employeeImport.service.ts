@@ -1209,6 +1209,7 @@ export async function commitEmployees(viewerId: string, input: CommitInput) {
       // be fetched again; HR hands each person their own line.
       credentials: credentials.map((c) => ({
         rowNumber: c.work.result.rowNumber,
+        userId: created.get(c.work.result.rowNumber) ?? null,
         employeeId: finalByRow.get(c.work.result.rowNumber)?.code ?? c.work.plan!.employeeCode,
         name: `${c.work.plan!.firstName} ${c.work.plan!.lastName}`.trim(),
         company: c.work.plan!.platformName,

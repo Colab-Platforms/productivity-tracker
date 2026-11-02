@@ -11,6 +11,7 @@ import { prisma } from "../../lib/prisma.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { huddleBreakdowns } from "../meetings/participation.service.js";
+import { photoStamps } from "../photos/photos.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
 
@@ -154,6 +155,7 @@ export async function getLiveBoard(viewerId: string) {
   // people on their own board (their reporting employees); HR/Admin keep seeing live-meeting time only and get huddle COUNTS elsewhere.
   const huddle = String(viewer.role) === "MANAGER" ? await huddleBreakdowns(sessions as never, now) : new Map<string, { huddleSeconds: number; otherSeconds: number; openPastEnd: boolean }>();
 
+  const stamps = await photoStamps(people.map((p) => p.id));
   const rows = people.map((p) => {
     const t = targetsFor(p);
     const s = byUser.get(p.id) ?? null;
@@ -184,6 +186,7 @@ export async function getLiveBoard(viewerId: string) {
 
     return {
       userId: p.id,
+      photoAt: stamps.get(p.id) ?? null,
       name: `${p.firstName} ${p.lastName}`.trim(),
       employeeCode: p.employeeCode,
       designation: p.designation,

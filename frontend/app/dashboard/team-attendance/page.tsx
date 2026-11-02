@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import Avatar from "../_photos/Avatar";
 import Link from "next/link";
 import { clock, clockTime } from "../reports/_team/format";
 
@@ -16,7 +17,7 @@ import { clock, clockTime } from "../reports/_team/format";
 type LiveStatus = "WORKING" | "TEA" | "LUNCH" | "BIO" | "OTHER_BREAK" | "MEETING" | "CLOCKED_OUT" | "NOT_CLOCKED_IN" | "ON_LEAVE";
 
 type LiveRow = {
-  userId: string; name: string; employeeCode: string | null; designation: string | null; teamName: string | null;
+  userId: string; photoAt?: string | null; name: string; employeeCode: string | null; designation: string | null; teamName: string | null;
   company?: string | null; shiftName?: string | null; shiftStart?: string | null; shiftEnd?: string | null;
   status: LiveStatus; statusStartedAt: string | null; loginAt: string | null; logoutAt?: string | null; pendingInvite?: boolean;
   wasLateLogin: boolean; lateByMinutes: number; lateRemark?: string | null;
@@ -327,7 +328,7 @@ export default function AttendancePage() {
                             />
                           </td>
                           <td className="px-4 py-3">
-                            <p className="font-medium text-slate-900">{r.name}</p>
+                            <p className="flex items-center gap-2 font-medium text-slate-900"><Avatar userId={r.userId} name={r.name} photoAt={r.photoAt} size={28} />{r.name}</p>
                             <p className="text-xs text-slate-400">
                               {r.employeeCode ?? "—"}{r.designation ? ` · ${r.designation}` : ""}
                               {r.wasLateLogin && <span className="ml-2 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600">late {r.lateByMinutes}m</span>}

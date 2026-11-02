@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import { API_BASE } from "@/lib/api";
 import { todayIso } from "@/lib/time";
 import EmployeeActions from "../_employees/EmployeeActions";
+import Avatar, { PhotoEditor } from "../_photos/Avatar";
 import { useMe } from "../layout";
 
 const API = API_BASE;
@@ -82,6 +83,7 @@ type Person = {
   teams: { id: string; name: string }[];
   company?: string | null;
   companyId?: string;
+  photoAt?: string | null;
 };
 
 type CompaniesInfo = { all: boolean; ownCompanyId: string; canSwitch: boolean; companies: { id: string; name: string; employeeCodePrefix: string | null }[] };
@@ -363,8 +365,13 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
             {people.map((p) => (
               <tr key={p.id} className="hover:bg-indigo-50/60/70">
                 <td className="px-4 py-3">
-                  <div className="font-medium text-slate-900">{p.name}</div>
-                  <div className="text-xs text-slate-500">{p.email}</div>
+                  <div className="flex items-center gap-3">
+                    <Avatar userId={p.id} name={p.name} photoAt={p.photoAt} size={32} />
+                    <div className="min-w-0">
+                      <div className="font-medium text-slate-900">{p.name}</div>
+                      <div className="text-xs text-slate-500">{p.email}</div>
+                    </div>
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-slate-600">{p.employeeCode ?? "—"}</td>
                 {companies?.canSwitch && companyId === "all" && <td className="px-4 py-3 text-slate-600">{p.company ?? "—"}</td>}
@@ -782,7 +789,7 @@ type EditModel = {
   person: {
     id: string; firstName: string; lastName: string; email: string; phone: string | null; employeeCode: string | null; role: string; status: string;
     designation: string | null; dateOfJoining: string | null; reportsToId: string | null; shiftId: string | null; trackerAccessEnabled: boolean;
-    employmentType: string | null; companyId: string; company: string; departments: { id: string; name: string }[]; monthlySalary?: number | null;
+    employmentType: string | null; companyId: string; company: string; departments: { id: string; name: string }[]; monthlySalary?: number | null; photoAt?: string | null;
   };
   permissions: { canEditSalary: boolean; canChangeRoles: boolean };
   dropdowns: {
@@ -802,6 +809,7 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [confirmDesignation, setConfirmDesignation] = useState(false);
   const [confirmSalary, setConfirmSalary] = useState(false);
+  const [photoAtEdit, setPhotoAtEdit] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
     let live = true;
@@ -900,6 +908,10 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
 
   return (
     <Drawer title={person.name} onClose={onClose}>
+      <Field label="Profile photo" hint="Shown instead of initials across the app. Saved straight away.">
+        <PhotoEditor userId={p.id} name={`${f.firstName} ${f.lastName}`.trim()} photoAt={photoAtEdit !== undefined ? photoAtEdit : p.photoAt} onChanged={setPhotoAtEdit} />
+      </Field>
+
       <div className="grid grid-cols-2 gap-3">
         <Field label="Company" hint="Cannot be changed here: attendance, tasks and leave belong to it.">
           <Input value={p.company} onChange={() => undefined} disabled />

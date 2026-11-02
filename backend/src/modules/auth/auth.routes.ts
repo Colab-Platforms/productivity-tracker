@@ -2,6 +2,7 @@ import { Router } from "express";
 import * as authService from "./auth.service.js";
 import { requireAuth } from "../../middlewares/auth.js";
 import { prisma } from "../../lib/prisma.js";
+import { photoStamps } from "../photos/photos.service.js";
 import { loginLimiter, clearLoginAttempts } from "../../middlewares/rateLimit.js";
 
 const router = Router();
@@ -75,6 +76,7 @@ router.get("/me/profile", requireAuth, async (req, res) => {
       reportsTo: u.reportsTo ? { name: `${u.reportsTo.firstName} ${u.reportsTo.lastName}`.trim(), designation: u.reportsTo.designation } : null,
       shift: u.shift ? { name: u.shift.name, startTime: u.shift.startTime, endTime: u.shift.endTime } : null,
       departments: u.teamMemberships.map((m) => m.team.name),
+      photoAt: (await photoStamps([u.id])).get(u.id) ?? null,
     });
   } catch (e) {
     console.error("Profile error:", e);

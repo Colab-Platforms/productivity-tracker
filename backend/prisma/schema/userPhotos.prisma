@@ -1,0 +1,18 @@
+// ===========================================================================
+// EMPLOYEE PROFILE PHOTOS - NEW TABLE ONLY, no column added to users (the old users.avatarUrl is not used: it would be a public link).
+// One row per person. The image itself lives in the existing private file store (stored_blobs, folder "photos"); this row only says which
+// file is the person's current photo. No row = initials are shown. No relations to existing models; foreign keys live in the migration.
+// ===========================================================================
+
+model UserPhoto {
+  userId      String   @id @db.Uuid
+  platformId  String   @db.Uuid
+  storageKey  String
+  mimeType    String
+  fileSize    Int
+  updatedById String?  @db.Uuid
+  updatedAt   DateTime @default(now())
+
+  @@index([platformId])
+  @@map("user_photos")
+}

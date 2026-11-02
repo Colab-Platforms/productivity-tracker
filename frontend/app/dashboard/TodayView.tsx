@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { useMe } from "./layout";
+import Avatar from "./_photos/Avatar";
 import DayRow from "./_timesheet/DayRow";
 import StandupCard from "./_standup/StandupCard";
 import Breakdown from "./_timesheet/Breakdown";
@@ -526,9 +527,7 @@ export default function TodayView() {
         {/* ===================== header ===================== */}
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-100 text-sm font-semibold text-violet-700">
-              {initials(`${me.firstName} ${me.lastName}`)}
-            </span>
+            <Avatar userId={me.id} name={`${me.firstName} ${me.lastName}`} photoAt={me.photoAt} size={48} fallbackClass="bg-violet-100 text-violet-700" />
             <div>
               <p className="text-[15px] text-slate-500">
                 Welcome, <span className="font-semibold text-slate-900">{me.firstName} {me.lastName}</span> <span aria-hidden>👋</span>

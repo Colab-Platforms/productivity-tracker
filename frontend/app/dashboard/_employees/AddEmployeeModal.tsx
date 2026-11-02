@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { Modal } from "./Modal";
+import { PendingPhotoPicker, savePendingPhoto } from "../_photos/Avatar";
 import { SearchSelect, type Opt } from "./SearchSelect";
 import { credentialsCsv, download } from "./files";
 import { DAYS, FIELDS, type CommitResult, type Field as FieldName, type Lookups, type Preview } from "./types";
@@ -115,6 +116,8 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
   const [form, setForm] = useState<Form>(EMPTY);
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [photoNote, setPhotoNote] = useState("");
   const [result, setResult] = useState<CommitResult | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -257,6 +260,9 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
 
       const done = await apiPost<CommitResult>("/admin/employees/commit", { ...req, confirm: true, expectedValid: 1 });
       setResult(done);
+      // The photo is saved against the new person right after they are created. If that fails the person still exists; they can add it from Edit.
+      const note = await savePendingPhoto(done.credentials[0]?.userId, photo);
+      setPhotoNote(note ? `The employee was added, but the photo was not saved: ${note} You can add it from Edit employee.` : "");
       onDone(`Added ${form.fullName.trim()}`);
     } catch (err) {
       setErrors({ form: err instanceof Error ? err.message : "Could not add the employee." });
@@ -273,7 +279,7 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
     return (
       <Modal
         title="Employee added"
-        subtitle={`${c.name} is in ${c.company}.`}
+        subtitle={`${c.name} is in ${c.company}.${photoNote ? ` ${photoNote}` : ""}`}
         onClose={onClose}
         width="max-w-xl"
         footer={
@@ -388,6 +394,9 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
         >
           {errors.form && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{errors.form}</div>}
 
+          <Section title="Profile photo (optional)">
+            <PendingPhotoPicker file={photo} onFile={setPhoto} />
+          </Section>
           <Section title="Personal and employment details">
             <Field error={errors.fullName}>
               <Label htmlFor="ae-name" required>Full name</Label>

@@ -3,6 +3,7 @@ import { parseIsoDay } from "../../lib/dates.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
 import { accessFor, assertCompany, scopeWhere, type Access } from "../../lib/companyAccess.js";
 import { visibleCompanies } from "../../lib/companyAccess.logic.js";
+import { photoStamps } from "../photos/photos.service.js";
 
 // ---------------------------------------------------------------------------
 // EDIT EMPLOYEE + the dropdowns that feed it.
@@ -287,9 +288,11 @@ export async function editModel(viewerId: string, userId: string) {
   assertCompany(access, u.platformId);
   const type = (await typeTableReady()) ? (await prisma.employeeProfile.findUnique({ where: { userId }, select: { employmentType: true } }))?.employmentType ?? null : null;
   const mayEditSalary = canEditSalary(access);
+  const photoAt = (await photoStamps([u.id])).get(u.id) ?? null;
   return {
     person: {
       id: u.id,
+      photoAt,
       firstName: u.firstName,
       lastName: u.lastName,
       email: u.email,
@@ -311,7 +314,7 @@ export async function editModel(viewerId: string, userId: string) {
       // The salary is sent only to people who may change it.
       monthlySalary: mayEditSalary ? (u.monthlySalary === null ? null : Number(u.monthlySalary)) : undefined,
     },
-    permissions: { canEditSalary: mayEditSalary, canChangeRoles: access.role === "ADMIN", employeeCodeLocked: true, companyLocked: true },
+    permissions: { canEditPhoto: access.role === "HR" || access.role === "ADMIN", canEditSalary: mayEditSalary, canChangeRoles: access.role === "ADMIN", employeeCodeLocked: true, companyLocked: true },
     dropdowns: await dropdownsFor(viewerId, u.platformId),
   };
 }

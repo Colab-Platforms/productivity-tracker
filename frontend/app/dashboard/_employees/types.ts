@@ -109,6 +109,7 @@ export type Preview = {
 
 export type Credential = {
   rowNumber: number;
+  userId?: string | null;
   employeeId: string;
   name: string;
   company: string;

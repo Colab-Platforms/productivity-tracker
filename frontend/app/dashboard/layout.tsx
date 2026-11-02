@@ -8,6 +8,7 @@ import { ThemeProvider } from "./_theme/ThemeContext";
 import { ThemeIconButton, ThemeRow } from "./_theme/ThemeToggle";
 import { resetTheme } from "@/lib/theme";
 import Link from "next/link";
+import Avatar from "./_photos/Avatar";
 import { apiGet, clearToken, getToken } from "@/lib/api";
 import { setPlatformTimezone } from "@/lib/time";
 
@@ -19,6 +20,7 @@ export type Me = {
   role: string;
   employeeCode: string | null;
   designation: string | null;
+  photoAt?: string | null;
   trackerAccessEnabled: boolean;
     mustChangePassword?: boolean;
   platform: { id: string; name: string; slug: string; timezone?: string };
@@ -509,9 +511,7 @@ export default function DashboardLayout({
 
       <div className="border-t border-slate-100 p-3">
         <div className="flex items-center gap-2.5 px-2 py-2">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[12px] font-semibold text-indigo-700">
-            {initials(fullName)}
-          </div>
+          <Avatar userId={me.id} name={fullName} photoAt={me.photoAt} size={36} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-semibold text-slate-900">
               {fullName}

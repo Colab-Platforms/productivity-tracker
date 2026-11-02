@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import { MyDocuments } from "../_documents/MyDocuments";
+import Avatar, { PhotoEditor } from "../_photos/Avatar";
 
 // ---------------------------------------------------------------------------
 // MY PROFILE
@@ -90,6 +91,7 @@ export default function ProfilePage() {
     return TABS.find((t) => t === wanted) ?? "Personal";
   });
   const [details, setDetails] = useState<Details | null>(null);
+  const [photoAtLocal, setPhotoAtLocal] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     apiGet<Details>("/auth/me/profile").then(setDetails).catch(() => setDetails(null));
   }, []);
@@ -143,6 +145,8 @@ export default function ProfilePage() {
   if (!me) return null;
 
   const fullName = `${me.firstName} ${me.lastName}`.trim();
+  const photoAt = photoAtLocal !== undefined ? photoAtLocal : me.photoAt;
+  const canEditPhoto = me.role === "HR" || me.role === "ADMIN"; // employees' photos are set by HR
   const published = slips.filter((s) => s.publishedAt !== null);
 
   return (
@@ -150,9 +154,7 @@ export default function ProfilePage() {
       {/* ---- identity ---- */}
       <section className="mb-6 overflow-hidden rounded-2xl bg-indigo-600">
         <div className="flex flex-col gap-5 p-7 sm:flex-row sm:items-center">
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-2xl font-bold text-white">
-            {initials(fullName)}
-          </div>
+          <Avatar userId={me.id} name={fullName} photoAt={photoAt} size={80} shape="rounded" fallbackClass="bg-gradient-to-br from-indigo-500 to-violet-600 text-white" />
 
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl font-semibold text-white">{fullName}</h1>
@@ -216,6 +218,12 @@ export default function ProfilePage() {
 
       <section className="mb-6 rounded-2xl bg-white p-6 shadow-[var(--shadow-card)]">
         <h2 className="mb-4 text-sm font-semibold text-slate-900">{tab}</h2>
+        {tab === "Personal" && canEditPhoto && (
+          <div className="mb-5 border-b border-indigo-50 pb-5">
+            <PhotoEditor userId={me.id} name={fullName} photoAt={photoAt} onChanged={setPhotoAtLocal} />
+          </div>
+        )}
+        {tab === "Personal" && !canEditPhoto && <p className="mb-4 text-xs text-slate-400">Your profile photo is set by HR. Ask them if you want it added or changed.</p>}
         {tab === "Personal" && (
           <Fields rows={[["First name", me.firstName], ["Last name", me.lastName], ["Employee ID", me.employeeCode], ["Company", details?.company ?? me.platform.name]]} />
         )}

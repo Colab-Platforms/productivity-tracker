@@ -26,6 +26,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useMe } from "./layout";
+import Avatar from "./_photos/Avatar";
 import EmployeeActions from "./_employees/EmployeeActions";
 import { AttendanceChart, ProductivityChart, type ChartRow } from "./_hr/Charts";
 import {
@@ -410,9 +411,7 @@ export default function HrDashboard() {
             </span>
             <span className="block text-[11px] text-slate-400">View profile</span>
           </span>
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-[13px] font-semibold text-white ring-2 ring-white">
-            {me ? initials(`${me.firstName} ${me.lastName}`) : ""}
-          </span>
+          {me && <Avatar userId={me.id} name={`${me.firstName} ${me.lastName}`} photoAt={me.photoAt} size={40} fallbackClass="bg-indigo-600 text-white" className="ring-2 ring-white" />}
         </Link>
       </div>
 
