@@ -30,6 +30,8 @@ function fail(
         code === "MANAGER_NOT_FOUND" ||
         code === "NOT_A_MEMBER"
       ? 404
+      : code === "FEATURES_NOT_READY"
+      ? 503
       : 400;
   res.status(status).json({ error: code });
 }
@@ -50,6 +52,26 @@ router.use(requireRole("HR", "ADMIN"));
 router.post("/", async (req, res) => {
   try {
     res.json(await projects.saveProject(req.user!.userId, req.body ?? {}));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+router.post("/:id/co-managers", async (req, res) => {
+  try {
+    res.json(
+      await projects.addCoManager(req.user!.userId, String(req.params.id), String(req.body?.userId ?? ""))
+    );
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+router.post("/:id/co-managers/:userId/remove", async (req, res) => {
+  try {
+    res.json(
+      await projects.removeCoManager(req.user!.userId, String(req.params.id), String(req.params.userId))
+    );
   } catch (err) {
     fail(res, err);
   }

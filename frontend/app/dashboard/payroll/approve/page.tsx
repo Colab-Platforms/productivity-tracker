@@ -44,7 +44,8 @@ function friendly(code?: string) {
     NOTE_REQUIRED: "A deduction needs a reason.",
     BAD_AMOUNT: "Enter a valid amount.",
     NOTHING_TO_APPROVE: "There is nothing left to approve.",
-    NOT_YOUR_COMPANY: "That payslip belongs to another company.",
+    NOT_YOUR_COMPANY: "That payslip or department belongs to another company.",
+    BAD_TEAMS: "The department selection is not valid.",
   };
   return (code && map[code]) || "That didn't work. Please try again.";
 }
@@ -135,6 +136,14 @@ export default function PayrollApprovePage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
+  const [teamIds, setTeamIds] = useState<string[]>([]); // empty = all departments
+
+  useEffect(() => {
+    call<{ id: string; name: string }[]>("/payroll/teams")
+      .then(setTeams)
+      .catch(() => setTeams([]));
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -171,11 +180,56 @@ export default function PayrollApprovePage() {
 
   async function generate() {
     const r = await run("generate", () =>
-      call<Generated>("/payroll/generate", "POST", { month, year }),
+      call<Generated>("/payroll/generate", "POST", { month, year, teamIds }),
     );
     if (!r) return;
     setGen(r);
     setToast(`${r.created} created, ${r.updated} refreshed.`);
+    await load();
+  }
+
+  async function unrelease() {
+    const scope = teamIds.length
+      ? `the ${teamIds.length} selected department${teamIds.length === 1 ? "" : "s"}`
+      : "all departments";
+    if (
+      !window.confirm(
+        `Take back the released salary slips for ${MONTHS[month - 1]} ${year} (${scope})? ` +
+          "Employees will no longer see them and their notification is removed. You can send them again afterwards.",
+      )
+    )
+      return;
+    const r = await run("unrelease", () =>
+      call<{ unreleased: number }>("/payroll/unrelease", "POST", { month, year, teamIds }),
+    );
+    if (!r) return;
+    setToast(`${r.unreleased} slip${r.unreleased === 1 ? "" : "s"} taken back.`);
+    await load();
+  }
+
+  // One confirm: approve every draft in scope, release, tell each employee.
+  async function approveAndSend() {
+    const scope = teamIds.length
+      ? `the ${teamIds.length} selected department${teamIds.length === 1 ? "" : "s"}`
+      : "all departments";
+    const n = gen ? gen.created + gen.updated : 0;
+    if (
+      !window.confirm(
+        `Approve and send salary slips for ${MONTHS[month - 1]} ${year} to ${scope}?` +
+          (n ? ` ${n} slip${n === 1 ? "" : "s"} were just generated.` : "") +
+          " Employees will be notified and can see their slip immediately.",
+      )
+    )
+      return;
+    const r = await run("send", () =>
+      call<{ approved: number; published: number }>("/payroll/release", "POST", {
+        month,
+        year,
+        teamIds,
+      }),
+    );
+    if (!r) return;
+    setToast(`${r.approved} approved, ${r.published} sent to employees.`);
     await load();
   }
 
@@ -274,6 +328,57 @@ export default function PayrollApprovePage() {
           </select>
         </div>
       </header>
+
+      <section className="rounded-2xl bg-white p-5 shadow-[var(--shadow-card)]">
+        <p className="text-sm font-medium text-slate-900">Departments</p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Pick departments, or leave all unticked for everyone. Generate, check the list, then send.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {teams.map((t) => {
+            const on = teamIds.includes(t.id);
+            return (
+              <button
+                key={t.id}
+                onClick={() =>
+                  setTeamIds((cur) => (on ? cur.filter((x) => x !== t.id) : [...cur, t.id]))
+                }
+                className={`rounded-xl border px-3 py-1.5 text-xs font-medium ${
+                  on
+                    ? "border-indigo-600 bg-indigo-600 text-white"
+                    : "border-indigo-100 text-slate-700 hover:border-indigo-600"
+                }`}
+              >
+                {t.name}
+              </button>
+            );
+          })}
+          {teams.length === 0 && <span className="text-xs text-slate-400">No departments found.</span>}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            onClick={generate}
+            disabled={busy !== null}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            {busy === "generate" ? "Generating…" : "Generate slips"}
+          </button>
+          <button
+            onClick={approveAndSend}
+            disabled={busy !== null || !gen}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            {busy === "send" ? "Sending…" : "Approve & send"}
+          </button>
+          <button
+            onClick={unrelease}
+            disabled={busy !== null || released === 0}
+            className="rounded-xl border border-indigo-100 px-4 py-2 text-xs font-medium text-slate-700 hover:border-indigo-600 disabled:opacity-40"
+          >
+            {busy === "unrelease" ? "Taking back…" : "Unrelease"}
+          </button>
+        </div>
+      </section>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Step

@@ -77,12 +77,22 @@ export async function updateDesignation(viewerId: string, id: string, body: { na
 
 type Grants = { all: boolean; companyIds: string[] };
 
-/** HR/Admin people with the companies assigned to each. Top management only. */
+/**
+ * Who may hand out company access: top management (everything, including "All companies" and other Admins) and any
+ * Admin (specific companies, for HR users only). HR and everyone else: no.
+ */
+async function grantor(viewerId: string) {
+  const [a, me] = await Promise.all([accessFor(viewerId), prisma.user.findUnique({ where: { id: viewerId }, select: { role: true } })]);
+  const top = a.all;
+  if (!top && me?.role !== "ADMIN") throw new Error("ACCESS_NOT_ALLOWED");
+  return { top };
+}
+
+/** People with the companies assigned to each. Top management sees HR and Admin; an Admin sees HR users. */
 export async function listAccess(viewerId: string) {
-  const a = await accessFor(viewerId);
-  if (!a.all) throw new Error("ACCESS_NOT_ALLOWED");
+  const { top } = await grantor(viewerId);
   const [people, companies] = await Promise.all([
-    prisma.user.findMany({ where: { role: { in: ["HR", "ADMIN"] }, status: { not: "EXITED" } }, select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, platformId: true, platform: { select: { name: true } } }, orderBy: [{ firstName: "asc" }] }),
+    prisma.user.findMany({ where: { role: { in: top ? ["HR", "ADMIN"] : ["HR"] }, status: { not: "EXITED" } }, select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, platformId: true, platform: { select: { name: true } } }, orderBy: [{ firstName: "asc" }] }),
     prisma.platform.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
   let grants: { userId: string; platformId: string | null }[] = [];
@@ -90,6 +100,7 @@ export async function listAccess(viewerId: string) {
   if (ready) grants = await prisma.companyAccess.findMany({ select: { userId: true, platformId: true } });
   return {
     ready,
+    canGrantAll: top,
     companies,
     people: people.map((p) => ({
       id: p.id,
@@ -105,13 +116,19 @@ export async function listAccess(viewerId: string) {
 }
 
 export async function setAccess(viewerId: string, userId: string, body: Partial<Grants>) {
-  const a = await accessFor(viewerId);
-  if (!a.all) throw new Error("ACCESS_NOT_ALLOWED"); // only top management hands out company access
+  const { top } = await grantor(viewerId);
   if (!(await companyAccessReady())) throw new Error("FEATURES_NOT_READY");
   if (userId === viewerId) throw new Error("ACCESS_NOT_ALLOWED"); // nobody widens their own access
   const target = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, status: true, firstName: true, lastName: true, platformId: true } });
   if (!target || target.status === "EXITED") throw new Error("NOT_FOUND");
   if (target.role !== "HR" && target.role !== "ADMIN") throw new Error("ACCESS_ONLY_HR_ADMIN");
+  // An Admin who is not top management hands out specific companies to HR users only: no "All companies", no changing
+  // other Admins, and never overwriting an "All companies" grant someone else made.
+  if (!top) {
+    if (target.role !== "HR" || body.all === true) throw new Error("ACCESS_NOT_ALLOWED");
+    const existingAll = await prisma.companyAccess.findFirst({ where: { userId, platformId: null }, select: { id: true } });
+    if (existingAll) throw new Error("ACCESS_NOT_ALLOWED");
+  }
 
   const all = body.all === true;
   const ids = [...new Set((Array.isArray(body.companyIds) ? body.companyIds : []).map(String))].filter((id) => id !== target.platformId);

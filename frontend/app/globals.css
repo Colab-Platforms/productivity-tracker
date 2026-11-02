@@ -470,3 +470,5 @@ html.dark input::placeholder, html.dark textarea::placeholder { color: #6f7898; 
 html.dark input:-webkit-autofill { -webkit-text-fill-color: var(--foreground); box-shadow: 0 0 0 100px var(--surface-soft) inset; }
 /* chart legends are drawn in the series colour by the chart library; on a dark card that blue is too dim to read */
 html.dark .recharts-legend-item-text { color: #c8cee2 !important; }
+/* the open list of a dropdown is drawn by the browser with the select's own text colour; give it a dark surface so the options stay readable */
+html.dark select option, html.dark select optgroup { background-color: var(--surface); color: var(--foreground); }
