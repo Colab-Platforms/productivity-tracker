@@ -15,7 +15,7 @@ type Row = { userId: string; name: string; employeeCode: string | null; state: "
 type Overview = {
   date: string; timezone: string;
   meetings: { id: string; title: string; startsAt: string; endsAt: string; lateAfterMinutes: number; summary: { invited: number; joined: number; notJoined: number; inMeeting: number; late: number }; rows: Row[] }[];
-  people: { userId: string; name: string; employeeCode: string | null; clockedIn: boolean; regularSeconds: number; huddleSeconds: number; otherEligibleSeconds: number; totalSeconds: number }[];
+  people: { userId: string; name: string; employeeCode: string | null; clockedIn: boolean; regularSeconds: number; huddleSeconds: number; otherEligibleSeconds: number; totalSeconds: number; breakSeconds?: number; onSiteSeconds?: number }[];
 };
 
 const hm = (sec: number) => {
@@ -97,8 +97,8 @@ export default function HuddleOverview({ compact = false }: { compact?: boolean 
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Productive time today, by employee</p>
             <div className="overflow-x-auto rounded-2xl border border-indigo-100">
-              <table className="w-full min-w-[520px] text-left text-sm">
-                <thead className="bg-[#F6F7FE] text-xs text-slate-500"><tr><th className="px-3 py-2 font-medium">Employee</th><th className="px-3 py-2 text-right font-medium">Regular work</th><th className="px-3 py-2 text-right font-medium">Team Huddle</th><th className="px-3 py-2 text-right font-medium">Other eligible</th><th className="px-3 py-2 text-right font-medium">Total productive</th></tr></thead>
+              <table className="w-full min-w-[640px] text-left text-sm">
+                <thead className="bg-[#F6F7FE] text-xs text-slate-500"><tr><th className="px-3 py-2 font-medium">Employee</th><th className="px-3 py-2 text-right font-medium">Regular work</th><th className="px-3 py-2 text-right font-medium">Team Huddle</th><th className="px-3 py-2 text-right font-medium">Other eligible</th><th className="px-3 py-2 text-right font-medium">Total productive</th><th className="px-3 py-2 text-right font-medium">Break</th><th className="px-3 py-2 text-right font-medium">Time on site</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.people.map((p) => (
                     <tr key={p.userId}>
@@ -107,6 +107,8 @@ export default function HuddleOverview({ compact = false }: { compact?: boolean 
                       <td className="px-3 py-2 text-right tabular-nums text-slate-700">{hm(p.huddleSeconds)}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-700">{hm(p.otherEligibleSeconds)}</td>
                       <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-900">{hm(p.totalSeconds)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-700">{p.clockedIn ? hm(p.breakSeconds ?? 0) : "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-700">{p.clockedIn ? hm(p.onSiteSeconds ?? 0) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>

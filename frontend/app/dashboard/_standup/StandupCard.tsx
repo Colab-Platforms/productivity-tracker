@@ -56,7 +56,7 @@ export function StandupItem({ m, tz, onChanged }: { m: StandupMeeting; tz: strin
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-indigo-600">
             {inMeeting && <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden />}
-            {inMeeting ? "You are in a meeting" : m.tracked ? "Team Huddle invitation" : "Meeting invitation"}
+            {inMeeting ? (m.tracked ? "Team Huddle in Progress" : "You are in a meeting") : m.tracked ? "Team Huddle invitation" : "Meeting invitation"}
           </p>
           <p className="mt-0.5 truncate text-base font-semibold text-slate-900">{m.title}</p>
           <p className="text-sm text-slate-500">

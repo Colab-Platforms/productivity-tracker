@@ -7,7 +7,7 @@ import { Modal } from "../../_employees/Modal";
 
 // ---------------------------------------------------------------------------
 // IN-PERSON MEETING PARTICIPATION (screens)
-// Employee: "Join Huddle" -> live timer -> "End Participation" -> a completed record.
+// Employee: "Join Huddle" -> live timer -> "End Huddle" -> a completed record.
 // Organizing manager: the live list (who joined, who has not, who is still in), corrections, history.
 // HR / Admin never see this panel: the server gives them counts only.
 // Everything here is SELF-REPORTED: the times are what people declared (the server stamps them); they do not prove
@@ -170,7 +170,7 @@ export function JoinControl({ meetingId, endsAt, tz, f, onChanged, compact = fal
         <p className="mt-1 text-3xl font-semibold tabular-nums" aria-live="off" aria-label="Time in the meeting">{clock(elapsed)}</p>
         {pastEnd && <p className="mt-1 text-xs text-amber-200">The expected end ({timeFmt(endsAt, tz)}) has passed. Press the button when you leave.</p>}
         <button onClick={() => act("leave")} disabled={busy} className="mt-3 w-full rounded-xl bg-white px-5 py-3 text-base font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-50 disabled:opacity-60 sm:w-auto">
-          {busy ? "Saving…" : "End Participation"}
+          {busy ? "Saving…" : "End Huddle"}
         </button>
         {error && <p className="mt-2 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-rose-100">{error}</p>}
         <p className="mt-2 text-xs text-indigo-200">Press it when you leave the room. The time is recorded by the server.</p>
@@ -295,7 +295,7 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
 
       {s.stillActivePastEnd > 0 && (
         <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {s.stillActivePastEnd} {s.stillActivePastEnd === 1 ? "person is" : "people are"} still marked as in the meeting after the expected end ({timeFmt(data.meeting.endsAt, tz)}). They haven&apos;t pressed “End Participation”. Nothing is closed automatically; you can correct the record.
+          {s.stillActivePastEnd} {s.stillActivePastEnd === 1 ? "person is" : "people are"} still marked as in the meeting after the expected end ({timeFmt(data.meeting.endsAt, tz)}). They haven&apos;t pressed “End Huddle”. Nothing is closed automatically; you can correct the record.
         </p>
       )}
 

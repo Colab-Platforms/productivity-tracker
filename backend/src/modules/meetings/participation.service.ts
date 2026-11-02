@@ -629,6 +629,7 @@ export async function managerOverview(userId: string, dayStr?: string) {
     .map((id) => {
       const s = sBy.get(id) ?? null;
       const huddles = parts.filter((p) => p.userId === id).flatMap((p) => (endOf.has(p.meetingId) ? [{ id: p.id, joinedAt: p.joinedAt, leftAt: p.leftAt, expectedEnd: endOf.get(p.meetingId) as Date }] : []));
+      const onSiteSeconds = s ? Math.max(0, Math.floor(((s.logoutAt ?? now).getTime() - s.loginAt.getTime()) / 1000)) : 0;
       const b = s
         ? computeBreakdown({
             loginAt: s.loginAt, logoutAt: s.logoutAt,
@@ -640,6 +641,9 @@ export async function managerOverview(userId: string, dayStr?: string) {
       return {
         userId: id, name: nameOf.get(id)!.name, employeeCode: nameOf.get(id)!.code, clockedIn: !!s,
         regularSeconds: b?.regularSeconds ?? 0, huddleSeconds: b?.huddleSeconds ?? 0, otherEligibleSeconds: b?.otherEligibleSeconds ?? 0, totalSeconds: b?.productiveSeconds ?? 0,
+        // Time on site = clocked in to clocked out (or now); breaks are what is left once productive time is taken out. Derived, never stored.
+        onSiteSeconds,
+        breakSeconds: Math.max(0, onSiteSeconds - (b?.productiveSeconds ?? 0)),
       };
     })
     .sort((x, y) => x.name.localeCompare(y.name));

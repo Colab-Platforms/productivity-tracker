@@ -310,7 +310,7 @@ export async function create(userId: string, body: Fields) {
     summary: `Scheduled "${t}" with ${attendees.length} ${attendees.length === 1 ? "person" : "people"}`,
     after: { title: t, startsAt, endsAt, provider: link?.provider ?? null, attendees: attendees.length, inPerson, lateAfterMinutes: inPerson ? lateAfter : undefined },
   });
-  await tell(v, created, attendees, "invited", inPerson ? "This is a Team Huddle. Accept the invitation in Meetings; when you are in the room, press \"Join Huddle\" and later \"End Participation\"." : null);
+  await tell(v, created, attendees, "invited", inPerson ? "This is a Team Huddle. Accept the invitation in Meetings; when you are in the room, press \"Join Huddle\" and later \"End Huddle\"." : null);
   return { id: created.id, invited: attendees.length };
 }
 

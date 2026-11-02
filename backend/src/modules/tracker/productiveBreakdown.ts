@@ -85,7 +85,7 @@ export type Breakdown = {
 /**
  * Rules (all applied here and nowhere else):
  *  - Start counting at the recorded join, stop at the recorded leave. Still joined and not ended: count to `now`, but never
- *    past the huddle's expected end (a forgotten "End Participation" cannot keep adding time). The record itself is left
+ *    past the huddle's expected end (a forgotten "End Huddle" cannot keep adding time). The record itself is left
  *    open and flagged for the manager to correct.
  *  - Only time inside the clocked-in period counts, and never time on a break.
  *  - Overlapping huddles, or a huddle overlapping an approved live meeting, are never counted twice: the huddle gets the

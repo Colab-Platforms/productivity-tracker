@@ -109,7 +109,7 @@ const MIN = 60;
   ok("A joins (200)", ja.s === 200, ja);
   ok("B joins (200)", (await call("POST", `/meetings/${mid}/join`, B.tok)).s === 200);
   ok("A cannot join twice (409), still one record", (await call("POST", `/meetings/${mid}/join`, A.tok)).s === 409 && (await q(`select 1 from meeting_participation where "meetingId"=$1 and "userId"=$2`, [mid, A.id])).length === 1);
-  ok("a joined person's status is Joined, with End Participation available", (await seen(A)).myStatus === "JOINED" && (await seen(A)).me.state === "IN_MEETING");
+  ok("a joined person's status is Joined, with End Huddle available", (await seen(A)).myStatus === "JOINED" && (await seen(A)).me.state === "IN_MEETING");
   ok("a joined person can no longer change their answer (409)", (await call("POST", `/meetings/${mid}/respond`, A.tok, { response: "DECLINED" })).s === 409);
   ok("A ends participation (200)", (await call("POST", `/meetings/${mid}/leave`, A.tok)).s === 200);
   ok("B ends participation (200)", (await call("POST", `/meetings/${mid}/leave`, B.tok)).s === 200);
@@ -177,6 +177,18 @@ const MIN = 60;
   ok("the total is clocked-in minus the break (not inflated by the meeting)", bd && Math.abs(bd.totalSeconds - elapsedA) <= 8, { total: bd?.totalSeconds, expected: elapsedA });
   const tsC = await call("GET", `/tracker/timesheet?from=${today}&to=${today}`, C.tok);
   ok("C's timesheet shows 0 huddle time", tsC.b.days.find((d) => d.date === today)?.session?.breakdown?.huddleSeconds === 0);
+
+  console.log("\n## 7b. The four totals add up: productive work + Team Huddle + break = time on site");
+  const ov = await call("GET", "/meetings/huddles/overview", M.tok);
+  const pa = ov.b.people?.find((x) => x.userId === A.id), pb = ov.b.people?.find((x) => x.userId === B.id), pc = ov.b.people?.find((x) => x.userId === C.id);
+  ok("the manager overview loads", ov.s === 200 && !!pa, ov);
+  ok("A: break is exactly the 5 minute break (the huddle is NOT added to it)", Math.abs(pa.breakSeconds - 5 * MIN) <= 8, pa);
+  ok("A: time on site is the 2 hours clocked in", Math.abs(pa.onSiteSeconds - 120 * MIN) <= 8, pa);
+  ok("A: total productive + break = time on site (nothing counted twice)", Math.abs(pa.totalSeconds + pa.breakSeconds - pa.onSiteSeconds) <= 1, pa);
+  ok("A: regular + huddle + other = total productive", pa.regularSeconds + pa.huddleSeconds + pa.otherEligibleSeconds === pa.totalSeconds, pa);
+  ok("B: no break at all, even with 46 minutes of huddle", pb.breakSeconds === 0 && pb.huddleSeconds > 0, pb);
+  ok("C (never joined): huddle 0, break 0", pc.huddleSeconds === 0 && pc.breakSeconds === 0, pc);
+  ok("the stored break columns were not changed by any huddle", (await q('select "breakSeconds" from work_sessions where "userId"=$1', [B.id]))[0].breakSeconds === 0 && (await q('select "breakSeconds" from work_sessions where "userId"=$1', [A.id]))[0].breakSeconds === 5 * MIN);
 
   console.log("\n## 8. After the meeting is over");
   ok("the organizer ends the meeting", (await call("POST", `/meetings/${mid}/end`, M.tok)).s === 200);
