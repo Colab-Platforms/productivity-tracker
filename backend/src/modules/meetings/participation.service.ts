@@ -729,6 +729,25 @@ export async function huddleBreakdowns(sessions: SessionForMeetings[], now: Date
   return out;
 }
 
+/**
+ * What the clock-in card needs to show a live Team Huddle counter: the huddle time that counts so far today (same rules as everywhere
+ * else, computeBreakdown), and when the person's current huddle began if they are in one right now. A huddle left open past its
+ * expected end is not shown as running (it is capped, and the record stays open for a manager correction). Display only: nothing here
+ * is added to productive time, the huddle is already inside it.
+ */
+export async function liveHuddle(session: SessionForMeetings, now: Date): Promise<{ todaySeconds: number; activeSince: string | null; openPastEnd: boolean }> {
+  const none = { todaySeconds: 0, activeSince: null as string | null, openPastEnd: false };
+  if (!(await participationReady())) return none;
+  const b = (await huddleBreakdowns([session], now)).get(session.userId);
+  const open = await prisma.meetingParticipation.findFirst({
+    where: { userId: session.userId, leftAt: null, joinedAt: { gte: new Date(session.loginAt.getTime() - 6 * 3_600_000) } },
+    orderBy: { joinedAt: "desc" },
+    select: { joinedAt: true },
+  });
+  const openPastEnd = !!b?.openPastEnd;
+  return { todaySeconds: b?.huddleSeconds ?? 0, activeSince: open && !openPastEnd ? open.joinedAt.toISOString() : null, openPastEnd };
+}
+
 // --- Team Huddle seconds per person per day (for Reports and My History) -----------------------------------------------
 
 /**

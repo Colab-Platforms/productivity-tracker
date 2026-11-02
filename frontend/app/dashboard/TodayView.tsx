@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import { useRealtime } from "@/lib/realtime";
 import { useMe } from "./layout";
 import Avatar from "./_photos/Avatar";
 import DayRow from "./_timesheet/DayRow";
@@ -253,12 +254,14 @@ export default function TodayView() {
   const [correctionSent, setCorrectionSent] = useState(false);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [projectId, setProjectId] = useState("");
+  // Team Huddle time so far today, and when the current huddle began (null = not in one). Display only: it is already part of productive time.
+  const [huddle, setHuddle] = useState<{ todaySeconds: number; activeSince: string | null; openPastEnd: boolean } | null>(null);
 
   const load = useCallback(async () => {
     try {
       // Session and invites are independent, so they are fetched together.
       const [sessionRes, invitesRes] = await Promise.allSettled([
-        apiGet<{ session: Session | null; config: Config; hostsOpenMeeting?: boolean; projects?: { id: string; name: string }[] }>("/tracker/session"),
+        apiGet<{ session: Session | null; config: Config; hostsOpenMeeting?: boolean; projects?: { id: string; name: string }[]; huddle?: { todaySeconds: number; activeSince: string | null; openPastEnd: boolean } | null }>("/tracker/session"),
         apiGet<Meeting[]>("/tracker/invites"),
       ]);
       if (sessionRes.status === "rejected") throw sessionRes.reason;
@@ -268,6 +271,7 @@ export default function TodayView() {
       setConfig(res.config);
       setHostsMeeting(Boolean(res.hostsOpenMeeting));
       setProjects(res.projects ?? []);
+      setHuddle(res.huddle ?? null);
       fetchedAt.current = Date.now();
       setError("");
 
@@ -289,6 +293,9 @@ export default function TodayView() {
       clearInterval(tick);
     };
   }, [load]);
+
+  // Joining or ending a Team Huddle changes the counter at once, not at the next poll.
+  useRealtime(["meetings:changed"], load);
 
   // A hidden tab has its timers throttled, so the poll above may not have run
   // for a minute. Re-sync the instant someone comes back to the window.
@@ -366,6 +373,9 @@ export default function TodayView() {
   const breakSecs = (session?.breakSeconds ?? 0) + (openBreak ? sinceFetch : 0);
   const meetingSecs = (session?.meetingSeconds ?? 0) + (openMeeting ? sinceFetch : 0);
   const elapsed = productive + breakSecs; // everything on site, breaks included once
+  // Live huddle counter: the server's figure plus the seconds since it was fetched while a huddle is running (and the person is clocked in, off a break).
+  const huddleRunning = running && !openBreak && !!huddle?.activeSince;
+  const huddleSecs = (huddle?.todaySeconds ?? 0) + (huddleRunning ? sinceFetch : 0);
 
   // The tab strip is the display when this window is minimised.
   useEffect(() => {
@@ -375,7 +385,9 @@ export default function TodayView() {
     }
     document.title = openBreak
       ? `☕ ${hms(breakSecs).slice(0, 2).join(":")} break · Avatar HRMS`
-      : openMeeting
+      : huddleRunning
+        ? `👥 ${hms(huddleSecs).slice(0, 2).join(":")} huddle · Avatar HRMS`
+        : openMeeting
         ? `👥 ${hms(meetingSecs).slice(0, 2).join(":")} meeting · Avatar HRMS`
         : `⏱ ${hms(productive).slice(0, 2).join(":")} · Avatar HRMS`;
   });
@@ -650,6 +662,16 @@ export default function TodayView() {
                 </p>
 
                 {session && config && <BreakBudget used={breakSecs} budget={config.breakBudgetMinutes * 60} onBreak={!!openBreak} />}
+
+                {session && (huddleRunning || huddleSecs > 0) && (
+                  <div className={`mx-auto mt-3 flex max-w-xs items-center justify-between gap-3 rounded-xl px-4 py-2.5 text-sm ${huddleRunning ? "bg-indigo-50 text-indigo-900" : "bg-slate-50 text-slate-700"}`} title="Team Huddle time is part of your productive time and is not a break. It does not use your break allowance.">
+                    <span className="flex items-center gap-2 font-medium">
+                      {huddleRunning && <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden />}
+                      {huddleRunning ? "Team Huddle in Progress" : "Team Huddle today"}
+                    </span>
+                    <span className="tabular-nums font-semibold">{hms(huddleSecs).join(":")}</span>
+                  </div>
+                )}
 
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                   {!running && projects.length > 0 && (

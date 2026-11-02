@@ -108,6 +108,10 @@ const MIN = 60;
   const ja = await call("POST", `/meetings/${mid}/join`, A.tok);
   ok("A joins (200)", ja.s === 200, ja);
   ok("B joins (200)", (await call("POST", `/meetings/${mid}/join`, B.tok)).s === 200);
+  const liveB = (await call("GET", "/tracker/session", B.tok)).b.huddle;
+  ok("while B is in the huddle, the clock-in card is told it is running since the join time", !!liveB?.activeSince && liveB.todaySeconds >= 0 && liveB.openPastEnd === false, liveB);
+  const liveC = (await call("GET", "/tracker/session", C.tok)).b.huddle;
+  ok("C (accepted, not joined) has no running huddle and 0 huddle time", liveC?.activeSince === null && liveC?.todaySeconds === 0, liveC);
   ok("A cannot join twice (409), still one record", (await call("POST", `/meetings/${mid}/join`, A.tok)).s === 409 && (await q(`select 1 from meeting_participation where "meetingId"=$1 and "userId"=$2`, [mid, A.id])).length === 1);
   ok("a joined person's status is Joined, with End Huddle available", (await seen(A)).myStatus === "JOINED" && (await seen(A)).me.state === "IN_MEETING");
   ok("a joined person can no longer change their answer (409)", (await call("POST", `/meetings/${mid}/respond`, A.tok, { response: "DECLINED" })).s === 409);
@@ -120,6 +124,14 @@ const MIN = 60;
   await set(A, 40, 15); // 25 minutes
   await set(B, 48, 2);  // 46 minutes
   const AEXP = 25 * MIN, BEXP = 46 * MIN, ACOUNT = 20 * MIN; // A's 5 minute break is outside what counts
+
+  console.log("\n## 4b. The clock-in card after the huddle: total so far, nothing running");
+  const doneA = (await call("GET", "/tracker/session", A.tok)).b;
+  const doneB = (await call("GET", "/tracker/session", B.tok)).b;
+  ok("A: no huddle running any more, 20 minutes counted (25 in the room minus the 5 minute break)", doneA.huddle.activeSince === null && Math.abs(doneA.huddle.todaySeconds - 20 * MIN) <= 8, doneA.huddle);
+  ok("B: no huddle running, 46 minutes counted", doneB.huddle.activeSince === null && Math.abs(doneB.huddle.todaySeconds - 46 * MIN) <= 8, doneB.huddle);
+  ok("the huddle is NOT in A's break time (still the 5 minute break)", doneA.session.breakSeconds === 5 * MIN, doneA.session.breakSeconds);
+  ok("the huddle is inside productive time, not added on top (productive = clocked in minus break)", Math.abs(doneA.session.productiveSeconds - (120 * MIN - 5 * MIN)) <= 8, doneA.session.productiveSeconds);
 
   console.log("\n## 5. The organizer sees each person's actual participation");
   const list = await call("GET", `/meetings/${mid}/participation`, M.tok);

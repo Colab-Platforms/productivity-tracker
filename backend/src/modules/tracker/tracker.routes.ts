@@ -4,6 +4,7 @@ import { getTimesheet } from "./timesheet.service.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import { LateRemarkRequired } from "./lateRemarks.js";
+import { liveHuddle } from "../meetings/participation.service.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -72,7 +73,10 @@ function fail(res: Response, error: unknown) {
 
 router.get("/session", async (req, res) => {
   try {
-    res.json(await tracker.getActiveSession(req.user!.userId));
+    const out = await tracker.getActiveSession(req.user!.userId);
+    // The live Team Huddle counter for the clock-in card (display only). A failure here must never stop the timer from loading.
+    const huddle = out.session ? await liveHuddle(out.session as never, new Date()).catch(() => null) : null;
+    res.json({ ...out, huddle });
   } catch (error) {
     fail(res, error);
   }
