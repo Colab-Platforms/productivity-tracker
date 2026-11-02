@@ -229,7 +229,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard", label: "Dashboard", ready: true, roles: ["HR", "ADMIN"], icon: I.grid },
       { href: "/dashboard", label: "Today", ready: true, notRoles: ["HR", "ADMIN"], icon: I.today },
-      { href: "/dashboard/profile", label: "My Profile", ready: true, icon: I.user },
       { href: "/dashboard/admin", label: "Employees", ready: true, roles: ["HR", "ADMIN"], icon: I.team },
       { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["HR", "ADMIN"], icon: I.folder },
       { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
@@ -338,7 +337,7 @@ export default function DashboardLayout({
     const item = GROUPS.flatMap((g) => g.items).find(
       (i) => i.href.split("?")[0] === pathname && (!i.roles || i.roles.includes(role)) && !(i.notRoles ?? []).includes(role)
     );
-    document.title = item ? `${item.label} | Avatar HRMS` : "Avatar HRMS";
+    document.title = pathname === "/dashboard/profile" ? "My Profile | Avatar HRMS" : item ? `${item.label} | Avatar HRMS` : "Avatar HRMS";
   }, [pathname, me?.role]);
 
   // Query Desk / Complaint Centre: how many items are waiting for this person (queries to answer, corrections to decide, information asked of them).
@@ -437,7 +436,13 @@ export default function DashboardLayout({
         </div>
         <div className="min-w-0">
           <p className="whitespace-nowrap text-[17px] font-bold leading-tight tracking-tight text-slate-900">Avatar HRMS</p>
-          <p className="truncate text-[11px] text-slate-500">{me.platform.name}</p>
+          <Link
+            href="/dashboard/profile"
+            aria-current={pathname === "/dashboard/profile" ? "page" : undefined}
+            className={`block truncate text-[12px] font-medium hover:underline ${pathname === "/dashboard/profile" ? "text-[var(--nav-active)]" : "text-indigo-600"}`}
+          >
+            My Profile
+          </Link>
         </div>
         <div className="ml-auto shrink-0"><Bell /></div>
       </div>
