@@ -54,7 +54,9 @@ const MIN = 60;
   const NOW = Date.now();
   const at = (minAgo) => new Date(NOW - minAgo * 60_000).toISOString();
   const seed = async (user, breaks = []) => {
-    const id = (await q(`insert into work_sessions (id,"platformId","userId",date,"loginAt","logoutAt",status,"productiveSeconds","breakSeconds","meetingSeconds","wasLateLogin","lateByMinutes","autoClosed","createdAt","updatedAt") values (gen_random_uuid(),$1,$2,$3::date,$4,null,'ACTIVE',0,0,0,false,0,false,now(),now()) returning id`, [AV, user.id, today, at(120)]))[0].id;
+    // stored totals as the app would have written them: clocked in 120 minutes, minus the breaks
+    const breakSecs = breaks.reduce((n, [from, to]) => n + (from - to) * 60, 0);
+    const id = (await q(`insert into work_sessions (id,"platformId","userId",date,"loginAt","logoutAt",status,"productiveSeconds","breakSeconds","meetingSeconds","wasLateLogin","lateByMinutes","autoClosed","createdAt","updatedAt") values (gen_random_uuid(),$1,$2,$3::date,$4,null,'ACTIVE',$5,$6,0,false,0,false,now(),now()) returning id`, [AV, user.id, today, at(120), 7200 - breakSecs, breakSecs]))[0].id;
     for (const [from, to] of breaks) await q(`insert into tracker_breaks (id,"workSessionId","breakType","startedAt","endedAt","durationSeconds","autoClosed","createdAt") values (gen_random_uuid(),$1,'LUNCH',$2,$3,$4,false,now())`, [id, at(from), at(to), (from - to) * 60]);
     return id;
   };
@@ -103,7 +105,8 @@ const MIN = 60;
   ok("every answer is in the audit log", (await q(`select 1 from audit_logs where summary like '%invitation to "Morning huddle"%'`)).length >= 4);
 
   console.log("\n## 4. A and B join; C does not");
-  ok("A joins (200)", (await call("POST", `/meetings/${mid}/join`, A.tok)).s === 200);
+  const ja = await call("POST", `/meetings/${mid}/join`, A.tok);
+  ok("A joins (200)", ja.s === 200, ja);
   ok("B joins (200)", (await call("POST", `/meetings/${mid}/join`, B.tok)).s === 200);
   ok("A cannot join twice (409), still one record", (await call("POST", `/meetings/${mid}/join`, A.tok)).s === 409 && (await q(`select 1 from meeting_participation where "meetingId"=$1 and "userId"=$2`, [mid, A.id])).length === 1);
   ok("a joined person's status is Joined, with End Participation available", (await seen(A)).myStatus === "JOINED" && (await seen(A)).me.state === "IN_MEETING");
@@ -156,7 +159,10 @@ const MIN = 60;
   ok("A's productive time is clocked-in time minus the break: the meeting is NOT added on top", Math.abs(br(A.id).productiveSeconds - elapsedA) <= 8, { productive: br(A.id).productiveSeconds, expected: elapsedA });
   ok("B's productive time is unchanged by the meeting too", Math.abs(br(B.id).productiveSeconds - (Date.now() - new Date(at(120)).getTime()) / 1000) <= 8);
   const boardHr = await call("GET", "/team-attendance/live", HR.tok);
-  ok("HR sees no per-person huddle minutes on the board", boardHr.s === 200 && (boardHr.b.rows.find((r) => r.userId === A.id)?.meetingSeconds ?? 0) === 0, boardHr.b.rows?.find?.((r) => r.userId === A.id));
+  const hrA = boardHr.b.rows?.find?.((r) => r.userId === A.id);
+  ok("HR sees the same per-person huddle minutes (A: 20 min), durations only", boardHr.s === 200 && Math.abs(hrA?.meetingSeconds - 20 * MIN) <= 8 && !JSON.stringify(hrA).includes("joinedAt"), hrA);
+  const boardHrC = boardHr.b.rows?.find?.((r) => r.userId === C.id);
+  ok("HR sees exactly 0 for the person who never joined", boardHrC?.meetingSeconds === 0, boardHrC);
   ok("a manager of another company does not see these people", !(await call("GET", "/team-attendance/live", MB.tok)).b.rows.some((r) => r.userId === A.id));
   const sb = await call("GET", `/team-attendance/shift-breakdown?date=${today}`, M.tok);
   ok("the shift breakdown agrees (A's meeting figure = 20 minutes)", sb.s === 200 && Math.abs((sb.b.rows.find((r) => r.userId === A.id)?.huddleSeconds ?? -1) - ACOUNT) <= 2, sb.b.rows?.find?.((r) => r.userId === A.id));

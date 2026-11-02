@@ -151,9 +151,9 @@ export async function getLiveBoard(viewerId: string) {
   const byUser = new Map(sessions.map((s) => [s.userId, s]));
   const onLeave = new Set(leaveDays.map((l) => l.userId));
   const remarkOf = await remarksBySession(sessions.map((s) => s.id));
-  // Team Huddle time (what people actually declared: join to leave) is part of "Meetings". Only a MANAGER sees it per person, and only for the
-  // people on their own board (their reporting employees); HR/Admin keep seeing live-meeting time only and get huddle COUNTS elsewhere.
-  const huddle = String(viewer.role) === "MANAGER" ? await huddleBreakdowns(sessions as never, now) : new Map<string, { huddleSeconds: number; otherSeconds: number; openPastEnd: boolean }>();
+  // Team Huddle time (what people actually declared: join to leave) is part of "Meetings". Shown per person, only for the
+  // people the viewer may see (managers, HR and Admin, each within their own reach). Durations only: join/leave clock times stay private.
+  const huddle = await huddleBreakdowns(sessions as never, now);
 
   const stamps = await photoStamps(people.map((p) => p.id));
   const rows = people.map((p) => {
@@ -249,7 +249,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
   ]);
   const byUser = new Map(sessions.map((s) => [s.userId, s]));
   const onLeave = new Set(leaveDays.map((l) => l.userId));
-  const huddle = String(viewer.role) === "MANAGER" ? await huddleBreakdowns(sessions as never, now) : new Map<string, { huddleSeconds: number; otherSeconds: number; openPastEnd: boolean }>();
+  const huddle = await huddleBreakdowns(sessions as never, now);
 
   const rows = people.map((p) => {
     const t = targetsFor(p);
