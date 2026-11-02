@@ -1,0 +1,42 @@
+// ===========================================================================
+// COMPLAINT CENTRE / QUERY DESK - NEW TABLES ONLY, no column added to tickets or ticket_messages.
+//
+// Tickets stay exactly as they were. These two tables add what tickets lack:
+//  query_meta    the category the person chose (leave, payroll, profile and documents, technical, general HR, other) next to the old
+//                ticket category it is stored under, and "waiting for the employee" (information was requested and not yet answered).
+//  query_events  a never-edited history of what happened to a query: assigned, status changed, information requested/received.
+// A ticket with no query_meta row is an older ticket: its category is read from the old one. Attendance corrections are NOT tickets and are
+// not stored here: they keep their own tables and approval workflow and are only listed alongside.
+// No Prisma relations to existing models on purpose; the foreign keys live in the migration SQL.
+// ===========================================================================
+
+model QueryMeta {
+  ticketId   String @id @db.Uuid // = tickets.id
+  platformId String @db.Uuid
+
+  categoryKey String // LEAVE | PAYROLL | PROFILE_DOCUMENT | TECHNICAL | GENERAL_HR | OTHER
+
+  awaitingInfoSince DateTime? // set when staff ask for more information, cleared when the employee answers
+  awaitingInfoById  String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([platformId, categoryKey])
+  @@map("query_meta")
+}
+
+model QueryEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  ticketId   String   @db.Uuid
+  platformId String   @db.Uuid
+  actorId    String?  @db.Uuid
+  kind       String // CREATED | ASSIGNED | STATUS | INFO_REQUESTED | INFO_RECEIVED
+  fromValue  String?
+  toValue    String?
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+  @@map("query_events")
+}

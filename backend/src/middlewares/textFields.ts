@@ -7,7 +7,7 @@ const TEXT_FIELDS = new Set([
   "firstName", "lastName", "name", "email", "phone", "designation", "employeeCode", "password", "newPassword",
   "currentPassword", "temporaryPassword", "title", "subject", "description", "reason", "note", "decisionNote",
   "rejectionReason", "fileName", "mimeType", "legalName", "timezone", "employeeCodePrefix", "startTime", "endTime",
-  "roleTitle", "emailIntro", "bodyHtml", "category", "priority", "leaveType", "breakType", "meetingType",
+  "roleTitle", "message", "body", "assigneeId", "emailIntro", "bodyHtml", "category", "priority", "leaveType", "breakType", "meetingType",
   "teamType", "decision", "label", "helpText", "employmentType", "meetingUrl", "startTime", "endTime", "date", "correctionType", "requestedLogin", "requestedLogout", "comment", "reviewComment", "dateOfJoining", "joiningDate", "expiresAt", "correctionDate",
 ]);
 
