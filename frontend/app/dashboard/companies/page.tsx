@@ -222,10 +222,10 @@ function DesignationsPanel({ companies }: { companies: Company[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// COMPANY ACCESS (top management only): which companies each HR / Admin can act on besides their own.
+// COMPANY ACCESS (Admin or top management): which companies each HR / Admin can act on besides their own.
 // ---------------------------------------------------------------------------
 type AccessPerson = { id: string; name: string; employeeCode: string | null; role: string; ownCompanyId: string; ownCompany: string; all: boolean; companyIds: string[] };
-type AccessData = { ready: boolean; companies: { id: string; name: string }[]; people: AccessPerson[] };
+type AccessData = { ready: boolean; canGrantAll: boolean; companies: { id: string; name: string }[]; people: AccessPerson[] };
 
 function AccessPanel() {
   const [data, setData] = useState<AccessData | null>(null);
@@ -267,7 +267,7 @@ function AccessPanel() {
   return (
     <section className="rounded-2xl bg-white p-6 shadow-[var(--shadow-card)]">
       <h2 className="font-semibold text-slate-900">Company access</h2>
-      <p className="mt-0.5 text-sm text-slate-500">HR and Admin always reach their own company. Tick more companies to let them act there too, or &ldquo;All companies&rdquo; for top management. Changes apply at once.</p>
+      <p className="mt-0.5 text-sm text-slate-500">HR and Admin always reach their own company. Tick more companies to let them act there too.{data.canGrantAll ? " Use “All companies” for top management." : ""} Changes apply when you press Save.</p>
       {!data.ready && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">Company access is not set up on this server yet (database update pending).</p>}
       {msg && <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{msg}</p>}
       {error && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
@@ -279,13 +279,14 @@ function AccessPanel() {
             <div key={p.id} className="py-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-medium text-slate-900">{p.name} <span className="font-normal text-slate-400">{p.employeeCode} · {p.role} · {p.ownCompany}</span></p>
-                <button disabled={!dirty || !data.ready} onClick={() => save(p)} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40">Save</button>
+                <button disabled={!dirty || !data.ready || (!data.canGrantAll && p.all)} onClick={() => save(p)} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40">Save</button>
               </div>
               <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5">
-                <label className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
+                {data.canGrantAll && <label className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
                   <input type="checkbox" checked={v.all} onChange={(e) => setDraft((d) => ({ ...d, [p.id]: { ...view(p), all: e.target.checked } }))} /> All companies
-                </label>
-                {!v.all && data.companies.filter((c) => c.id !== p.ownCompanyId).map((c) => (
+                </label>}
+                {!data.canGrantAll && p.all && <span className="text-sm text-slate-500">Has access to all companies (set by top management).</span>}
+                {!v.all && (data.canGrantAll || !p.all) && data.companies.filter((c) => c.id !== p.ownCompanyId).map((c) => (
                   <label key={c.id} className="flex items-center gap-1.5 text-sm text-slate-600">
                     <input type="checkbox" checked={v.companyIds.includes(c.id)} onChange={(e) => setDraft((d) => ({ ...d, [p.id]: { ...view(p), companyIds: e.target.checked ? [...view(p).companyIds, c.id] : view(p).companyIds.filter((x) => x !== c.id) } }))} /> {c.name}
                   </label>

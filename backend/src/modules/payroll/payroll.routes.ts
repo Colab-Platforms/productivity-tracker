@@ -40,6 +40,16 @@ const num = (v: unknown, fallback: number) => {
 
 router.use(requireAuth);
 
+// Optional list of team ids. Anything that is not a UUID is a bad request.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function teamIdsOf(v: unknown): string[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.length > 200) throw new Error("BAD_TEAMS");
+  const ids = v.map(String);
+  if (!ids.every((x) => UUID.test(x))) throw new Error("BAD_TEAMS");
+  return ids;
+}
+
 // --- EMPLOYEE -------------------------------------------------------------
 // Anyone can list their own slips. The service decides what they may see.
 router.get("/me", async (req, res) => {
@@ -117,7 +127,51 @@ router.post("/generate", async (req, res) => {
         req.user!.userId,
         num(req.body?.month, now.getMonth() + 1),
         num(req.body?.year, now.getFullYear()),
-        req.body?.platformId ? String(req.body.platformId) : undefined
+        req.body?.platformId ? String(req.body.platformId) : undefined,
+        teamIdsOf(req.body?.teamIds)
+      )
+    );
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// Department picker: this company's teams.
+router.get("/teams", async (req, res) => {
+  try {
+    res.json(await generate.listPayrollTeams(req.user!.userId));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// Undo a release for the chosen departments (or everyone).
+router.post("/unrelease", async (req, res) => {
+  try {
+    const now = new Date();
+    res.json(
+      await generate.unreleaseMonth(
+        req.user!.userId,
+        num(req.body?.month, now.getMonth() + 1),
+        num(req.body?.year, now.getFullYear()),
+        teamIdsOf(req.body?.teamIds)
+      )
+    );
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// One click: approve + publish + notify everyone in scope.
+router.post("/release", async (req, res) => {
+  try {
+    const now = new Date();
+    res.json(
+      await generate.releaseMonth(
+        req.user!.userId,
+        num(req.body?.month, now.getMonth() + 1),
+        num(req.body?.year, now.getFullYear()),
+        teamIdsOf(req.body?.teamIds)
       )
     );
   } catch (err) {
