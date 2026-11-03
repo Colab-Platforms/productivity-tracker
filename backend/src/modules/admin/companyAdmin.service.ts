@@ -1,6 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { auditNote } from "../../lib/auditContext.js";
-import { accessFor, assertCompany, companyAccessReady } from "../../lib/companyAccess.js";
+import { accessFor, assertCompany, companyAccessReady, scopeWhere } from "../../lib/companyAccess.js";
 
 // ---------------------------------------------------------------------------
 // COMPANY ADMIN (Phase 1):
@@ -25,31 +25,37 @@ const cleanName = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, " ");
 
 // --- designations --------------------------------------------------------------------------------------------------------
 
-export async function listDesignations(viewerId: string, companyId?: string) {
+export async function listDesignations(viewerId: string, _companyId?: string) {
   const a = await staffAccess(viewerId);
-  const platformId = companyId || a.ownPlatformId;
-  assertCompany(a, platformId);
   let rows: { id: string; name: string; isActive: boolean }[] = [];
   try {
-    rows = await prisma.designation.findMany({ where: { platformId }, select: { id: true, name: true, isActive: true }, orderBy: { name: "asc" } });
+    rows = await prisma.designation.findMany({ select: { id: true, name: true, isActive: true }, orderBy: { name: "asc" } });
   } catch (e) {
     if (!isMissingTable(e)) throw e;
   }
-  const people = await prisma.user.groupBy({ by: ["designation"], where: { platformId, designation: { not: null }, status: { not: "EXITED" } }, _count: true });
+  // One entry per title, whatever company first used it: a title is active if any row of it is.
+  const byName = new Map<string, { id: string; name: string; isActive: boolean }>();
+  for (const r of rows) {
+    const k = r.name.toLowerCase();
+    const cur = byName.get(k);
+    if (!cur) byName.set(k, { ...r });
+    else if (r.isActive) cur.isActive = true;
+  }
+  // How many people (in companies this person can act on) hold each title.
+  const people = await prisma.user.groupBy({ by: ["designation"], where: { ...scopeWhere(a), designation: { not: null }, status: { not: "EXITED" } }, _count: true });
   const used = new Map(people.map((p) => [String(p.designation).toLowerCase(), p._count]));
-  return { companyId: platformId, designations: rows.map((r) => ({ ...r, people: used.get(r.name.toLowerCase()) ?? 0 })) };
+  return { companyId: a.ownPlatformId, shared: true, designations: [...byName.values()].map((r) => ({ ...r, people: used.get(r.name.toLowerCase()) ?? 0 })) };
 }
 
 export async function addDesignation(viewerId: string, body: { companyId?: string; name?: string }) {
   const a = await staffAccess(viewerId);
-  const platformId = body.companyId || a.ownPlatformId;
-  assertCompany(a, platformId);
+  const platformId = a.ownPlatformId; // which company first added it does not matter: the list is shared
   const name = cleanName(body.name);
   if (name.length < 2 || name.length > 80) throw new Error("BAD_NAME");
-  const clash = await prisma.designation.findFirst({ where: { platformId, name: { equals: name, mode: "insensitive" } }, select: { id: true, isActive: true } });
+  const clash = await prisma.designation.findFirst({ where: { name: { equals: name, mode: "insensitive" } }, select: { id: true, isActive: true } });
   if (clash) throw new Error("DESIGNATION_EXISTS");
   const created = await prisma.designation.create({ data: { platformId, name, createdById: viewerId }, select: { id: true, name: true } });
-  auditNote({ module: "Employees", action: "CREATE", platformId, recordType: "Designation", recordId: created.id, summary: `Added the designation "${name}"`, after: { name } });
+  auditNote({ module: "Employees", action: "CREATE", platformId, recordType: "Designation", recordId: created.id, summary: `Added the designation "${name}" (shared by all companies)`, after: { name } });
   return created;
 }
 
@@ -57,19 +63,19 @@ export async function updateDesignation(viewerId: string, id: string, body: { na
   const a = await staffAccess(viewerId);
   const row = await prisma.designation.findUnique({ where: { id } });
   if (!row) throw new Error("NOT_FOUND");
-  assertCompany(a, row.platformId);
+  const same = { name: { equals: row.name, mode: "insensitive" as const } }; // every copy of this title, in every company
   const data: { name?: string; isActive?: boolean } = {};
   if (body.name !== undefined) {
     const name = cleanName(body.name);
     if (name.length < 2 || name.length > 80) throw new Error("BAD_NAME");
-    const clash = await prisma.designation.findFirst({ where: { platformId: row.platformId, id: { not: id }, name: { equals: name, mode: "insensitive" } }, select: { id: true } });
+    const clash = await prisma.designation.findFirst({ where: { NOT: same, name: { equals: name, mode: "insensitive" } }, select: { id: true } });
     if (clash) throw new Error("DESIGNATION_EXISTS");
     data.name = name; // people who already have the old wording keep it; it is only the list that changes
   }
   if (body.isActive !== undefined) data.isActive = body.isActive === true;
   if (Object.keys(data).length === 0) throw new Error("NOTHING_TO_UPDATE");
-  await prisma.designation.update({ where: { id }, data });
-  auditNote({ module: "Employees", action: "UPDATE", platformId: row.platformId, recordType: "Designation", recordId: id, before: { name: row.name, isActive: row.isActive }, after: data, summary: `Changed the designation "${row.name}"` });
+  await prisma.designation.updateMany({ where: same, data });
+  auditNote({ module: "Employees", action: "UPDATE", platformId: a.ownPlatformId, recordType: "Designation", recordId: id, before: { name: row.name, isActive: row.isActive }, after: data, summary: `Changed the designation "${row.name}" (shared by all companies)` });
   return { ok: true };
 }
 
