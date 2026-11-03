@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import { unit } from "@/lib/plural";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
 import { ManagerDecisionBox, SkipManagerBox, StepNote, stepBadge, type ManagerStep } from "../_approvals/ManagerStep";
@@ -280,7 +281,7 @@ export default function LeavePage() {
                       {r.isHalfDay && ` (${r.isFirstHalf ? "first" : "second"} half)`}
                     </p>
                     <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
-                    <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} days</p>
+                    <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} {unit(r.takenThisYear.total, "day")}</p>
                     {r.decidedBy && <p className="mt-1 text-xs text-slate-400">Decided by {r.decidedBy}{r.decisionNote ? ` · “${r.decisionNote}”` : ""}</p>}
                     <StepNote step={r.managerStep} />
                   </div>
@@ -334,7 +335,7 @@ export default function LeavePage() {
                   {r.isHalfDay && ` (${r.isFirstHalf ? "first" : "second"} half)`}
                 </p>
                 <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
-                <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} days</p>
+                <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} {unit(r.takenThisYear.total, "day")}</p>
                 <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => managerDecide(r.id, d, c)} />
               </div>
             ))}
@@ -425,7 +426,7 @@ export default function LeavePage() {
             <div className="space-y-5">
               <div>
                 <p className="text-sm text-slate-500">Taken in {person.data.year}</p>
-                <p className="text-2xl font-semibold text-slate-900">{num(person.data.taken.total)} days</p>
+                <p className="text-2xl font-semibold text-slate-900">{num(person.data.taken.total)} {unit(person.data.taken.total, "day")}</p>
                 <div className="mt-2"><TakenChips t={person.data.taken} /></div>
               </div>
               <div>

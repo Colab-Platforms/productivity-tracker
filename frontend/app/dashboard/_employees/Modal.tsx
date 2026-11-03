@@ -25,19 +25,29 @@ export function Modal({
 }) {
   const panel = useRef<HTMLDivElement>(null);
 
+  // The newest onClose, kept in a ref. Callers usually pass a fresh inline function on every render, and a page with a live timer
+  // (the Today page ticks every second) re-renders constantly. If onClose were a dependency of the effect below, the effect would
+  // re-run every second and its focus() call would pull the keyboard out of whatever the person was typing in (a textarea showed a
+  // cursor but ignored typing). So the effect depends only on `dismissible` and reads the latest onClose from here.
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  });
+
   useEffect(() => {
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    panel.current?.focus();
+    // Move focus into the dialog once, when it opens, but never steal it from a field inside (an autoFocus input has it already).
+    if (!panel.current?.contains(document.activeElement)) panel.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && dismissible) onClose();
+      if (e.key === "Escape" && dismissible) closeRef.current();
     };
     document.addEventListener("keydown", onKey);
     return () => {
       document.body.style.overflow = previous;
       document.removeEventListener("keydown", onKey);
     };
-  }, [onClose, dismissible]);
+  }, [dismissible]);
 
   // Rendered straight into <body>, so no parent (a transform, filter or animation on a page wrapper) can ever
   // shrink or offset the "full screen" overlay again.

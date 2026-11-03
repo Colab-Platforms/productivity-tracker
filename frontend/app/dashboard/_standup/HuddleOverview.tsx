@@ -54,11 +54,11 @@ export default function HuddleOverview({ compact = false }: { compact?: boolean 
     <section className={compact ? "mt-5 rounded-2xl border border-slate-200 bg-white p-5" : "space-y-5"} aria-label="Team Huddle">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-[15px] font-medium text-slate-900">Team Huddle · today</h2>
-        {compact && <Link href="/dashboard/huddles" className="text-xs font-medium text-indigo-600 hover:underline">Open Team Huddle</Link>}
+        {compact && <Link href="/dashboard/meetings?tab=participation" className="text-xs font-medium text-indigo-600 hover:underline">Open Team Huddle</Link>}
       </div>
 
       {data.meetings.length === 0 ? (
-        <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No Team Huddle scheduled for today. Schedule one from Meetings with “In-person stand-up” ticked.</p>
+        <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No Team Huddle scheduled for today. Schedule one from Team Huddle with “Schedule meeting”, with “In-person stand-up” ticked.</p>
       ) : (
         <div className="mt-3 space-y-4">
           {data.meetings.map((m) => (
@@ -81,6 +81,9 @@ export default function HuddleOverview({ compact = false }: { compact?: boolean 
                           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CHIP[r.state][1]}`}>{CHIP[r.state][0]}</span>
                           {r.late && <span className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">late</span>}
                           {r.openPastEnd && <span className="ml-1.5 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">not ended</span>}
+                          {r.openPastEnd && (
+                            <Link href={`/dashboard/meetings?tab=participation&id=${m.id}`} className="ml-1.5 text-xs font-medium text-indigo-600 hover:underline" title="Open this meeting to set when they left (kept as a correction with your reason)">Correct</Link>
+                          )}
                         </td>
                         <td className="py-2 pr-3 tabular-nums text-slate-700">{t(r.joinedAt, tz)}</td>
                         <td className="py-2 pr-3 tabular-nums text-slate-700">{r.state === "ENDED" ? t(r.leftAt, tz) : "—"}</td>

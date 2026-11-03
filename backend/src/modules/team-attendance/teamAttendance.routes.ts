@@ -15,6 +15,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_RANGE: { status: 400, message: "The end date is before the start date." },
   RANGE_TOO_LONG: { status: 400, message: "Pick a range of 93 days or less." },
   BAD_STATUS: { status: 400, message: "That attendance status is not valid." },
+  BAD_ARRIVAL: { status: 400, message: "That late remark filter is not valid." },
   BAD_SCOPE: { status: 400, message: "Choose the company, a team or a person." },
   BAD_TARGET: { status: 400, message: "A daily target must be a whole number from 1 to 1000." },
   NOT_FOUND: { status: 404, message: "Not found." },
@@ -127,6 +128,7 @@ router.get("/attendance", async (req, res) => {
         teamId,
         shift: text(req.query.shift),
         status: text(req.query.status, 20),
+        arrival: text(req.query.arrival, 20),
       })
     );
   } catch (error) {
