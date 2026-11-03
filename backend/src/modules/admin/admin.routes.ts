@@ -16,7 +16,9 @@ import * as importer from "./employeeImport.service.js";
 import * as updater from "./employeeUpdate.service.js";
 import * as editor from "./employeeEdit.service.js";
 import * as companyAdmin from "./companyAdmin.service.js";
-import { guardUuidParams, isBadInput } from "../../lib/params.js";
+import { guardUuidParams, isBadInput, isUuid } from "../../lib/params.js";
+import { accessFor, assertCompany } from "../../lib/companyAccess.js";
+import { peekEmployeeCode } from "./employeeCode.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -62,7 +64,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   SALARY_NOT_ALLOWED: { status: 403, message: "Only an Admin or top management can change a salary." },
   SALARY_OVERWRITE_NEEDS_CONFIRM: { status: 409, message: "This person already has a salary. Confirm that you want to replace it." },
   DESIGNATION_OVERWRITE_NEEDS_CONFIRM: { status: 409, message: "This person already has a designation. Confirm that you want to replace it." },
-  DESIGNATION_NOT_IN_LIST: { status: 400, message: "Pick a designation from this company's list, or add it to the list first." },
+  DESIGNATION_NOT_IN_LIST: { status: 400, message: "Pick a designation from the list. Designations are the same for every company; a new one has to be added by a developer." },
   DESIGNATION_EXISTS: { status: 409, message: "That designation already exists in this company." },
   BAD_NAME: { status: 400, message: "A name must be 2 to 80 characters." },
   BAD_MANAGER: { status: 400, message: "Pick an active manager or admin of the same company, other than the person themselves." },
@@ -119,6 +121,21 @@ router.get("/options", async (req, res) => {
 // --- add / import employees -------------------------------------------------
 // One pipeline for the single form and the spreadsheet import. The router-level
 // guard above already limits all of it to HR and Admin.
+
+// The next employee ID for a company, for the Add Employee form. Read only; only companies this person may act on.
+router.get("/employees/next-id", async (req, res) => {
+  try {
+    const companyId = String(req.query.companyId ?? "");
+    if (!isUuid(companyId)) {
+      res.status(400).json({ error: "One of the values sent is not valid." });
+      return;
+    }
+    assertCompany(await accessFor(req.user!.userId), companyId);
+    res.json({ code: await peekEmployeeCode(companyId) });
+  } catch (e) {
+    fail(res, e);
+  }
+});
 
 router.get("/employees/lookups", async (req, res) => {
   try {

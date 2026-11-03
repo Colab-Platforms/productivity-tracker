@@ -24,6 +24,16 @@ import { photoStamps } from "../photos/photos.service.js";
 import { sendWelcome } from "../onboarding/onboarding.mail.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
 import { coManagersByTeam } from "../../lib/teamManagers.js";
+import { canonicalDesignation, designationNames } from "../../lib/designations.js";
+
+// A designation must be one of the fixed list (its own spelling is stored); blank = none.
+function designationOrNull(v: string | undefined): string | null {
+  const t = (v ?? "").trim();
+  if (!t) return null;
+  const hit = canonicalDesignation(t);
+  if (!hit) throw new Error("DESIGNATION_NOT_IN_LIST");
+  return hit;
+}
 
 export const USER_ROLES = ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] as const;
 export const USER_STATUSES = ["CANDIDATE", "INVITED", "ACTIVE", "SUSPENDED", "EXITED"] as const;
@@ -299,7 +309,7 @@ export async function createUser(
         employeeCode,
         role,
         status: "INVITED",
-        designation: data.designation?.trim() || null,
+        designation: designationOrNull(data.designation),
         dateOfJoining: data.dateOfJoining ? parseDay(data.dateOfJoining) : null,
         shiftId: data.shiftId || null,
         reportsToId: data.reportsToId || null,
@@ -492,13 +502,14 @@ export async function addTeamMember(viewerId: string, teamId: string, userId: st
   if (!team) throw new Error("NOT_FOUND");
   assertCompany(access, team.platformId);
 
-  // Someone may act on several companies; nobody may mix them. The person and
-  // the team must belong to the same one.
+  // A team may include people from other companies (one project can span several), but only people of companies the
+  // person doing this may act on: nobody can pull in someone from a company they have no access to.
   const target = await prisma.user.findUnique({
     where: { id: userId },
     select: { platformId: true },
   });
-  if (!target || target.platformId !== team.platformId) throw new Error("NOT_FOUND");
+  if (!target) throw new Error("NOT_FOUND");
+  assertCompany(access, target.platformId);
 
   // Upsert, not create â€” re-adding someone who previously left should
   // reactivate their row rather than fail on the unique constraint.
@@ -908,6 +919,7 @@ export async function getAdminOptions(viewerId: string) {
   });
 
   return {
+    designations: designationNames(),
     // An owner sees several companies at once, so the company is part of the
     // label. Inside one company that prefix is just noise.
     teams: teams.map((t) => ({

@@ -130,6 +130,7 @@ export type Lookups = {
   roles: string[];
   defaultCompanyId: string;
   designations?: { platformId: string; name: string }[];
+  allDesignations?: string[];
   companies: { id: string; name: string; slug: string; holidaysThisYear: number }[];
   teams: { id: string; name: string; platformId: string }[];
   shifts: { id: string; name: string; platformId: string; startTime: string; endTime: string; workingDays: number[] }[];

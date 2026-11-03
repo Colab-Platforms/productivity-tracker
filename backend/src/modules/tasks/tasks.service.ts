@@ -65,6 +65,15 @@ async function assertCanReviewTask(
     if (await isTeamManager(actor.id, task.teamId)) return;
   }
 
+  // Anyone who manages ANY active team the person is on (primary manager or co-manager) can review their work.
+  // The approval queue and the notifications already go to all of them; the check has to agree, or a manager sees a
+  // task in the queue and is then refused ("That person isn't in your team") because the task was tagged to another team.
+  const sharedTeam = await prisma.teamMember.findFirst({
+    where: { userId: task.userId, isActive: true, team: { ...(await managedByWhere(actor.id)), isActive: true } },
+    select: { id: true },
+  });
+  if (sharedTeam) return;
+
   const target = await prisma.user.findUnique({
     where: { id: task.userId },
     select: { platformId: true, reportsToId: true },

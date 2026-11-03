@@ -4,6 +4,7 @@ import { auditNote, changedFields } from "../../lib/auditContext.js";
 import { accessFor, assertCompany, scopeWhere, type Access } from "../../lib/companyAccess.js";
 import { visibleCompanies } from "../../lib/companyAccess.logic.js";
 import { photoStamps } from "../photos/photos.service.js";
+import { sharedDesignations, canonicalDesignation } from "../../lib/designations.js";
 
 // ---------------------------------------------------------------------------
 // EDIT EMPLOYEE + the dropdowns that feed it.
@@ -38,14 +39,8 @@ async function typeTableReady() {
   }
 }
 
-async function designationList(platformId: string): Promise<string[]> {
-  try {
-    const rows = await prisma.designation.findMany({ where: { platformId, isActive: true }, select: { name: true }, orderBy: { name: "asc" } });
-    return rows.map((r) => r.name);
-  } catch {
-    return []; // table not there yet: free text, as before
-  }
-}
+// One shared list for every company (see lib/designations.ts); the company no longer limits the choice.
+const designationList = (_platformId: string): Promise<string[]> => sharedDesignations();
 
 type SalaryInput = number | string | null | undefined;
 function parseSalary(v: SalaryInput): number | null {
@@ -135,12 +130,10 @@ export async function updateEmployee(viewerId: string, userId: string, data: Edi
     if ((next ?? null) !== (current.designation ?? null)) {
       if (current.designation && data.confirmOverwrite?.designation !== true) throw new Error("DESIGNATION_OVERWRITE_NEEDS_CONFIRM");
       if (next) {
-        const list = await designationList(current.platformId);
-        if (list.length > 0) {
-          const hit = list.find((d) => d.toLowerCase() === next.toLowerCase());
-          if (!hit) throw new Error("DESIGNATION_NOT_IN_LIST");
-          designation = hit; // the list's own spelling
-        } else designation = next;
+        // A fixed list for every company: only one of its entries is accepted (the list's own spelling is stored).
+        const hit = canonicalDesignation(next);
+        if (!hit) throw new Error("DESIGNATION_NOT_IN_LIST");
+        designation = hit;
       } else designation = null;
     }
   }
@@ -314,7 +307,7 @@ export async function editModel(viewerId: string, userId: string) {
       // The salary is sent only to people who may change it.
       monthlySalary: mayEditSalary ? (u.monthlySalary === null ? null : Number(u.monthlySalary)) : undefined,
     },
-    permissions: { canEditPhoto: access.role === "HR" || access.role === "ADMIN", canEditSalary: mayEditSalary, canChangeRoles: access.role === "ADMIN", employeeCodeLocked: true, companyLocked: true },
+    permissions: { canEditPhoto: access.role === "HR" || access.role === "ADMIN", canEditSalary: mayEditSalary, canChangeRoles: access.role === "ADMIN" || (access.role === "HR" && !PRIVILEGED.includes(String(u.role)) && u.id !== viewerId), employeeCodeLocked: true, companyLocked: true },
     dropdowns: await dropdownsFor(viewerId, u.platformId),
   };
 }

@@ -67,3 +67,29 @@ export async function allocateEmployeeCode(db: Db, platformId: string): Promise<
   }
   throw new Error("CODE_ALLOCATION_FAILED");
 }
+
+/**
+ * The ID the NEXT person in this company would get, shown in the Add Employee form as soon as the company is chosen.
+ * Read only: it never moves the counter, so looking (or choosing a different company) uses up nothing. The real number is
+ * still handed out by allocateEmployeeCode when the person is saved, so two people creating at once can never collide;
+ * the preview can then differ by one, which the form says.
+ */
+export async function peekEmployeeCode(platformId: string): Promise<string> {
+  const prefix = await prefixFor(prisma, platformId);
+  const used = await codesWithPrefix(prisma, prefix);
+  let next = highestNumber(used, prefix) + 1;
+  let width = 4;
+  if (await sequencesReady()) {
+    const row = await prisma.employeeCodeSequence.findUnique({ where: { platformId }, select: { nextNumber: true, padWidth: true } });
+    if (row) {
+      next = Math.max(next, row.nextNumber);
+      width = row.padWidth;
+    }
+  }
+  for (let i = 0; i < 200; i++) {
+    const code = formatCode(prefix, next + i, width);
+    const taken = await prisma.user.findFirst({ where: { employeeCode: { equals: code, mode: "insensitive" } }, select: { id: true } });
+    if (!taken) return code;
+  }
+  throw new Error("CODE_ALLOCATION_FAILED");
+}

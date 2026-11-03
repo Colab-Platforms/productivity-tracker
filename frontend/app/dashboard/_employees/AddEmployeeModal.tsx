@@ -149,6 +149,11 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
   const company = lookups?.companies.find((c) => c.id === companyId);
   // This company's own list of job titles, when it has one.
   const designationList = (lookups?.designations ?? []).filter((d) => d.platformId === companyId).map((d) => d.name);
+  // Every other title used anywhere, so a role set up in one company can be chosen in another. This company's own come first.
+  const ownLower = new Set(designationList.map((d) => d.toLowerCase()));
+  const otherDesignations = (lookups?.allDesignations ?? []).filter((d) => !ownLower.has(d.toLowerCase()));
+  // One fixed list for every company (an enum on the server). Search it; nothing can be typed in that is not on it.
+  const designationOpts: Opt[] = [...designationList, ...otherDesignations].map((d) => ({ value: d, label: d }));
 
   const teams = useMemo(() => (lookups?.teams ?? []).filter((t) => t.platformId === companyId), [lookups, companyId]);
   // A manager may sit in another company, so this list is not filtered by it.
@@ -161,6 +166,23 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
   const managerOpts: Opt[] = managers.map((m) => ({ value: m.id, label: m.name, sub: [m.employeeCode, ROLE_LABEL[m.role]].filter(Boolean).join(" · ") }));
   const shiftOpts: Opt[] = shifts.map((s) => ({ value: s.id, label: s.name, sub: `${s.startTime}–${s.endTime}` }));
   const companyOpts: Opt[] = (lookups?.companies ?? []).map((c) => ({ value: c.id, label: c.name }));
+
+  // The next ID for the chosen company, shown as soon as it is chosen. Only a preview: the real number is handed out when
+  // the person is saved (so two people adding at once never clash).
+  const [nextId, setNextId] = useState("");
+  useEffect(() => {
+    if (!companyId) return;
+    let live = true;
+    setNextId("");
+    apiGet<{ code: string }>(`/admin/employees/next-id?companyId=${companyId}`)
+      .then((r) => live && setNextId(r.code))
+      .catch(() => live && setNextId(""));
+    return () => {
+      live = false;
+    };
+  }, [companyId]);
+  // Only an Admin may type an ID by hand (the server enforces it); everyone else sees the generated one, read-only.
+  const canTypeId = lookups?.roles.includes("ADMIN") ?? false;
 
   function changeCompany(id: string) {
     // Teams, managers and shifts belong to a company, so they cannot carry over.
@@ -402,9 +424,9 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
               <Label htmlFor="ae-name" required>Full name</Label>
               <input id="ae-name" value={form.fullName} onChange={(e) => set("fullName", e.target.value)} className={inputCls(!!errors.fullName)} placeholder="e.g. Priya Nair" autoComplete="off" />
             </Field>
-            <Field error={errors.employeeId} hint={form.employeeId.trim() ? "Typed exactly as given. It is never renumbered." : `Leave blank: the next ID${company?.name ? ` for ${company.name}` : ""} is generated automatically when you save.`}>
+            <Field error={errors.employeeId} hint={form.employeeId.trim() ? "Typed exactly as given. It is never renumbered." : nextId ? `Next ID${company?.name ? ` for ${company.name}` : ""}: ${nextId}. It is assigned automatically when you save${canTypeId ? " (you can type a different one)" : ""}.` : `The next ID${company?.name ? ` for ${company.name}` : ""} is generated automatically when you save.`}>
               <Label htmlFor="ae-id">Employee ID</Label>
-              <input id="ae-id" value={form.employeeId} onChange={(e) => set("employeeId", e.target.value)} className={inputCls(!!errors.employeeId)} placeholder="Generated automatically" autoComplete="off" />
+              <input id="ae-id" value={canTypeId ? form.employeeId : form.employeeId || nextId} readOnly={!canTypeId} onChange={(e) => set("employeeId", e.target.value)} className={`${inputCls(!!errors.employeeId)} ${canTypeId ? "" : "bg-slate-50 text-slate-600"}`} placeholder={nextId || "Generated automatically"} autoComplete="off" />
             </Field>
             <Field error={errors.email} hint={form.noEmail ? "They will sign in with their employee ID." : undefined}>
               <Label htmlFor="ae-email" required={!form.noEmail}>Work email</Label>
@@ -424,14 +446,7 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
             </Field>
             <Field error={errors.designation}>
               <Label htmlFor="ae-designation" required>Designation</Label>
-              {designationList.length > 0 ? (
-                <select id="ae-designation" value={form.designation} onChange={(e) => set("designation", e.target.value)} className={inputCls(!!errors.designation)}>
-                  <option value="">Choose a designation…</option>
-                  {designationList.map((d) => <option key={d} value={d}>{d}</option>)}
-                </select>
-              ) : (
-              <input id="ae-designation" value={form.designation} onChange={(e) => set("designation", e.target.value)} className={inputCls(!!errors.designation)} placeholder="e.g. Associate" autoComplete="off" />
-              )}
+              <SearchSelect id="ae-designation" options={designationOpts} value={form.designation} onChange={(v) => set("designation", v)} invalid={!!errors.designation} placeholder="Search designations…" clearLabel="Not assigned" emptyText="No designation matches" />
             </Field>
             <Field error={errors.teamId} hint={teams.length === 0 ? "This company has no teams yet. Add one in Admin → Teams." : "Optional. Their main team."}>
               <Label htmlFor="ae-team">Team / Department</Label>
