@@ -50,6 +50,10 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   DUE_IN_PAST: { status: 400, message: "The deadline can't be before today." },
   BAD_RANGE: { status: 400, message: "The end date can't be before the start date." },
   RANGE_TOO_LONG: { status: 400, message: "Pick a range of 93 days or fewer." },
+  BAD_REVERT_TYPE: { status: 400, message: "Choose Partially completed or Not fully completed." },
+  REMARK_REQUIRED: { status: 400, message: "Add a remark (at least 3 characters) explaining why." },
+  REMARK_TOO_LONG: { status: 400, message: "Keep the remark to 300 characters or fewer." },
+  ALREADY_REOPENED: { status: 409, message: "That task was already reopened." },
   ASSIGNED_CANNOT_DELETE: { status: 400, message: "A task your manager assigned can't be deleted." },
 };
 
@@ -167,6 +171,15 @@ router.post("/review/:id/outcome", async (req, res) => {
     const outcome = String(req.body?.outcome ?? "");
     const note = req.body?.reviewNote ? String(req.body.reviewNote) : undefined;
     res.json(await tasks.reviewTask(req.user!.userId, id(req.params.id), outcome, note));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+// Send a Completed task back to In Progress. Body: { type: "PARTIAL" | "NOT_FULL", remark }.
+router.post("/review/:id/revert", async (req, res) => {
+  try {
+    res.json(await tasks.revertTask(req.user!.userId, id(req.params.id), req.body?.type, req.body?.remark));
   } catch (e) {
     fail(res, e);
   }

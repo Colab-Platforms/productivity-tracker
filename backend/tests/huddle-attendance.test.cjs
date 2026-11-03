@@ -210,6 +210,33 @@ const MIN = 60;
   ok("C is still exactly 0 in Attendance", stillZero.b.rows.find((r) => r.userId === C.id).meetingSeconds === 0);
   ok("history is preserved: all participation rows remain", (await q(`select count(*)::int n from meeting_participation where "meetingId"=$1`, [mid]))[0].n === 2);
 
+  console.log("\n## 8b. Still in the huddle after its scheduled end: the End button must remain");
+  await seed(D); // D needs a session for the clock-in card
+  const lateM = await call("POST", "/meetings", M.tok, { title: "Late finishing huddle", date: dayStr, startTime: "23:00", endTime: "23:30", attendeeIds: [D.id] });
+  ok("a second huddle is created for D", lateM.s === 200 && !!lateM.b.id, lateM);
+  const mid2 = lateM.b.id;
+  await q(`update meetings set "startsAt" = now() - interval '45 minutes', "endsAt" = now() + interval '15 minutes' where id=$1`, [mid2]);
+  ok("D accepts and joins", (await call("POST", `/meetings/${mid2}/respond`, D.tok, { response: "ACCEPTED" })).s === 200 && (await call("POST", `/meetings/${mid2}/join`, D.tok)).s === 200);
+  const inList = async () => (await call("GET", "/meetings?scope=upcoming", D.tok)).b.meetings.find((x) => x.id === mid2);
+  ok("while it is running D sees it, in the huddle", (await inList())?.me?.state === "IN_MEETING");
+  // time passes: the scheduled end is now 30 minutes ago and D never pressed End
+  await q(`update meetings set "startsAt" = now() - interval '90 minutes', "endsAt" = now() - interval '30 minutes' where id=$1`, [mid2]);
+  const after = await inList();
+  ok("after the scheduled end D STILL sees it in the list, still in the huddle (the End button can be shown)", after?.me?.state === "IN_MEETING" && after.state === "past", after);
+  const card = (await call("GET", "/tracker/session", D.tok)).b.huddle;
+  ok("the Clock-in card is told which huddle is still open, and that it is past its end", card?.openMeetingId === mid2 && card.openPastEnd === true && card.activeSince === null, card);
+  // D joined 45 minutes ago and has been sitting in it since
+  await q(`update meeting_participation set "joinedAt" = now() - interval '45 minutes' where "meetingId"=$1 and "userId"=$2`, [mid2, D.id]);
+  const end = await call("POST", `/meetings/${mid2}/leave`, D.tok);
+  ok("D can still end it after the scheduled end (200)", end.s === 200, end);
+  const rec = (await q('select "leftAt", "endedBy", "durationSeconds" from meeting_participation where "meetingId"=$1 and "userId"=$2', [mid2, D.id]))[0];
+  ok("the end is recorded with the server time of the press (not the scheduled end)", !!rec.leftAt && rec.endedBy === "SELF" && rec.durationSeconds >= 44 * 60 && rec.durationSeconds <= 46 * 60, rec);
+  ok("afterwards it is no longer pushed into the upcoming list", (await inList()) === undefined);
+  ok("the Clock-in card has nothing left open", (await call("GET", "/tracker/session", D.tok)).b.huddle.openMeetingId === null);
+  ok("ending twice is still refused (409)", (await call("POST", `/meetings/${mid2}/leave`, D.tok)).s === 409);
+  ok("a person who ended on time is not pushed back into the list", !(await call("GET", "/meetings?scope=upcoming", A.tok)).b.meetings.some((x) => x.id === mid));
+  ok("someone who never joined it cannot end it (409)", (await call("POST", `/meetings/${mid2}/leave`, B.tok)).s === 409);
+
   console.log("\n## 9. Two quick presses on Join create one record");
   const m2 = await call("POST", "/meetings", M.tok, { title: "Second huddle", date: dayStr, startTime: "23:00", endTime: "23:30", attendeeIds: [D.id] });
   await q(`update meetings set "startsAt" = now() - interval '5 minutes', "endsAt" = now() + interval '25 minutes' where id=$1`, [m2.b.id]);

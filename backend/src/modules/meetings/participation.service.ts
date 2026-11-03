@@ -737,17 +737,32 @@ export async function huddleBreakdowns(sessions: SessionForMeetings[], now: Date
  * expected end is not shown as running (it is capped, and the record stays open for a manager correction). Display only: nothing here
  * is added to productive time, the huddle is already inside it.
  */
-export async function liveHuddle(session: SessionForMeetings, now: Date): Promise<{ todaySeconds: number; activeSince: string | null; openPastEnd: boolean }> {
-  const none = { todaySeconds: 0, activeSince: null as string | null, openPastEnd: false };
+export async function liveHuddle(session: SessionForMeetings, now: Date): Promise<{ todaySeconds: number; activeSince: string | null; openPastEnd: boolean; openMeetingId: string | null }> {
+  const none = { todaySeconds: 0, activeSince: null as string | null, openPastEnd: false, openMeetingId: null as string | null };
   if (!(await participationReady())) return none;
   const b = (await huddleBreakdowns([session], now)).get(session.userId);
   const open = await prisma.meetingParticipation.findFirst({
     where: { userId: session.userId, leftAt: null, joinedAt: { gte: new Date(session.loginAt.getTime() - 6 * 3_600_000) } },
     orderBy: { joinedAt: "desc" },
-    select: { joinedAt: true },
+    select: { joinedAt: true, meetingId: true },
   });
   const openPastEnd = !!b?.openPastEnd;
-  return { todaySeconds: b?.huddleSeconds ?? 0, activeSince: open && !openPastEnd ? open.joinedAt.toISOString() : null, openPastEnd };
+  // openMeetingId is set whenever the person has not ended a huddle, even past its scheduled end, so the card can offer End Huddle.
+  return { todaySeconds: b?.huddleSeconds ?? 0, activeSince: open && !openPastEnd ? open.joinedAt.toISOString() : null, openPastEnd, openMeetingId: open?.meetingId ?? null };
+}
+
+/**
+ * The huddles this person joined and has not ended yet (recent ones only). The meetings list keeps these visible after the scheduled end,
+ * so a person who is still marked "in the huddle" can always press End Huddle: before, the screen switched to a read-only record at the
+ * scheduled end and the End button vanished, leaving the record open (counted only to the expected end, flagged "not ended").
+ */
+export async function openMeetingIds(userId: string): Promise<string[]> {
+  if (!(await participationReady())) return [];
+  const rows = await prisma.meetingParticipation.findMany({
+    where: { userId, leftAt: null, joinedAt: { gte: new Date(Date.now() - 2 * 86_400_000) } },
+    select: { meetingId: true },
+  });
+  return rows.map((r) => r.meetingId);
 }
 
 // --- Team Huddle seconds per person per day (for Reports and My History) -----------------------------------------------

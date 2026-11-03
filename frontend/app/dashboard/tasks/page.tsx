@@ -43,6 +43,9 @@ type Task = {
   status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
   approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
   rejectionNote: string | null;
+  // Set when a manager reopened the task. fromEarlierDay = it belongs to a past day but is shown here because it is unfinished again.
+  reopened?: { type: string; label: string; remark: string; resubmitted: boolean } | null;
+  fromEarlierDay?: boolean;
   outcome: "COMPLETED" | "PARTIALLY_COMPLETED" | "FAILED" | null;
   completionNote: string | null;
   reviewNote: string | null;
@@ -352,7 +355,13 @@ export default function TasksPage() {
                   ? `Assigned by ${t.assignedBy}`
                   : `Approved by ${t.approvedBy ?? "your manager"}`}
                 {t.isCarriedOver && " · carried over"}
+                {t.fromEarlierDay && ` · from ${t.date}`}
               </p>
+              {t.reopened && (
+                <p className="mt-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-900">
+                  <span className="font-medium">Reopened by your manager · {t.reopened.label}:</span> {t.reopened.remark}
+                </p>
+              )}
             </div>
 
             <span

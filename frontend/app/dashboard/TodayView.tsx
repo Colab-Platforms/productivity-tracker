@@ -263,13 +263,13 @@ export default function TodayView() {
   const [discussionAsk, setDiscussionAsk] = useState<{ error: string } | null>(null);
   const [inHuddle, setInHuddle] = useState(false);
   // Team Huddle time so far today, and when the current huddle began (null = not in one). Display only: it is already part of productive time.
-  const [huddle, setHuddle] = useState<{ todaySeconds: number; activeSince: string | null; openPastEnd: boolean } | null>(null);
+  const [huddle, setHuddle] = useState<{ todaySeconds: number; activeSince: string | null; openPastEnd: boolean; openMeetingId?: string | null } | null>(null);
 
   const load = useCallback(async () => {
     try {
       // Session and invites are independent, so they are fetched together.
       const [sessionRes, invitesRes, huddleRes] = await Promise.allSettled([
-        apiGet<{ session: Session | null; config: Config; hostsOpenMeeting?: boolean; projects?: { id: string; name: string }[]; huddle?: { todaySeconds: number; activeSince: string | null; openPastEnd: boolean } | null }>("/tracker/session"),
+        apiGet<{ session: Session | null; config: Config; hostsOpenMeeting?: boolean; projects?: { id: string; name: string }[]; huddle?: { todaySeconds: number; activeSince: string | null; openPastEnd: boolean; openMeetingId?: string | null } | null }>("/tracker/session"),
         apiGet<Meeting[]>("/tracker/invites"),
         apiGet<{ meetings: { id: string; title: string; tracked?: boolean; canJoin?: boolean; me?: { state: string } | null }[] }>("/meetings?scope=upcoming"),
       ]);
@@ -726,6 +726,14 @@ export default function TodayView() {
                       {huddleRunning ? "Team Huddle in Progress" : "Team Huddle today"}
                     </span>
                     <span className="tabular-nums font-semibold">{hms(huddleSecs).join(":")}</span>
+                  </div>
+                )}
+                {session && huddle?.openMeetingId && (
+                  <div className="mx-auto mt-2 max-w-xs text-center">
+                    <button type="button" disabled={busy} onClick={() => void act(`/meetings/${huddle.openMeetingId}/leave`)} className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-50">
+                      End Huddle
+                    </button>
+                    {huddle.openPastEnd && <p className="mt-1 text-xs text-amber-700">The huddle&apos;s scheduled end has passed and it is still open. Press End Huddle to record when you left.</p>}
                   </div>
                 )}
 

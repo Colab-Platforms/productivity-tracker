@@ -149,7 +149,7 @@ function MeetingsInner() {
                 )}
                 {m.tracked && m.state !== "cancelled" && (
                   <div className="w-full">
-                    {m.state === "past" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} compact onChanged={() => setReload((n) => n + 1)} />}
+                    {m.state === "past" && m.me?.state !== "IN_MEETING" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} compact onChanged={() => setReload((n) => n + 1)} />}
                   </div>
                 )}
               </div>
@@ -254,13 +254,13 @@ function DetailsModal({ id, tz, onClose, onEdit, onChanged }: { id: string; tz: 
           {m.tracked && !m.isOrganizer && m.state !== "cancelled" && (
             <div>
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Team Huddle</p>
-              {m.state === "past" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={() => setRl((n) => n + 1)} />}
+              {m.state === "past" && m.me?.state !== "IN_MEETING" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={() => setRl((n) => n + 1)} />}
             </div>
           )}
           {m.tracked && m.isOrganizer && m.state !== "cancelled" && (
             <div>
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">You, as the organizer</p>
-              {m.state === "past" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={() => setRl((n) => n + 1)} />}
+              {m.state === "past" && m.me?.state !== "IN_MEETING" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={() => setRl((n) => n + 1)} />}
               <p className="mb-2 mt-4 text-xs font-medium uppercase tracking-wide text-slate-400">Who joined (live)</p>
               <ParticipationPanel meetingId={m.id} />
             </div>

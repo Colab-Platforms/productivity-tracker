@@ -235,6 +235,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/admin", label: "Employees", ready: true, roles: ["HR", "ADMIN"], icon: I.team },
       { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["HR", "ADMIN"], icon: I.folder },
       { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
+      { href: "/dashboard/attendance-calendar", label: "Calendar", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.holidays },
       { href: "/dashboard/queries", label: "Query Desk", ready: true, roles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/today", label: "Productivity Tracker", ready: true, roles: ["HR", "ADMIN"], icon: I.today },
       { href: "/dashboard/approvals", label: "Tasks & Performance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.approvals },
@@ -460,7 +461,7 @@ export default function DashboardLayout({
               {group.items.map((item) => {
                 // Items that deep-link with ?tab= are never "active"; the
                 // plain page entry owns the highlight.
-                const active = !item.href.includes("?") && (pathname === item.href || (item.href === "/dashboard/team-attendance" && pathname === "/dashboard/attendance-calendar"));
+                const active = !item.href.includes("?") && pathname === item.href;
                 const Icon = item.icon;
 
                 if (!item.ready) {

@@ -18,7 +18,7 @@ import { managerIdsByTeam } from "../../lib/teamManagers.js";
 // Posting a notification must never break the task action that caused it: everything here is caught and logged.
 // ---------------------------------------------------------------------------
 
-export type TaskEvent = "assigned" | "proposed" | "submitted" | "proposalApproved" | "proposalReturned" | "approved" | "notAccepted";
+export type TaskEvent = "assigned" | "proposed" | "submitted" | "proposalApproved" | "proposalReturned" | "approved" | "notAccepted" | "reverted";
 
 const MANAGER_LINK = "/dashboard/approvals";
 const EMPLOYEE_LINK = "/dashboard/tasks";
@@ -54,7 +54,7 @@ async function send(recipients: string[], base: { type: string; title: string; b
   for (const [platformId, userIds] of byPlatform) await notifyUsers({ platformId, userIds, ...base });
 }
 
-export async function taskNotice(event: TaskEvent, taskId: string, actorId: string, extra: { note?: string | null; partial?: boolean; stamp?: number } = {}): Promise<void> {
+export async function taskNotice(event: TaskEvent, taskId: string, actorId: string, extra: { note?: string | null; partial?: boolean; stamp?: number; label?: string } = {}): Promise<void> {
   try {
     const task = await prisma.dailyTask.findUnique({
       where: { id: taskId },
@@ -87,6 +87,10 @@ export async function taskNotice(event: TaskEvent, taskId: string, actorId: stri
     }
     if (event === "approved") {
       return send([task.userId], { type: "TASK_APPROVED", title: "Your work was approved", body: `${by} approved: ${task.title}${extra.partial ? " (partially done)" : ""}${clip(extra.note)}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:graded:${stamp}`, data });
+    }
+    if (event === "reverted") {
+      // Every revert is its own event (a task can be reopened more than once), so the key carries the moment.
+      return send([task.userId], { type: "TASK_REVERTED", title: "Your task was reopened", body: `${by} reopened: ${task.title}${extra.label ? ` (${extra.label})` : ""}${clip(extra.note, 200)}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:reverted:${stamp}`, data });
     }
     if (event === "notAccepted") {
       return send([task.userId], { type: "TASK_REJECTED", title: "Your work was not accepted", body: `${by} marked it not done: ${task.title}${clip(extra.note)}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:graded:${stamp}`, data });

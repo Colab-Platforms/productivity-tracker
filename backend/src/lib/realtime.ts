@@ -29,7 +29,7 @@ import jwt from "jsonwebtoken";
 import { prisma } from "./prisma.js";
 import { getPinnedCompany } from "./deployment.js";
 
-export type TaskAction = "created" | "assigned" | "updated" | "status" | "approved" | "rejected" | "graded" | "deleted";
+export type TaskAction = "created" | "assigned" | "updated" | "status" | "approved" | "rejected" | "graded" | "reverted" | "deleted";
 
 // The ONLY payload that ever leaves the server for tasks. No titles, notes, names or counts.
 export type TaskChange = {

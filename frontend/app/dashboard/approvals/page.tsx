@@ -15,6 +15,7 @@ import { useTaskRealtime } from "@/lib/realtime";
 import { API_BASE } from "@/lib/api";
 import { todayIso } from "@/lib/time";
 import { useMe } from "../layout";
+import { RevertModal } from "./RevertModal";
 
 const API = API_BASE;
 
@@ -45,6 +46,8 @@ type Task = {
   completionNote: string | null;
   reviewNote: string | null;
   rejectionNote: string | null;
+  // Set when a manager sent the task back (Partially / Not fully completed). resubmitted = the employee finished it again.
+  reopened?: { type: string; label: string; remark: string; resubmitted: boolean } | null;
   personName: string | null;
   isCarriedOver: boolean;
   createdAt: string;
@@ -164,6 +167,8 @@ export default function ApprovalsPage() {
   const [busy, setBusy] = useState(false);
   const [rejecting, setRejecting] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const [revertFor, setRevertFor] = useState<Row | null>(null);
+  const [revertError, setRevertError] = useState("");
   const [assignTo, setAssignTo] = useState("");
   const [title, setTitle] = useState("");
   const [weight, setWeight] = useState("MEDIUM");
@@ -257,6 +262,21 @@ export default function ApprovalsPage() {
     }
   }
 
+  async function sendRevert(type: "PARTIAL" | "NOT_FULL", remark: string) {
+    if (!revertFor) return;
+    setBusy(true);
+    setRevertError("");
+    try {
+      await call<Queue>(`/tasks/review/${revertFor.id}/revert`, "POST", { type, remark });
+      setRevertFor(null);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setRevertError(e instanceof Error ? e.message : "That didn't work");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const allowed = ["MANAGER", "HR", "ADMIN"].includes(me?.role ?? "");
 
   if (me && !allowed) {
@@ -287,6 +307,10 @@ export default function ApprovalsPage() {
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           {error}
         </div>
+      )}
+
+      {revertFor && (
+        <RevertModal title={revertFor.title} who={personLabel(revertFor as RowLike)} busy={busy} error={revertError} onSubmit={(type, remark) => void sendRevert(type, remark)} onCancel={() => setRevertFor(null)} />
       )}
 
       {/* --- assign ------------------------------------------------------- */}
@@ -517,6 +541,9 @@ export default function ApprovalsPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-slate-900">{t.title}</p>
                 <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
+                {t.reopened && !t.reopened.resubmitted && (
+                  <p className="mt-1 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-900"><span className="font-medium">Reopened · {t.reopened.label}:</span> {t.reopened.remark}</p>
+                )}
               </div>
             </li>
           ))}
@@ -565,6 +592,16 @@ export default function ApprovalsPage() {
                 {t.weight.toLowerCase()}
               </span>
 
+              {t.reopened?.resubmitted && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Reopened (${t.reopened.label}) and finished again`}>resubmitted</span>}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { setRevertError(""); setRevertFor(t as Row); }}
+                title="Send this task back to In Progress with a remark"
+                className="shrink-0 rounded-xl border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-50 disabled:opacity-40"
+              >
+                Revert / Reopen
+              </button>
               {t.outcome ? (
                 <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${OUTCOME_CHIP[t.outcome]?.cls ?? ""}`}>
                   {OUTCOME_CHIP[t.outcome]?.label ?? String(t.outcome).toLowerCase()}

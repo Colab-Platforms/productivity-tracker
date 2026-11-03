@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
@@ -109,17 +108,11 @@ export default function AttendanceCalendarPage() {
     <div className="mx-auto page-7xl space-y-5 p-4 sm:p-8">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{isStaff ? "Attendance" : "My attendance calendar"}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{isStaff ? "Attendance calendar" : "My attendance calendar"}</h1>
           <p className="mt-1 text-sm text-slate-500">
             Each day is marked from the first check-in: Present up to {data?.rules.presentUntil ?? "09:45"}, Late up to {data?.rules.lateUntil ?? "10:15"}, Half day after that (company time).
           </p>
         </div>
-        {isStaff && (
-          <div className="flex rounded-xl bg-white p-1 text-sm shadow-[var(--shadow-card)]">
-            <Link href="/dashboard/team-attendance" className="rounded-lg px-3 py-1.5 font-medium text-slate-500 hover:text-slate-900">Live board</Link>
-            <span className="rounded-lg bg-indigo-600 px-3 py-1.5 font-medium text-white">Calendar</span>
-          </div>
-        )}
       </div>
 
       <div className={`${card} flex flex-wrap items-end gap-3 p-4`}>

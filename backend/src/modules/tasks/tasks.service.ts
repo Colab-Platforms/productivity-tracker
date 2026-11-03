@@ -5,6 +5,8 @@ import { prisma } from "../../lib/prisma.js";
 import { inPinnedCompany, onlyPinnedCompany } from "../../lib/deployment.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { detailsFor, recordEvent, selfTasksReady, shapeSelf } from "./tasks.self.js";
+import { auditNote } from "../../lib/auditContext.js";
+import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
 
 // ---------------------------------------------------------------------------
 // SCORING
@@ -213,6 +215,8 @@ function shape<
     assigned: t.assignedById !== null,
     project: projectName ?? null,
     projectId: t.teamId,
+    // Set when a manager sent this task back (Partially / Not fully completed): the kind, the remark, and whether it was finished again.
+    reopened: reopenedView(t),
   };
 }
 
@@ -269,15 +273,23 @@ export async function listTasks(userId: string) {
     myProjects(userId),
   ]);
 
+  // A task a manager reopened keeps its original day, which may be earlier than today, but it is unfinished work again: it is shown with
+  // the rest of the person's working tasks, flagged with the day it came from. It does not change today's score.
+  const reopenedOld = await prisma.dailyTask.findMany({
+    where: { userId, approvalStatus: "APPROVED", status: { in: ["PENDING", "IN_PROGRESS"] }, outcome: null, date: { lt: date }, reviewNote: { startsWith: REVERT_MARK_PREFIX } },
+    include: { team: { select: { name: true } } },
+    orderBy: { date: "asc" },
+  });
   const selfDetails = await detailsFor(rows.map((r) => r.id));
   const nowForSelf = new Date();
   const tasks = rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone) }));
   // True for a manager once the self-managed tables exist: his own tasks need no approval.
   const selfManagedMode = ctx.role === "MANAGER" && (await selfTasksReady());
 
-  const working = tasks.filter(
-    (t) => t.approvalStatus === "APPROVED" && t.status !== "COMPLETED"
-  );
+  const working = [
+    ...reopenedOld.map((t) => ({ ...shape(t, t.team?.name ?? null), selfManaged: false as const, fromEarlierDay: true })),
+    ...tasks.filter((t) => t.approvalStatus === "APPROVED" && t.status !== "COMPLETED").map((t) => ({ ...t, fromEarlierDay: false })),
+  ];
   const awaiting = tasks.filter((t) => t.approvalStatus === "PENDING");
   const score = scoreOf(rows);
 
@@ -857,6 +869,67 @@ export async function reviewTask(
 
   return listForApproval(managerId);
 }
+/**
+ * Send a Completed task back to In Progress, with a required remark and a kind (Partially / Not fully completed).
+ * Who: the people who can grade the task (its team's managers, the person it reports to, HR/Admin of the company), never the task's own owner.
+ * What is kept: the task, its details and the employee's submission note. What changes: status -> In Progress, the grade and the completion
+ * time are cleared (so the task no longer counts as completed), and the latest revert (kind + remark + who + when) is stored on the task.
+ * The permanent record (previous and new status, kind, who, when, remark, the original grade) goes to the immutable audit log.
+ * One transaction with a state check, so two presses cannot revert the same task twice.
+ */
+export async function revertTask(managerId: string, taskId: string, typeIn: unknown, remarkIn: unknown) {
+  const ctx = await userContext(managerId);
+  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
+
+  const type = String(typeIn ?? "") as RevertType;
+  if (!REVERT_TYPES.includes(type)) throw new Error("BAD_REVERT_TYPE");
+  const remark = checkRemark(remarkIn);
+  if ("error" in remark) throw new Error(remark.error);
+
+  const task = await prisma.dailyTask.findUnique({ where: { id: taskId } });
+  if (!task) throw new Error("NOT_FOUND");
+  // Nobody reverts their own task, whatever their role.
+  if (task.userId === managerId) throw new Error("NOT_ALLOWED");
+  await assertCanReviewTask(actor, task);
+
+  const selfManaged = (await detailsFor([taskId])).has(taskId);
+  const block = revertBlock({ approvalStatus: String(task.approvalStatus), status: String(task.status), reviewNote: task.reviewNote, selfManaged });
+  if (block) throw new Error(block);
+
+  const now = new Date();
+  const claimed = await prisma.dailyTask.updateMany({
+    // the state check is part of the write: if someone else reverted it a moment ago this matches nothing
+    where: { id: taskId, status: "COMPLETED" as never, approvalStatus: "APPROVED" as never },
+    data: {
+      status: "IN_PROGRESS" as never,
+      outcome: null,
+      completedAt: null,
+      reviewedById: managerId,
+      reviewedAt: now,
+      reviewNote: encodeRevertNote(type, remark.text),
+    },
+  });
+  if (claimed.count !== 1) throw new Error("ALREADY_REOPENED");
+
+  const managerName = await prisma.user.findUnique({ where: { id: managerId }, select: { firstName: true, lastName: true } });
+  auditNote({
+    platformId: task.platformId,
+    module: "Tasks",
+    action: "UPDATE",
+    recordType: "Task",
+    recordId: taskId,
+    targetUserId: task.userId,
+    summary: `Reopened task "${task.title}" (${REVERT_LABEL[type]}): ${String(task.status)} to IN_PROGRESS`,
+    before: { status: String(task.status), outcome: task.outcome ? String(task.outcome) : null, completedAt: task.completedAt, gradedById: task.reviewedById, gradedAt: task.reviewedAt, gradeNote: task.reviewNote, submissionNote: task.completionNote },
+    after: { status: "IN_PROGRESS", revertType: type, revertLabel: REVERT_LABEL[type], remark: remark.text, revertedById: managerId, revertedBy: managerName ? `${managerName.firstName} ${managerName.lastName}`.trim() : null, employeeId: task.userId, revertedAt: now },
+  });
+  emitTaskChange({ taskId, ownerId: task.userId, action: "reverted" });
+  await taskNotice("reverted", taskId, managerId, { note: remark.text, label: REVERT_LABEL[type], stamp: now.getTime() });
+
+  return listForApproval(managerId);
+}
+
 /** The task, only if it belongs to this person (used by routes that read one of your own tasks). */
 export async function ownTaskOrThrow(userId: string, taskId: string) {
   const task = await prisma.dailyTask.findUnique({ where: { id: taskId }, select: { id: true, userId: true } });

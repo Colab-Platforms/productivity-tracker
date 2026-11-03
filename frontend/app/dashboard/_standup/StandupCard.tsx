@@ -34,7 +34,9 @@ export function relevant(meetings: StandupMeeting[], now: number): StandupMeetin
   return meetings
     .filter((m) => {
       // Meetings you organize count too: the organizer can mark himself in and out like everyone else.
-      if (m.state === "cancelled" || m.state === "past") return false;
+      // A finished meeting is hidden, EXCEPT while you are still marked as in it: you must always be able to press End Huddle.
+      if (m.state === "cancelled") return false;
+      if (m.state === "past" && m.me?.state !== "IN_MEETING") return false;
       // An invitation waiting for your answer is always shown, tracked or not.
       if (m.canRespond && m.myResponse !== "DECLINED") return true;
       if (!m.tracked || !m.me) return false;

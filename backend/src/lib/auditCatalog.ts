@@ -60,6 +60,7 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/tasks\/review\/assign$/, module: "Tasks", action: "CREATE", summary: "Assigned a task" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/approve$/, module: "Tasks", action: (b) => verdict(b, "approve", [false], "REJECT", "APPROVE"), summary: (b) => (b?.approve === false ? "Sent a task proposal back" : "Approved a task proposal"), recordType: "Task" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/outcome$/, module: "Tasks", action: "UPDATE", summary: "Graded a task", recordType: "Task" },
+  { method: "POST", re: /^\/api\/tasks\/review\/:id\/revert$/, module: "Tasks", action: "UPDATE", summary: "Reopened a completed task", recordType: "Task" },
 
   { method: "POST", re: /^\/api\/admin\/employees\/(parse|preview|update\/preview)$/, module: "Employees", action: "OTHER", summary: "Previewed an employee file", skip: true },
   { method: "POST", re: /^\/api\/admin\/employees\/update\/commit$/, module: "Employees", action: "UPDATE", summary: "Bulk employee update" },

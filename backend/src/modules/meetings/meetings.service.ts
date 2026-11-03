@@ -186,11 +186,13 @@ export async function listMine(userId: string, f: { scope?: unknown; q?: unknown
   const scope = (["upcoming", "past", "cancelled"] as const).find((s) => s === f.scope) ?? "upcoming";
   const q = String(f.q ?? "").trim().slice(0, 100);
   const mine = { OR: [{ organizerId: userId }, { attendees: { some: { userId } } }] };
+  // A huddle you joined and have not ended stays in "upcoming" after its scheduled end, so the End Huddle button never disappears.
+  const stillIn = scope === "upcoming" ? await part.openMeetingIds(userId) : [];
   const where = {
     platformId: v.platformId,
     ...mine,
     ...(q ? { title: { contains: q, mode: "insensitive" as const } } : {}),
-    ...(scope === "upcoming" ? { status: "SCHEDULED" as const, endsAt: { gte: now } } : scope === "past" ? { status: "SCHEDULED" as const, endsAt: { lt: now } } : { status: "CANCELLED" as const }),
+    ...(scope === "upcoming" ? { status: "SCHEDULED" as const, ...(stillIn.length ? { AND: [{ OR: [{ endsAt: { gte: now } }, { id: { in: stillIn } }] }] } : { endsAt: { gte: now } }) } : scope === "past" ? { status: "SCHEDULED" as const, endsAt: { lt: now } } : { status: "CANCELLED" as const }),
   };
   const [rows, counts] = await Promise.all([
     prisma.meeting.findMany({ where, include, orderBy: { startsAt: scope === "upcoming" ? "asc" : "desc" }, take: 200 }),
