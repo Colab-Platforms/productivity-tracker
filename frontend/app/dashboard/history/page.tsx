@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { formatTime, isoDaysAgo } from "@/lib/time";
+import { formatTime, getPlatformTimezone, isoDaysAgo } from "@/lib/time";
+import { NO_REMARK, lateRemarkText } from "../reports/_team/lateRemark";
 import { Modal } from "../_employees/Modal";
 
 type DayTask = {
@@ -82,6 +83,8 @@ type Row = {
   wasLateLogin: boolean;
   lateByMinutes: number;
   lateRemark?: string | null;
+  arrival?: string;
+  arrivalMinutes?: number | null;
   huddleSeconds?: number;
   autoClosed: boolean;
   onLeave: boolean;
@@ -152,6 +155,7 @@ export default function HistoryPage() {
       "Meetings",
       "Breaks taken",
       "Late by (min)",
+      "Late remark",
       "Auto closed",
       "On leave",
       "Tasks done",
@@ -169,6 +173,7 @@ export default function HistoryPage() {
         hm(r.meetingSeconds),
         r.breakCount,
         r.wasLateLogin ? r.lateByMinutes : 0,
+        lateRemarkText({ arrival: r.arrival, loginAt: r.loginAt, arrivalMinutes: r.arrivalMinutes, lateReason: r.lateRemark }, getPlatformTimezone()),
         r.autoClosed ? "yes" : "no",
         r.onLeave ? r.leaveType ?? "yes" : "no",
         `${r.taskDone}/${r.taskTotal}`,
@@ -308,9 +313,9 @@ export default function HistoryPage() {
                               on leave
                             </span>
                           )}
-                          {r.wasLateLogin && r.lateRemark && (
-                            <span className="text-xs text-amber-700" title={r.lateRemark}>
-                              late remark: {r.lateRemark.length > 50 ? r.lateRemark.slice(0, 50) + "…" : r.lateRemark}
+                          {(r.arrival === "LATE" || r.arrival === "HALF_DAY") && (
+                            <span className={`text-xs ${r.lateRemark ? "text-amber-700" : "text-slate-400"}`} title={r.lateRemark ?? NO_REMARK}>
+                              {r.arrival === "HALF_DAY" ? "Half Day" : "Late"}: {r.lateRemark ? (r.lateRemark.length > 50 ? r.lateRemark.slice(0, 50) + "…" : r.lateRemark) : NO_REMARK}
                             </span>
                           )}
                           {r.autoClosed && (

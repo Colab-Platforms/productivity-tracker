@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { API_BASE } from "@/lib/api";
 import { todayIso } from "@/lib/time";
+import { plural } from "@/lib/plural";
 import { SearchSelect } from "../_employees/SearchSelect";
 import EmployeeActions from "../_employees/EmployeeActions";
 import Avatar, { PhotoEditor } from "../_photos/Avatar";
@@ -299,19 +300,23 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
+      {/* ONE toolbar row: filters and the people count on the left, the action buttons on the right. When the page is too narrow the
+          buttons drop to a second row as a whole (right-aligned) instead of the controls wrapping one by one. Every control is 40px tall. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
+        <div className="flex flex-[1_1_31rem] flex-wrap items-center gap-2.5">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search name, email or code…"
-          className="w-64 rounded-xl border border-indigo-200 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          aria-label="Search people"
+          className="h-10 min-w-[8rem] max-w-sm flex-1 basis-32 rounded-xl border border-indigo-200 bg-white px-3 text-sm outline-none focus:border-indigo-500"
         />
         {companies?.canSwitch && (
           <select
             aria-label="Company"
             value={companyId}
             onChange={(e) => setCompanyId(e.target.value)}
-            className="rounded-xl border border-indigo-200 px-3 py-2 text-sm"
+            className="h-10 w-40 shrink-0 truncate rounded-xl border border-indigo-200 bg-white px-3 text-sm"
           >
             <option value="all">{companies.all ? "All companies" : "All my companies"}</option>
             {companies.companies.map((c) => (
@@ -320,9 +325,10 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
           </select>
         )}
         <select
+          aria-label="Role"
           value={role}
           onChange={(e) => setRole(e.target.value)}
-          className="rounded-xl border border-indigo-200 px-3 py-2 text-sm"
+          className="h-10 w-28 shrink-0 truncate rounded-xl border border-indigo-200 bg-white px-3 text-sm"
         >
           <option value="">All roles</option>
           {options?.roles.map((r) => (
@@ -332,12 +338,13 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
           ))}
         </select>
 
-        <span className="text-sm text-slate-400">{people.length} people</span>
+        <span className="whitespace-nowrap text-sm text-slate-400">{plural(people.length, "person", "people")}</span>
+        </div>
 
         {/* Add one person (full form) or many (Excel / CSV import). Editing an
             existing person still uses the drawer below. */}
         <EmployeeActions
-          className="ml-auto"
+          className="ml-auto shrink-0"
           onDone={(message) => {
             onDone(message);
             void load();

@@ -7,9 +7,11 @@ import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
 import { useRealtime } from "@/lib/realtime";
 import { HistoryModal, InviteResponse, JoinControl, ParticipationPanel, PastRecord, type TrackedFields } from "./_participation/Participation";
+import HuddleOverview from "../_standup/HuddleOverview";
+import { forTab, tabCounts, tabFromUrl, tabsFor, type TabKey } from "./tabs";
 
 // ---------------------------------------------------------------------------
-// MEETINGS
+// TEAM HUDDLE (the Meetings page, one section for everything)
 // Scheduled meetings with a link the organizer pastes (Google Meet, Teams, Zoom or any
 // https link). Avatar HRMS does not create the meeting at those services.
 // You see the meetings you organize or are invited to. HR/Admin also get an overview
@@ -50,8 +52,14 @@ function useApi<T>(path: string | null, reload: number) {
 function MeetingsInner() {
   const me = useMe();
   const isHr = me?.role === "HR" || me?.role === "ADMIN";
-  const linked = useSearchParams().get("id");
-  const [tab, setTab] = useState<"upcoming" | "past" | "cancelled" | "overview">("upcoming");
+  const params = useSearchParams();
+  const linked = params.get("id");
+  // A link like /dashboard/meetings?tab=participation opens that tab (if this person has it). Clicking a tab wins until the link changes.
+  const urlTab = tabFromUrl(params.get("tab"), me?.role);
+  const [picked, setPicked] = useState<{ tab: TabKey; forUrl: TabKey | null } | null>(null);
+  const tab: TabKey = picked && picked.forUrl === urlTab ? picked.tab : (urlTab ?? "upcoming");
+  const setTab = (k: TabKey) => setPicked({ tab: k, forUrl: urlTab });
+  const [historyKind, setHistoryKind] = useState<"past" | "cancelled">("past");
   const [q, setQ] = useState("");
   const [dq, setDq] = useState("");
   const [reload, setReload] = useState(0);
@@ -75,29 +83,38 @@ function MeetingsInner() {
   // Somebody joined or ended an in-person meeting, or a record was corrected: refresh by itself.
   useRealtime(["meetings:changed"], () => setReload((n) => n + 1));
 
-  const scope = tab === "overview" ? "upcoming" : tab;
-  const list = useApi<List>(tab === "overview" ? null : `/meetings?scope=${scope}${dq ? `&q=${encodeURIComponent(dq)}` : ""}`, reload);
+  // Upcoming, Ongoing and Invitations are filters over the "upcoming" list the server already sends; History is the past (or cancelled) list.
+  const noList = tab === "participation" || tab === "overview";
+  const scope = tab === "history" ? historyKind : "upcoming";
+  const list = useApi<List>(noList ? null : `/meetings?scope=${scope}${dq ? `&q=${encodeURIComponent(dq)}` : ""}`, reload);
   const counts = useApi<List>("/meetings?scope=upcoming", reload);
   const [overScope, setOverScope] = useState<"upcoming" | "past" | "cancelled">("upcoming");
   const over = useApi<Oversight>(tab === "overview" && isHr ? `/meetings/oversight?scope=${overScope}` : null, reload);
   const tz = list.data?.timezone ?? counts.data?.timezone ?? over.data?.timezone ?? "Asia/Kolkata";
   const c = counts.data?.counts;
-  const tabs: ["upcoming" | "past" | "cancelled" | "overview", string][] = [
-    ["upcoming", `Upcoming${c ? ` (${c.upcoming})` : ""}`], ["past", `Past${c ? ` (${c.past})` : ""}`], ["cancelled", `Cancelled${c ? ` (${c.cancelled})` : ""}`],
-    ...(isHr ? ([["overview", "Company overview"]] as ["overview", string][]) : []),
-  ];
+  const tc = counts.data ? tabCounts(counts.data.meetings) : null;
+  const tabLabels: Record<TabKey, string> = {
+    upcoming: `Upcoming${tc ? ` (${tc.upcoming})` : ""}`,
+    ongoing: `Ongoing${tc ? ` (${tc.ongoing})` : ""}`,
+    invitations: `Invitations${tc ? ` (${tc.invitations})` : ""}`,
+    history: `History${c ? ` (${c.past})` : ""}`,
+    participation: "Participation",
+    overview: "Company overview",
+  };
+  const tabs = tabsFor(me?.role).map((k) => [k, tabLabels[k]] as [TabKey, string]);
+  const shown = list.data ? (tab === "history" ? list.data.meetings : forTab(list.data.meetings, tab)) : null;
   const canCreate = counts.data?.canCreate ?? false;
 
   return (
     <div className="page-fluid space-y-6 p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Meetings</h1>
-          <p className="mt-1 text-sm text-slate-500">Meetings you organize or are invited to. Join with the link the organizer added.</p>
+          <h1 className="text-2xl font-semibold text-slate-900">Team Huddle</h1>
+          <p className="mt-1 text-sm text-slate-500">Meetings and huddles you organize or are invited to: invitations, joining, who attended and for how long.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setShowHistory(true)} className="rounded-xl border border-indigo-100 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50" title="Your record in in-person meetings">My participation history</button>
-          {canCreate && <button onClick={() => setEditing("new")} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700">New meeting</button>}
+          {canCreate && <button onClick={() => setEditing("new")} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700">Schedule meeting</button>}
         </div>
       </div>
 
@@ -105,20 +122,30 @@ function MeetingsInner() {
         {tabs.map(([k, label]) => (
           <button key={k} onClick={() => { setTab(k); setNotice(""); }} className={`rounded-xl px-4 py-2 text-sm font-medium ${tab === k ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-indigo-50"}`}>{label}</button>
         ))}
-        {tab !== "overview" && <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by title" aria-label="Search meetings" className="ml-auto w-56 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm" />}
+        {!noList && <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by title" aria-label="Search meetings" className="ml-auto w-56 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm" />}
       </div>
 
       {notice && <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</p>}
 
-      {tab !== "overview" && (
+      {tab === "history" && (
+        <div className="flex gap-2" role="group" aria-label="History filter">
+          {([["past", "Completed"], ["cancelled", "Cancelled"]] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setHistoryKind(k)} aria-pressed={historyKind === k} className={`rounded-full px-3.5 py-1.5 text-xs font-medium ${historyKind === k ? "bg-indigo-100 text-indigo-700" : "bg-white text-slate-500 hover:bg-indigo-50"}`}>{label}{c ? ` (${k === "past" ? c.past : c.cancelled})` : ""}</button>
+          ))}
+        </div>
+      )}
+
+      {tab === "participation" && me?.role === "MANAGER" && <HuddleOverview />}
+
+      {!noList && (
         <section className={`${card} p-5`}>
           {list.error && <p className="mb-3 flex items-center justify-between rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">Couldn&apos;t load meetings: {list.error}<button onClick={() => setReload((n) => n + 1)} className="ml-3 rounded-lg bg-white px-3 py-1 text-xs font-medium ring-1 ring-red-200">Retry</button></p>}
           {!list.data && !list.error && <div className="space-y-2" aria-busy="true">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-20" />)}</div>}
-          {list.data && list.data.meetings.length === 0 && (
-            <p className="rounded-xl bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">{dq ? "No meetings match your search." : tab === "upcoming" ? "No upcoming meetings." : tab === "past" ? "No past meetings." : "No cancelled meetings."}</p>
+          {shown && shown.length === 0 && (
+            <p className="rounded-xl bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">{dq ? "No meetings match your search." : tab === "upcoming" ? "No upcoming meetings." : tab === "ongoing" ? "Nothing is happening right now." : tab === "invitations" ? "No invitations waiting for your answer." : historyKind === "cancelled" ? "No cancelled meetings." : "No past meetings yet."}</p>
           )}
           <div className="divide-y divide-indigo-100">
-            {list.data?.meetings.map((m) => (
+            {shown?.map((m) => (
               <div key={m.id} className="flex flex-wrap items-center justify-between gap-3 py-4">
                 <div className="flex min-w-0 items-center gap-4">
                   <div className="w-14 shrink-0 rounded-xl bg-indigo-50 py-2 text-center">
@@ -139,7 +166,7 @@ function MeetingsInner() {
                   {m.meetingUrl && (m.state === "upcoming" || m.state === "ongoing") && (
                     <a href={m.meetingUrl} target="_blank" rel="noopener noreferrer" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Join meeting</a>
                   )}
-                  {m.canEnd && <EndInline id={m.id} onDone={() => { setNotice("Meeting ended. It now shows under Past."); setReload((n) => n + 1); }} />}
+                  {m.canEnd && <EndInline id={m.id} onDone={() => { setNotice("Meeting ended. It now shows under History."); setReload((n) => n + 1); }} />}
                   <button onClick={() => setOpenId(m.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Details</button>
                 </div>
                 {m.myStatus && m.state !== "cancelled" && m.state !== "past" && (

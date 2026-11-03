@@ -248,10 +248,9 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/tasks", label: "Daily Tasks", ready: true, icon: I.tasks },
       { href: "/dashboard/history", label: "My History", ready: true, icon: I.history },
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
-      { href: "/dashboard/huddles", label: "Team Huddle", ready: true, roles: ["MANAGER"], icon: I.huddle },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },
       { href: "/dashboard/leave", label: "Leave", ready: true, icon: I.holidays },
-      { href: "/dashboard/meetings", label: "Meetings", ready: true, icon: I.video },
+      { href: "/dashboard/meetings", label: "Team Huddle", ready: true, icon: I.huddle },
       { href: "/dashboard/policies", label: "Policies", ready: true, icon: I.shield },
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, icon: I.receipt },
       { href: "/dashboard/queries", label: "Complaint Centre", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
@@ -589,7 +588,7 @@ export default function DashboardLayout({
             <div className="ml-auto flex shrink-0 items-center gap-0.5"><ThemeIconButton /><Bell /></div>
           </header>
 
-          <div className="animate-in">{children}</div>
+          <main className="animate-in">{children}</main>
         </div>
       </div>
       </NotificationsProvider>

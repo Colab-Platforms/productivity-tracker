@@ -14,8 +14,11 @@ import { useEffect, useRef, useState } from "react";
 import { useTaskRealtime } from "@/lib/realtime";
 import { API_BASE } from "@/lib/api";
 import { todayIso } from "@/lib/time";
+import { plural } from "@/lib/plural";
 import { useMe } from "../layout";
 import { RevertModal } from "./RevertModal";
+import { EmployeePicker } from "./EmployeePicker";
+import { buildPeople } from "./people";
 
 const API = API_BASE;
 
@@ -202,20 +205,8 @@ export default function ApprovalsPage() {
   for (const t of inScope) counts[bucketOf(t)] += 1;
   const listed = inScope.filter((t) => bucketOf(t) === tab);
 
-  // One chip per person who has tasks in these dates (plus the selected person, even if they have none).
-  const chipList = (() => {
-    const map = new Map<string, { id: string; name: string; code: string | null; count: number }>();
-    for (const t of rows) {
-      const c = map.get(t.userId) ?? { id: t.userId, name: t.who, code: t.employeeCode, count: 0 };
-      c.count += 1;
-      map.set(t.userId, c);
-    }
-    if (person && !map.has(person)) {
-      const m = queue?.members.find((x) => x.id === person);
-      map.set(person, { id: person, name: m?.name ?? "Unknown", code: m?.employeeCode ?? null, count: 0 });
-    }
-    return Array.from(map.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-  })();
+  // The whole reporting team for the dropdown, each with the number of tasks they have in the dates being viewed.
+  const pickerPeople = buildPeople(queue?.members ?? [], rows, person);
 
   const range = rangeFor(preset, today, customFrom, customTo);
   const path = range ? `/tasks/review/queue?from=${range.from}&to=${range.to}` : "/tasks/review/queue";
@@ -295,7 +286,7 @@ export default function ApprovalsPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Team tasks</h1>
         <p className="mt-1 text-sm text-slate-500">
           Agree the work before it starts, grade it once it's done.
-          {queue ? ` ${queue.teamSize} people in your teams.` : ""}
+          {queue ? ` ${plural(queue.teamSize, "person", "people")} in your teams.` : ""}
         </p>
         <p className={"mt-1.5 inline-flex items-center gap-1.5 text-xs " + (connected ? "text-emerald-600" : "text-amber-600")} aria-live="polite">
           <span className={"h-1.5 w-1.5 rounded-full " + (connected ? "bg-emerald-500" : "bg-amber-400")} />
@@ -316,44 +307,9 @@ export default function ApprovalsPage() {
       {/* --- assign ------------------------------------------------------- */}
       {/* --- who, what state, when --------------------------------------- */}
       <section className="rounded-2xl rounded-b-none border border-b-0 border-indigo-100 bg-white">
-        {/* people */}
-        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-          {[{ id: "", name: "Everyone", code: null as string | null, count: rows.length }, ...chipList].map(
-            (c) => {
-              const dup = chipList.filter((x) => x.name === c.name).length > 1;
-              const label = c.id && dup && c.code ? `${c.name} · ${c.code}` : c.name;
-              const active = person === c.id;
-              const initials = c.name
-                .split(" ")
-                .map((w) => w[0])
-                .slice(0, 2)
-                .join("")
-                .toUpperCase();
-              return (
-                <button
-                  key={c.id || "everyone"}
-                  onClick={() => setPerson(c.id)}
-                  className={`flex items-center gap-2 rounded-full border py-1.5 pl-1.5 pr-3.5 text-sm transition ${
-                    active
-                      ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                      : "border-indigo-100 bg-white text-slate-700 hover:bg-indigo-50/60"
-                  }`}
-                >
-                  <span
-                    className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold text-white ${
-                      active ? "bg-indigo-600" : "bg-slate-400"
-                    }`}
-                  >
-                    {initials}
-                  </span>
-                  <span className="font-medium">{label}</span>
-                  <span className={active ? "text-indigo-400" : "text-slate-400"}>
-                    {c.count}
-                  </span>
-                </button>
-              );
-            }
-          )}
+        {/* who: one searchable dropdown (default Everyone) instead of a row of name chips */}
+        <div className="px-4 py-3">
+          <EmployeePicker people={pickerPeople} total={rows.length} value={person} onChange={setPerson} />
         </div>
 
         {/* state + when */}

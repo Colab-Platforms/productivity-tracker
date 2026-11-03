@@ -5,6 +5,7 @@ import { apiGet } from "@/lib/api";
 import { clockTime, dayLabel, dayShort, downloadCsv, hmFromHours, hmFromMinutes } from "./format";
 import { PRESETS, rangeFor, type Preset } from "./ranges";
 import { downloadAttendanceXlsx, type Cell } from "./xlsx";
+import { ARRIVAL_CHIP, ARRIVAL_LABEL, lateDetail, lateRemarkText } from "./lateRemark";
 
 // Attendance report: one row per person per day for a date range.
 // Data: GET /team-attendance/attendance. Finished days use the same attendance engine as salary and Reports, so the
@@ -19,6 +20,8 @@ type Row = {
   status: string; statusLabel: string; leaveType: string | null; holidayName: string | null;
   lateMinutes: number | null; earlyDepartureMinutes: number | null; tasksCompleted: number;
   tasksPlanned: number | null; tasksApproved: number | null; // null = no tasks that day (exported blank)
+  // Late Remark: the first check-in against the 09:45 / 10:15 arrival rule, the late duration, and the reason the person gave
+  arrival?: string; arrivalMinutes?: number | null; arrivalLimit?: string; lateReason?: string | null; correctedBy?: string | null;
 };
 type Report = {
   generatedAt: string; timezone: string; today: string; from: string; to: string;
@@ -26,8 +29,10 @@ type Report = {
   kpis: { employees: number; present: number; halfDay: number; absent: number; notYet: number; workingDays: number; attendancePct: number | null; totalWorkedHours: number; avgWorkedHours: number | null };
   rows: Row[];
 };
-type Filters = { userId: string; teamId: string; shift: string; status: string };
-const NO_FILTERS: Filters = { userId: "", teamId: "", shift: "", status: "" };
+type Filters = { userId: string; teamId: string; shift: string; status: string; arrival: string };
+const NO_FILTERS: Filters = { userId: "", teamId: "", shift: "", status: "", arrival: "" };
+// The Late Remark filter: server values and their labels.
+const ARRIVAL_FILTERS: [string, string][] = [["LATE_OR_HALF", "Late and Half Day"], ["LATE", "Late"], ["HALF_DAY", "Half Day"], ["ON_TIME", "On time"], ["ABSENT", "Absent"]];
 
 const STATUSES: [string, string][] = [["PRESENT", "Present"], ["HALF_DAY", "Half day"], ["ABSENT", "Absent"], ["NOT_CLOCKED_IN", "Not clocked in yet"], ["LEAVE", "Leave"], ["HOLIDAY", "Holiday"], ["WEEK_OFF", "Week-off"], ["NOT_TRACKED", "Not tracked"]];
 const STATUS_STYLE: Record<string, string> = {
@@ -104,6 +109,7 @@ export default function AttendanceReport() {
     if (applied.teamId) qs.set("teamId", applied.teamId);
     if (applied.shift) qs.set("shift", applied.shift);
     if (applied.status) qs.set("status", applied.status);
+    if (applied.arrival) qs.set("arrival", applied.arrival);
     try {
       const data = await apiGet<Report>(`/team-attendance/attendance?${qs.toString()}`);
       setReport(data);
@@ -152,13 +158,13 @@ export default function AttendanceReport() {
 
   // One table for both downloads, so the CSV and the Excel file always agree. The task columns run Planned,
   // Approved, Pending, then "Tasks completed", then Remarks; Pending Tasks = planned - completed (a live formula in the Excel file).
-  const EXPORT_HEADER = ["Employee ID", "Employee", "Team", "Date", "Shift", "Check-in", "Check-out", "Working", "Productive", "Break", "Washroom", "Break over allowance", "Status", "Late arrival", "Early departure", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks", "Tasks completed", "Remarks"];
+  const EXPORT_HEADER = ["Employee ID", "Employee", "Team", "Date", "Shift", "Check-in", "Check-out", "Working", "Productive", "Break", "Washroom", "Break over allowance", "Status", "Late arrival", "Early departure", "Late Remark", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks", "Tasks completed", "Remarks"];
   function exportRows(): Cell[][] {
     return rows.map((r) => [
       r.employeeCode, r.name, r.teamName, r.date, r.shiftName ? `${r.shiftName}${r.shiftStart && r.shiftEnd ? ` (${r.shiftStart}-${r.shiftEnd})` : ""}` : "Not assigned",
       clockTime(r.loginAt, tz), r.stillWorking ? "Working" : clockTime(r.logoutAt, tz), hmFromHours(r.workedHours), hmFromHours(r.productiveHours), hmFromHours(r.breakHours), hmFromHours(r.washroomHours ?? null),
       r.breakHours !== null && r.breakHours * 3600 > r.breakBudgetSeconds ? hmFromHours(r.breakHours - r.breakBudgetSeconds / 3600) : "",
-      r.statusLabel, hmFromMinutes(r.lateMinutes), hmFromMinutes(r.earlyDepartureMinutes),
+      r.statusLabel, hmFromMinutes(r.lateMinutes), hmFromMinutes(r.earlyDepartureMinutes), lateRemarkText(r, tz),
       r.tasksPlanned, r.tasksApproved, r.tasksPlanned === null ? null : r.tasksPlanned - r.tasksCompleted, r.tasksCompleted, remarks(r),
     ]);
   }
@@ -236,6 +242,13 @@ export default function AttendanceReport() {
             <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} className={`${select} mt-1`}>
               <option value="">All</option>
               {STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </label>
+          <label className="block w-52 text-xs text-slate-500" title="Check-in up to 09:45 is on time, up to 10:15 is Late, after that is Half Day">
+            Late remark
+            <select value={draft.arrival} onChange={(e) => setDraft({ ...draft, arrival: e.target.value })} className={`${select} mt-1`}>
+              <option value="">All</option>
+              {ARRIVAL_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </label>
           <button
@@ -327,6 +340,7 @@ export default function AttendanceReport() {
                     <th className={`${th} text-right`}>Productive</th>
                     <th className={`${th} text-right`}>Break</th>
                     <th className={`${th} text-right`} title="Washroom time is tracked on its own. It is not break time and does not use the break allowance.">Washroom</th>
+                    <th className={th} title="First check-in against the 09:45 / 10:15 arrival rule">Late remark</th>
                     <th className={th}>Status</th>
                     <th className={th}>Remarks</th>
                   </tr>
@@ -353,6 +367,15 @@ export default function AttendanceReport() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-600">{r.washroomHours ? hmFromHours(r.washroomHours) : <span className="text-slate-300">—</span>}</td>
+                        <td className="min-w-48 px-4 py-3">
+                          {r.arrival ? (
+                            <>
+                              <span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${ARRIVAL_CHIP[r.arrival] ?? "bg-slate-100 text-slate-600"}`}>{ARRIVAL_LABEL[r.arrival] ?? r.arrival}</span>
+                              {lateDetail(r, tz) && <p className={`mt-1 text-xs ${r.lateReason ? "text-slate-600" : "text-slate-400"}`}>{lateDetail(r, tz)}</p>}
+                              {r.correctedBy && r.loginAt && <p className="mt-0.5 text-xs text-slate-400">Corrected by {r.correctedBy}</p>}
+                            </>
+                          ) : "—"}
+                        </td>
                         <td className="px-4 py-3">
                           <span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[r.status] ?? "bg-slate-100 text-slate-600"}`}>{r.statusLabel}</span>
                         </td>

@@ -4,6 +4,7 @@ import { managedByWhere } from "../../lib/teamManagers.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { cleanRemark, lateRemarksReady, LateRemarkRequired, remarksBySession } from "./lateRemarks.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
+import { calendarStatus, minutesAfterLimit } from "../team-attendance/arrival.logic.js";
 import { DISCUSSION_PREFIX, REMARK_MAX, REMARK_MIN, awayOf, awayRows, isCountedBreak, isDiscussion, isWashroom, splitAwayTime } from "./activityClass.js";
 
 const DEFAULTS = {
@@ -947,6 +948,9 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
       wasLateLogin: s.wasLateLogin,
       lateByMinutes: s.lateByMinutes,
       lateRemark: remarkOf.get(s.id) ?? null,
+      // Arrival against the 09:45 / 10:15 rule (a view only, the existing late fields are unchanged)
+      arrival: (() => { const c = calendarStatus({ engineStatus: "PRESENT", loginAt: s.loginAt, isToday: false, timezone: ctx.timezone }); return c === "PRESENT" ? "ON_TIME" : c; })(),
+      arrivalMinutes: minutesAfterLimit(s.loginAt, ctx.timezone),
       huddleSeconds: huddleMap.get(`${userId}|${k}`) ?? 0,
       autoClosed: s.autoClosed,
       onLeave: leaveByDate.has(k),

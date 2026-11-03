@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
 import { Modal } from "../../_employees/Modal";
+import { opensPhrase } from "../when";
 
 // ---------------------------------------------------------------------------
 // IN-PERSON MEETING PARTICIPATION (screens)
@@ -197,7 +198,7 @@ export function JoinControl({ meetingId, endsAt, tz, f, onChanged, compact = fal
     );
   }
   if (w?.reason === "TOO_EARLY") {
-    return <p className={`${box} bg-slate-50 text-sm text-slate-600`}>You can press “Join Huddle” from {timeFmt(w.opensAt, tz)} (15 minutes before it starts).</p>;
+    return <p className={`${box} bg-slate-50 text-sm text-slate-600`}>You can press “Join Huddle” {opensPhrase(w.opensAt, tz)} (15 minutes before it starts).</p>;
   }
   if (w?.reason === "CLOSED") {
     return <p className={`${box} bg-slate-50 text-sm text-slate-600`}>Joining has closed because the expected end has passed. If you were there, ask the organizer to record it.</p>;

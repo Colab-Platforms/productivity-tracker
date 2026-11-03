@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import { plural } from "@/lib/plural";
 import { useMe } from "../layout";
 
 // ---------------------------------------------------------------------------
@@ -166,7 +167,7 @@ export default function ProjectsPage() {
           {byCompany.length} companies
         </span>
         <span className="rounded-full border border-indigo-100 bg-white px-3 py-1 text-xs text-slate-600">
-          {totalPeople} people assigned
+          {plural(totalPeople, "person", "people")} assigned
         </span>
       </div>
 

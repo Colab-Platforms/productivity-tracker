@@ -35,10 +35,10 @@ export function LateRemarkModal({ minutes, busy, error, onSubmit, onCancel }: { 
           rows={3}
           autoFocus
           placeholder="For example: traffic on the way, a doctor's visit, a power cut"
-          className="mt-1 w-full rounded-xl border border-indigo-100 bg-white px-3 py-2.5 text-sm text-slate-800"
+          className="mt-1 block w-full resize-y break-words rounded-xl border border-indigo-100 bg-white px-3 py-2.5 text-sm text-slate-800 [overflow-wrap:anywhere]"
         />
       </label>
-      <p className="mt-1 text-xs text-slate-400">{trimmed.length}/{MAX} · at least {MIN} characters. The late time still counts; this only records why.</p>
+      <p className="mt-1 text-xs text-slate-400">{text.length}/{MAX} · at least {MIN} characters. The late time still counts; this only records why.</p>
       {error && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
     </Modal>
   );

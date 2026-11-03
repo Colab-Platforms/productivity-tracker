@@ -312,7 +312,7 @@ export async function create(userId: string, body: Fields) {
     summary: `Scheduled "${t}" with ${attendees.length} ${attendees.length === 1 ? "person" : "people"}`,
     after: { title: t, startsAt, endsAt, provider: link?.provider ?? null, attendees: attendees.length, inPerson, lateAfterMinutes: inPerson ? lateAfter : undefined },
   });
-  await tell(v, created, attendees, "invited", inPerson ? "This is a Team Huddle. Accept the invitation in Meetings; when you are in the room, press \"Join Huddle\" and later \"End Huddle\"." : null);
+  await tell(v, created, attendees, "invited", inPerson ? "This is a Team Huddle. Accept the invitation in Team Huddle; when you are in the room, press \"Join Huddle\" and later \"End Huddle\"." : null);
   return { id: created.id, invited: attendees.length };
 }
 
@@ -371,7 +371,7 @@ export async function update(userId: string, id: string, body: Fields) {
   await tell(v, meetingNow, added, "invited", null);
   if (changedForAttendees) {
     const stay = await prisma.user.findMany({ where: { id: { in: [...nextIds].filter((x) => before.has(x)) } }, select: { id: true, firstName: true, email: true } });
-    await tell(v, meetingNow, stay, "updated", makeTracked ? "It is now an in-person meeting. When you are in the room, open Meetings and press \"I'm in the Meeting\"." : null);
+    await tell(v, meetingNow, stay, "updated", makeTracked ? "It is now an in-person meeting. When you are in the room, open Team Huddle and press \"I'm in the Meeting\"." : null);
   }
   if (removedIds.length) {
     const gone = await prisma.user.findMany({ where: { id: { in: removedIds } }, select: { id: true, firstName: true, email: true } });

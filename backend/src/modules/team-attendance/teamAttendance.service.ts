@@ -14,6 +14,8 @@ import { huddleBreakdowns } from "../meetings/participation.service.js";
 import { awayRows, isDiscussion, splitAwayTime } from "../tracker/activityClass.js";
 import { photoStamps } from "../photos/photos.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
+import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
 
 // Where no team config exists these match what Live Team already assumes.
@@ -307,6 +309,8 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
 // The engine works a month at a time, so a range is read month by month and trimmed to the range.
 // ---------------------------------------------------------------------------------------------
 const MAX_RANGE_DAYS = 93;
+// The "Late Remark" filter. LATE_OR_HALF = Late and Half Day together.
+const ARRIVAL_FILTERS = new Set(["ON_TIME", "LATE", "HALF_DAY", "LATE_OR_HALF", "ABSENT"]);
 const STATUS_VALUES = new Set(["PRESENT", "HALF_DAY", "ABSENT", "LEAVE", "HOLIDAY", "WEEK_OFF", "NOT_TRACKED", "NOT_CLOCKED_IN"]);
 const IST_OFFSET_MS = 330 * 60 * 1000;
 
@@ -322,7 +326,7 @@ function istInstant(dateIso: string, hhmm: string): Date | null {
 
 export async function getAttendanceReport(
   viewerId: string,
-  q: { from?: string; to?: string; userId?: string; teamId?: string; shift?: string; status?: string }
+  q: { from?: string; to?: string; userId?: string; teamId?: string; shift?: string; status?: string; arrival?: string }
 ) {
   const viewer = await getViewer(viewerId);
   const timezone = viewer.platform.timezone;
@@ -332,10 +336,16 @@ export async function getAttendanceReport(
   if (to.getTime() < from.getTime()) throw new Error("BAD_RANGE");
   if ((to.getTime() - from.getTime()) / 86400000 + 1 > MAX_RANGE_DAYS) throw new Error("RANGE_TOO_LONG");
   if (q.status && !STATUS_VALUES.has(q.status)) throw new Error("BAD_STATUS");
+  if (q.arrival && !ARRIVAL_FILTERS.has(q.arrival)) throw new Error("BAD_ARRIVAL");
   const fromIso = from.toISOString().slice(0, 10);
   const toIso = to.toISOString().slice(0, 10);
 
-  const allowed = await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId });
+  // HR/Admin see the companies they are authorized for (assigned ones included); a manager sees the people who report to them.
+  const role = String(viewer.role);
+  const allowed =
+    role === "HR" || role === "ADMIN"
+      ? (await prisma.user.findMany({ where: { ...scopeWhere(await accessFor(viewerId)), status: { in: ["ACTIVE", "INVITED"] } }, select: { id: true } })).map((u) => u.id)
+      : await visibleUserIds({ id: viewer.id, role, platformId: viewer.platformId });
   const people = allowed.length
     ? await prisma.user.findMany({
         where: { id: { in: allowed }, status: { notIn: ["SUSPENDED", "EXITED"] } },
@@ -344,6 +354,7 @@ export async function getAttendanceReport(
           firstName: true,
           lastName: true,
           employeeCode: true,
+          platform: { select: { timezone: true } },
           shift: { select: { name: true, startTime: true, endTime: true, spansMidnight: true } },
           teamMemberships: {
             where: { isActive: true },
@@ -359,7 +370,7 @@ export async function getAttendanceReport(
   const meta = people.map((p) => {
     const team = p.teamMemberships[0]?.team ?? null;
     const shift = p.shift ?? team?.shift ?? null;
-    return { id: p.id, name: `${p.firstName} ${p.lastName}`.trim(), code: p.employeeCode, teamId: team?.id ?? null, teamName: team?.name ?? null, shift, breakBudgetSeconds: (team?.config?.breakBudgetMinutes ?? DEFAULT_BREAK_BUDGET_MINUTES) * 60 };
+    return { id: p.id, tz: p.platform.timezone, name: `${p.firstName} ${p.lastName}`.trim(), code: p.employeeCode, teamId: team?.id ?? null, teamName: team?.name ?? null, shift, breakBudgetSeconds: (team?.config?.breakBudgetMinutes ?? DEFAULT_BREAK_BUDGET_MINUTES) * 60 };
   });
   const options = {
     people: meta.map((m) => ({ id: m.id, name: m.name, code: m.code })),
@@ -398,6 +409,21 @@ export async function getAttendanceReport(
       _count: { _all: true },
     }),
   ]);
+  // What explains a late arrival: the reason the person typed at clock-in, and whether HR corrected the day. Batched, optional tables degrade to nothing.
+  const sessionRows = await prisma.workSession.findMany({ where: { userId: { in: ids }, date: { gte: from, lte: to } }, select: { id: true, userId: true, date: true } });
+  const sessionKey = new Map(sessionRows.map((s) => [`${s.userId}|${s.date.toISOString().slice(0, 10)}`, s.id]));
+  const lateReasonOf = await remarksBySession(sessionRows.map((s) => s.id));
+  const correctedByOf = new Map<string, string>();
+  if (sessionRows.length) {
+    const audits = await prisma.attendanceCorrectionAudit
+      .findMany({
+        where: { workSessionId: { in: sessionRows.map((s) => s.id) }, action: "APPLIED" },
+        orderBy: { createdAt: "desc" },
+        select: { workSessionId: true, actedBy: { select: { firstName: true, lastName: true } } },
+      })
+      .catch(() => [] as { workSessionId: string | null; actedBy: { firstName: string; lastName: string } }[]);
+    for (const a of audits) if (a.workSessionId && !correctedByOf.has(a.workSessionId)) correctedByOf.set(a.workSessionId, `${a.actedBy.firstName} ${a.actedBy.lastName}`.trim());
+  }
   const taskCount = new Map<string, number>(); // finished and approved (the existing "Tasks completed")
   const taskApproved = new Map<string, number>(); // approved by a manager
   const taskPlanned = new Map<string, number>(); // planned for the day: approved or still waiting for approval
@@ -466,6 +492,17 @@ export async function getAttendanceReport(
       }
       if (q.status && status !== q.status) continue;
 
+      // "Late Remark": the first check-in against the 09:45 / 10:15 arrival rule (the calendar's rule), in the person's company time. A view only:
+      // the existing Status and Late columns above keep their own rules. Absent only after the day is over; today is "Not in yet".
+      const arrivalAt = d.loginAt ? new Date(d.loginAt) : null;
+      const arrivalCode = calendarStatus({ engineStatus: d.status, loginAt: arrivalAt, isToday: d.date === todayIso, timezone: who.tz });
+      const arrival = arrivalCode === "PRESENT" ? "ON_TIME" : arrivalCode;
+      if (q.arrival) {
+        const want = q.arrival === "LATE_OR_HALF" ? arrival === "LATE" || arrival === "HALF_DAY" : arrival === q.arrival;
+        if (!want) continue;
+      }
+      const sid = sessionKey.get(`${month.userId}|${d.date}`);
+
       // Early departure: only for a finished day on a shift that ends the same day.
       let earlyMinutes: number | null = null;
       if (d.logoutAt && who.shift && !who.shift.spansMidnight) {
@@ -488,6 +525,11 @@ export async function getAttendanceReport(
         productiveHours: hasWork ? productive : null,
         breakHours: hasWork ? breakH : null,
         washroomHours: hasWork ? washroomH : null,
+        arrival, // ON_TIME | LATE | HALF_DAY | ABSENT | LEAVE | HOLIDAY | WEEK_OFF | NOT_TRACKED | NOT_CLOCKED_IN
+        arrivalMinutes: arrivalAt ? minutesAfterLimit(arrivalAt, who.tz) : null, // minutes after the Present limit
+        arrivalLimit: ARRIVAL_RULES.presentUntil,
+        lateReason: sid ? lateReasonOf.get(sid) ?? null : null,
+        correctedBy: sid ? correctedByOf.get(sid) ?? null : null,
         breakBudgetSeconds: who.breakBudgetSeconds,
         stillWorking: !!live,
         autoClosed: d.autoClosed,

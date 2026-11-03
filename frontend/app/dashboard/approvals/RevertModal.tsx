@@ -53,10 +53,10 @@ export function RevertModal({ title, who, busy, error, onSubmit, onCancel }: { t
           maxLength={MAX}
           rows={3}
           placeholder={type === "PARTIAL" ? "What is still incomplete?" : type === "NOT_FULL" ? "Why is it being reverted?" : "Choose an option, then explain"}
-          className="mt-1 w-full rounded-xl border border-indigo-100 bg-white px-3 py-2.5 text-sm text-slate-800"
+          className="mt-1 block w-full resize-y break-words rounded-xl border border-indigo-100 bg-white px-3 py-2.5 text-sm text-slate-800 [overflow-wrap:anywhere]"
         />
       </label>
-      <p className="mt-1 text-xs text-slate-400">{trimmed.length}/{MAX} · at least {MIN} characters. The employee is notified and sees this remark.</p>
+      <p className="mt-1 text-xs text-slate-400">{text.length}/{MAX} · at least {MIN} characters. The employee is notified and sees this remark.</p>
       {error && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
     </Modal>
   );

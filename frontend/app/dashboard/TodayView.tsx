@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
+import { unit } from "@/lib/plural";
 import { useMe } from "./layout";
 import Avatar from "./_photos/Avatar";
 import DayRow from "./_timesheet/DayRow";
@@ -831,7 +832,7 @@ export default function TodayView() {
                   {planned.h}<span className="text-base font-normal text-slate-400">hrs </span>{String(planned.m).padStart(2, "0")}<span className="text-base font-normal text-slate-400">mins</span>
                 </p>
                 <p className="mt-3 text-sm text-slate-500">Total days <span className="italic text-slate-400">(scheduled)</span></p>
-                <p className="mt-0.5 text-2xl font-semibold tabular-nums text-slate-900">{tsData.totals.expectedDays}<span className="text-base font-normal text-slate-400"> days</span></p>
+                <p className="mt-0.5 text-2xl font-semibold tabular-nums text-slate-900">{tsData.totals.expectedDays}<span className="text-base font-normal text-slate-400"> {unit(tsData.totals.expectedDays, "day")}</span></p>
                 <p className="mt-3 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-500">
                   <span className="mt-0.5 text-slate-400">{Ico.info}</span>
                   {weekly !== null
