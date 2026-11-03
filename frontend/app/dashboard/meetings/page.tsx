@@ -225,7 +225,7 @@ function MeetingsInner() {
   );
 }
 
-// Closes a meeting that is happening now (it moves to Past). Asks once, so a stray click does not end it.
+// Closes a meeting that is happening now for everyone (it moves to Past; people still in it are ended). Asks once, so a stray click does not end it.
 function EndInline({ id, onDone }: { id: string; onDone: () => void }) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -233,7 +233,7 @@ function EndInline({ id, onDone }: { id: string; onDone: () => void }) {
   if (!asking) return <button onClick={() => setAsking(true)} className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50">End meeting</button>;
   return (
     <span className="inline-flex flex-wrap items-center justify-end gap-2">
-      <span className="text-xs text-slate-500">End it now?</span>
+      <span className="text-xs text-slate-500">End it now for everyone? Anyone still in the meeting is ended too.</span>
       <button disabled={busy} onClick={async () => { setBusy(true); setErr(""); try { await apiPost(`/meetings/${id}/end`); onDone(); } catch (e) { setErr((e as Error).message); setBusy(false); } }} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50">Yes, end</button>
       <button onClick={() => setAsking(false)} className="text-xs text-slate-500">Back</button>
       {err && <span className="w-full text-xs text-red-600">{err}</span>}

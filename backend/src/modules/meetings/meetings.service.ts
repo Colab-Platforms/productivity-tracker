@@ -380,21 +380,35 @@ export async function update(userId: string, id: string, body: Fields) {
   return { ok: true };
 }
 
-// The organizer closes a meeting that is happening now: its end time becomes "now", so it moves to Past.
-// (Cancel is for a meeting that has not started.) Nothing is deleted and attendance is not touched.
+// The organizer closes a meeting that is happening now: its end time becomes "now", so it moves to Past, and everyone still marked
+// "in the meeting" is ended at the same moment (marked as ended by the manager). Cancel is for a meeting that has not started.
+// Nothing is deleted. A meeting already past its scheduled end can still be ended here while people are left open, so no one stays stuck.
 export async function end(userId: string, id: string) {
   const v = await who(userId);
-  const m = await prisma.meeting.findFirst({ where: { id, platformId: v.platformId, organizerId: userId } });
+  const m = await prisma.meeting.findFirst({ where: { id, platformId: v.platformId, organizerId: userId }, include: { attendees: { select: { userId: true } } } });
   if (!m) throw new Error("NOT_FOUND");
   if (String(m.status) === "CANCELLED") throw new Error("MEETING_CANCELLED");
   const now = new Date();
-  if (m.endsAt.getTime() < now.getTime()) throw new Error("MEETING_OVER");
   if (m.startsAt.getTime() > now.getTime()) throw new Error("NOT_STARTED");
 
-  const res = await prisma.meeting.updateMany({ where: { id, status: "SCHEDULED", endsAt: { gte: now } }, data: { endsAt: now } });
-  if (res.count === 0) throw new Error("MEETING_OVER");
-  auditNote({ recordType: "Meeting", recordId: id, before: { endsAt: m.endsAt.toISOString() }, after: { endsAt: now.toISOString() }, summary: `Ended "${m.title}" early` });
-  return { ok: true };
+  const wasRunning = m.endsAt.getTime() >= now.getTime();
+  if (wasRunning) {
+    const res = await prisma.meeting.updateMany({ where: { id, status: "SCHEDULED", endsAt: { gte: now } }, data: { endsAt: now } });
+    if (res.count === 0 && !(await part.hasOpen(id))) throw new Error("MEETING_OVER");
+  }
+  const closed = await part.endAllOpen(id, userId, now);
+  if (!wasRunning && closed.length === 0) throw new Error("MEETING_OVER");
+
+  auditNote({
+    recordType: "Meeting",
+    recordId: id,
+    before: { endsAt: m.endsAt.toISOString() },
+    after: { endsAt: wasRunning ? now.toISOString() : m.endsAt.toISOString(), participationEnded: closed.length },
+    summary: `Ended "${m.title}" for everyone (${closed.length} still in the meeting ended)`,
+  });
+  // every invitee's screen refreshes (their Join / End buttons and status)
+  part.signalMeeting([userId, ...m.attendees.map((a) => a.userId)], id);
+  return { ok: true, endedParticipants: closed.length };
 }
 
 export async function cancel(userId: string, id: string, reason: unknown) {

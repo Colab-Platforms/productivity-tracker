@@ -297,6 +297,37 @@ export async function leave(userId: string, meetingId: string) {
   return { ok: true, leftAt: now, durationSeconds: L.durationSeconds(p.joinedAt, now) };
 }
 
+/** True when someone is still marked "in the meeting" (false before the participation tables exist). */
+export async function hasOpen(meetingId: string): Promise<boolean> {
+  if (!(await participationReady())) return false;
+  return (await prisma.meetingParticipation.count({ where: { meetingId, leftAt: null } })) > 0;
+}
+
+/** Tell these people's screens to refresh this meeting (no content, only a signal). */
+export function signalMeeting(userIds: string[], meetingId: string) {
+  emitMeetingChange([...new Set(userIds)], meetingId);
+}
+
+/**
+ * The organizer ends the meeting for everyone: every person still marked "in the meeting" is closed at the same server time and
+ * marked as ended by the MANAGER. People who never joined get nothing (not joined is never presumed present); people who already
+ * ended keep their own time. Safe to repeat. Before the participation tables exist it does nothing.
+ */
+export async function endAllOpen(meetingId: string, organizerId: string, at: Date): Promise<string[]> {
+  if (!(await participationReady())) return [];
+  const open = await prisma.meetingParticipation.findMany({ where: { meetingId, leftAt: null }, select: { id: true, userId: true, joinedAt: true } });
+  const closed: string[] = [];
+  for (const p of open) {
+    // claim each one only while it is still open, so a person pressing End at the same moment is recorded once
+    const res = await prisma.meetingParticipation.updateMany({
+      where: { id: p.id, leftAt: null },
+      data: { leftAt: at, durationSeconds: L.durationSeconds(p.joinedAt, at), endedBy: "MANAGER" },
+    });
+    if (res.count === 1) closed.push(p.userId);
+  }
+  return closed;
+}
+
 // --- the organizing manager: live list and report ---------------------------------------------------------
 
 export async function list(userId: string, meetingId: string) {
