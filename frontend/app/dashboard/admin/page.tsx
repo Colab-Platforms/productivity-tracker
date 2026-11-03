@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { API_BASE } from "@/lib/api";
 import { todayIso } from "@/lib/time";
+import { SearchSelect } from "../_employees/SearchSelect";
 import EmployeeActions from "../_employees/EmployeeActions";
 import Avatar, { PhotoEditor } from "../_photos/Avatar";
 import { useMe } from "../layout";
@@ -40,6 +41,7 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<T>
 // --- types -----------------------------------------------------------------
 
 type Options = {
+  designations?: string[];
   teams: { id: string; name: string }[];
     people: {
     id: string;
@@ -125,11 +127,6 @@ type LeaveRow = {
   markedBy: string;
 };
 
-// Suggested job titles for the Role / Designation box. Only suggestions: nobody is given one automatically.
-const DESIGNATION_SUGGESTIONS = [
-  "Developer", "Senior Developer", "AI/ML Engineer", "HR Manager", "HR Executive", "Project Manager", "Team Lead",
-  "UI/UX Designer", "Marketing Executive", "Operations Executive", "Admin",
-];
 
 const TABS = ["People", "Teams", "Shifts", "Thresholds", "Leave"] as const;
 type Tab = (typeof TABS)[number];
@@ -610,14 +607,15 @@ function PersonDrawer({
             ))}
           </Select>
         </Field>
-        <Field label="Role / Designation" hint="Their job title. Shown in the Employees list.">
-          <Input value={form.designation} onChange={(v) => set("designation", v)} list="designation-options" placeholder="Not Assigned" />
-          {/* Suggestions only: nothing is filled in for anyone, and any other title can be typed. */}
-          <datalist id="designation-options">
-            {DESIGNATION_SUGGESTIONS.map((d) => (
-              <option key={d} value={d} />
-            ))}
-          </datalist>
+        <Field label="Role / Designation" hint="Their job title, from the list that is the same for every company.">
+          <SearchSelect
+            options={(options?.designations ?? []).map((d) => ({ value: d, label: d }))}
+            value={form.designation}
+            onChange={(v) => set("designation", v)}
+            clearLabel="Not Assigned"
+            placeholder="Search designations…"
+            emptyText="No designation matches"
+          />
         </Field>
       </div>
 
@@ -966,16 +964,19 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
         )}
       </Field>
 
-      <Field label="Designation" hint={dd.designations.length ? "From this company's list." : "This company has no designation list yet: type it."}>
-        {dd.designations.length > 0 ? (
-          <Select value={f.designation} onChange={(v) => { set("designation", v); setConfirmDesignation(false); }}>
-            <option value="">Not assigned</option>
-            {p.designation && !dd.designations.some((d) => d.toLowerCase() === p.designation!.toLowerCase()) && <option value={p.designation}>{p.designation} (current)</option>}
-            {dd.designations.map((d) => <option key={d} value={d}>{d}</option>)}
-          </Select>
-        ) : (
-          <Input value={f.designation} onChange={(v) => { set("designation", v); setConfirmDesignation(false); }} placeholder="Not assigned" />
-        )}
+      <Field label="Designation" hint="From the list that is the same for every company. Type to search.">
+        <SearchSelect
+          options={[
+            // someone who still has an old spelling keeps it until it is changed
+            ...(p.designation && !dd.designations.some((d) => d.toLowerCase() === p.designation!.toLowerCase()) ? [{ value: p.designation, label: p.designation, sub: "current (not in the list)" }] : []),
+            ...dd.designations.map((d) => ({ value: d, label: d })),
+          ]}
+          value={f.designation}
+          onChange={(v) => { set("designation", v); setConfirmDesignation(false); }}
+          clearLabel="Not assigned"
+          placeholder="Search designations…"
+          emptyText="No designation matches"
+        />
         {designationChanged && p.designation && (
           <div className="mt-2">
             <Toggle checked={confirmDesignation} onChange={setConfirmDesignation} label={`Replace the current designation (${p.designation})`} hint="Required to change a designation that is already set." />

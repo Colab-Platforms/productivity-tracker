@@ -40,6 +40,7 @@ import {
   type ParsedRow,
   type Viewer,
 } from "./employeeImport.service.js";
+import { canonicalDesignation } from "../../lib/designations.js";
 
 export type UpdateField = "email" | "mobile" | "designation" | "role" | "team" | "projects" | "reportsTo" | "dateOfJoining" | "shift";
 const LABEL: Record<UpdateField, string> = {
@@ -226,10 +227,14 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     }
 
     // --- designation -----------------------------------------------------------
-    const designation = text(get(r, "designation")).trim();
-    if (designation && designation !== (user.designation ?? "").trim()) {
-      apply.designation = designation;
-      propose("designation", user.designation ?? "", designation, !(user.designation ?? "").trim());
+    const designationText = text(get(r, "designation")).trim();
+    if (designationText) {
+      const designation = canonicalDesignation(designationText);
+      if (!designation) err("designation", "NOT_IN_LIST", `"${designationText}" is not in the designation list. Use one of the listed designations.`);
+      else if (designation !== (user.designation ?? "").trim()) {
+        apply.designation = designation;
+        propose("designation", user.designation ?? "", designation, !(user.designation ?? "").trim());
+      }
     }
 
     // --- role ------------------------------------------------------------------

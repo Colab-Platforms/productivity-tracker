@@ -28,6 +28,7 @@ import { accessFor, type Access } from "../../lib/companyAccess.js";
 import { canAccess } from "../../lib/companyAccess.logic.js";
 import { allocateEmployeeCode } from "./employeeCode.js";
 import { sendWelcome } from "../onboarding/onboarding.mail.js";
+import { canonicalDesignation, designationNames } from "../../lib/designations.js";
 
 const BCRYPT_COST = 10;
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -679,8 +680,11 @@ async function runValidation(viewer: Viewer, input: PreviewInput) {
     }
 
     // --- designation ---------------------------------------------------------------
-    const designation = clean("designation", "Designation");
-    if (!designation) err("designation", "REQUIRED", "Designation is required.");
+    const designationText = clean("designation", "Designation");
+    // One fixed list for every company: the list's own spelling is stored; anything else is rejected, never guessed.
+    const designation = canonicalDesignation(designationText) ?? designationText;
+    if (!designationText) err("designation", "REQUIRED", "Designation is required.");
+    else if (!canonicalDesignation(designationText)) err("designation", "NOT_IN_LIST", `"${designationText}" is not in the designation list. Use one of the listed designations.`);
 
     // --- role -------------------------------------------------------------------
     const roleText = clean("role", "System role");
@@ -1271,9 +1275,16 @@ export async function employeeLookups(viewerId: string) {
   const designations = await prisma.designation
     .findMany({ where: { isActive: true, ...scope }, select: { platformId: true, name: true }, orderBy: { name: "asc" } })
     .catch(() => [] as { platformId: string; name: string }[]);
+  // Every job title in use across ALL companies (names only), so a title set up in one company can be picked in another.
+  const everyTitle = await prisma.designation
+    .findMany({ where: { isActive: true }, select: { name: true }, orderBy: { name: "asc" } })
+    .catch(() => [] as { name: string }[]);
+  const seen = new Set<string>();
+  const allDesignations = everyTitle.map((d) => d.name).filter((n) => (seen.has(n.toLowerCase()) ? false : (seen.add(n.toLowerCase()), true)));
   return {
     year,
-    designations,
+    designations: [] as { platformId: string; name: string }[], // per-company lists are no longer used
+    allDesignations: designationNames(),
     // Only an Admin may hand out the HR or Admin role.
     roles: (viewer.role === "ADMIN" ? ROLES : (["EMPLOYEE", "MANAGER"] as const)).map((r) => r),
     companies: companies.map((c) => ({ ...c, holidaysThisYear: holidayCount.get(c.id) ?? 0 })),

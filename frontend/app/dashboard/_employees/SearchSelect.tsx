@@ -16,6 +16,7 @@ export function SearchSelect({
   clearLabel,
   emptyText = "Nothing matches",
   id,
+  allowCreate,
 }: {
   options: Opt[];
   value: string;
@@ -26,6 +27,7 @@ export function SearchSelect({
   clearLabel?: string; // when set, an entry that clears the choice is offered
   emptyText?: string;
   id?: string;
+  allowCreate?: boolean; // when set, whatever is typed that is not in the list can be used as a new value
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -33,7 +35,9 @@ export function SearchSelect({
   const box = useRef<HTMLDivElement>(null);
   const listId = useId();
 
-  const selected = options.find((o) => o.value === value);
+  const selected = options.find((o) => o.value === value) ?? (allowCreate && value ? { value, label: value } : undefined);
+  const typed = query.trim();
+  const canCreate = !!allowCreate && typed.length > 0 && !options.some((o) => o.label.toLowerCase() === typed.toLowerCase());
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -72,6 +76,9 @@ export function SearchSelect({
     } else if (e.key === "Enter" && open && shown[active]) {
       e.preventDefault();
       choose(shown[active].value);
+    } else if (e.key === "Enter" && open && canCreate) {
+      e.preventDefault();
+      choose(typed);
     } else if (e.key === "Escape") {
       setOpen(false);
       setQuery("");
@@ -130,7 +137,19 @@ export function SearchSelect({
               </button>
             </li>
           )}
-          {shown.length === 0 && <li className="px-3.5 py-3 text-slate-400">{emptyText}</li>}
+          {canCreate && (
+            <li>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => choose(typed)}
+                className="block w-full px-3.5 py-2 text-left font-medium text-indigo-700 hover:bg-indigo-50"
+              >
+                Use &ldquo;{typed}&rdquo; as a new one
+              </button>
+            </li>
+          )}
+          {shown.length === 0 && !canCreate && <li className="px-3.5 py-3 text-slate-400">{emptyText}</li>}
           {shown.map((o, i) => (
             <li key={o.value}>
               <button

@@ -184,18 +184,15 @@ function DesignationsPanel({ companies }: { companies: Company[] }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-semibold text-slate-900">Designations</h2>
-          <p className="mt-0.5 text-sm text-slate-500">The job titles offered when adding or editing people. Changing the list never changes what someone already has.</p>
+          <p className="mt-0.5 text-sm text-slate-500">One list of job titles shared by every company, offered when adding or editing people. Adding, renaming or hiding a title applies to all companies. Changing the list never changes what someone already has.</p>
         </div>
-        <select aria-label="Company" value={active} onChange={(e) => setCompanyId(e.target.value)} className={input}>
-          {mine.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
       </div>
       {error && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
       <div className="mt-4 flex flex-wrap gap-2">
         <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} placeholder="Add a designation" className={`${input} w-64`} />
         <button disabled={name.trim().length < 2} onClick={() => run(() => apiPost("/admin/designations", { companyId: active, name }))} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Add</button>
       </div>
-      {rows.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">No list yet for this company. Until you add one, designations are typed freely.</p>}
+      {rows.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">No designations yet. Add one above, or type one when adding or editing a person.</p>}
       <ul className="mt-4 divide-y divide-indigo-100">
         {rows.map((d) => (
           <li key={d.id} className={`flex flex-wrap items-center justify-between gap-2 py-2.5 ${d.isActive ? "" : "opacity-60"}`}>
