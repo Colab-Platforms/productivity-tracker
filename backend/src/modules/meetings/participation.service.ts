@@ -2,7 +2,7 @@ import { prisma } from "../../lib/prisma.js";
 import { localDayOf, parseIsoDay, platformToday, zonedToUtc } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { computeBreakdown } from "../tracker/productiveBreakdown.js";
-import { splitAwayTime } from "../tracker/activityClass.js";
+import { awayRows, splitAwayTime } from "../tracker/activityClass.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { emitMeetingChange } from "../../lib/realtime.js";
@@ -634,7 +634,7 @@ export async function managerOverview(userId: string, dayStr?: string) {
       const b = s
         ? computeBreakdown({
             loginAt: s.loginAt, logoutAt: s.logoutAt,
-            breaks: s.breaks.map((x) => ({ startedAt: x.startedAt, endedAt: x.endedAt })),
+            breaks: awayRows(s.breaks).map((x) => ({ startedAt: x.startedAt, endedAt: x.endedAt })),
             liveMeetings: s.meetings.map((x) => ({ approvalStatus: String(x.approvalStatus), startedAt: x.startedAt, endedAt: x.endedAt })),
             huddles, now,
           })
@@ -662,7 +662,7 @@ export async function managerOverview(userId: string, dayStr?: string) {
           const calc = sess && p
             ? computeBreakdown({
                 loginAt: sess.loginAt, logoutAt: sess.logoutAt,
-                breaks: sess.breaks.map((x) => ({ startedAt: x.startedAt, endedAt: x.endedAt })), liveMeetings: [],
+                breaks: awayRows(sess.breaks).map((x) => ({ startedAt: x.startedAt, endedAt: x.endedAt })), liveMeetings: [],
                 huddles: [{ id: p.id, joinedAt: p.joinedAt, leftAt: p.leftAt, expectedEnd: m.endsAt }], now,
               })
             : null;
@@ -695,7 +695,7 @@ export async function managerOverview(userId: string, dayStr?: string) {
 
 type SessionForMeetings = {
   userId: string; loginAt: Date; logoutAt: Date | null;
-  breaks: { startedAt: Date; endedAt: Date | null }[];
+  breaks: { breakType: string; reason?: string | null; startedAt: Date; endedAt: Date | null }[];
   meetings: { approvalStatus: unknown; startedAt: Date | null; endedAt: Date | null }[];
 };
 
@@ -722,7 +722,7 @@ export async function huddleBreakdowns(sessions: SessionForMeetings[], now: Date
     const mineParts = parts.filter((p) => p.userId === s.userId && p.joinedAt.getTime() >= s.loginAt.getTime() - 6 * 3_600_000 && p.joinedAt.getTime() <= (s.logoutAt ?? now).getTime() && endOf.has(p.meetingId));
     if (mineParts.length === 0) continue;
     const b = computeBreakdown({
-      loginAt: s.loginAt, logoutAt: s.logoutAt, breaks: s.breaks,
+      loginAt: s.loginAt, logoutAt: s.logoutAt, breaks: awayRows(s.breaks),
       liveMeetings: s.meetings.map((m) => ({ approvalStatus: String(m.approvalStatus), startedAt: m.startedAt, endedAt: m.endedAt })),
       huddles: mineParts.map((p) => ({ id: p.id, joinedAt: p.joinedAt, leftAt: p.leftAt, expectedEnd: endOf.get(p.meetingId) as Date })), now,
     });
@@ -763,7 +763,7 @@ export async function huddleSecondsByDay(userIds: string[], from: Date, to: Date
   if (userIds.length === 0 || !(await participationReady())) return out;
   const sessions = await prisma.workSession.findMany({
     where: { userId: { in: userIds }, date: { gte: from, lte: to } },
-    select: { userId: true, date: true, status: true, loginAt: true, logoutAt: true, productiveSeconds: true, breaks: { select: { startedAt: true, endedAt: true } } },
+    select: { userId: true, date: true, status: true, loginAt: true, logoutAt: true, productiveSeconds: true, breaks: { select: { breakType: true, reason: true, startedAt: true, endedAt: true } } },
   });
   if (sessions.length === 0) return out;
   const parts = await prisma.meetingParticipation.findMany({
@@ -780,7 +780,7 @@ export async function huddleSecondsByDay(userIds: string[], from: Date, to: Date
     const mine = parts.filter((p) => p.userId === s.userId && p.joinedAt.getTime() >= lo && p.joinedAt.getTime() <= hi && endOf.has(p.meetingId));
     if (mine.length === 0) continue;
     const b = computeBreakdown({
-      loginAt: s.loginAt, logoutAt: s.logoutAt, breaks: s.breaks, liveMeetings: [],
+      loginAt: s.loginAt, logoutAt: s.logoutAt, breaks: awayRows(s.breaks), liveMeetings: [],
       huddles: mine.map((p) => ({ id: p.id, joinedAt: p.joinedAt, leftAt: p.leftAt, expectedEnd: endOf.get(p.meetingId) as Date })), now,
     });
     const secs = String(s.status) === "COMPLETED" ? Math.min(b.huddleSeconds, s.productiveSeconds) : b.huddleSeconds;

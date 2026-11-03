@@ -4,7 +4,7 @@ import { managedByWhere } from "../../lib/teamManagers.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { cleanRemark, lateRemarksReady, LateRemarkRequired, remarksBySession } from "./lateRemarks.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
-import { awayOf, isCountedBreak, isWashroom, splitAwayTime } from "./activityClass.js";
+import { DISCUSSION_PREFIX, REMARK_MAX, REMARK_MIN, awayOf, awayRows, isCountedBreak, isDiscussion, isWashroom, splitAwayTime } from "./activityClass.js";
 
 const DEFAULTS = {
   dailyWorkHours: 9,
@@ -152,8 +152,8 @@ export async function getActiveSession(userId: string) {
   if (!session) return { session: null, config: ctx.config, hostsOpenMeeting, projects };
 
   const fresh = await recompute(session.id);
-  const { washroomSeconds } = splitAwayTime(fresh.breaks, new Date());
-  return { session: { ...fresh, washroomSeconds }, config: ctx.config, hostsOpenMeeting, projects };
+  const { washroomSeconds, discussionSeconds } = splitAwayTime(fresh.breaks, new Date());
+  return { session: { ...fresh, washroomSeconds, discussionSeconds }, config: ctx.config, hostsOpenMeeting, projects };
 }
 
 export async function clockIn(userId: string, teamId?: string | null, lateRemark?: unknown) {
@@ -295,7 +295,17 @@ export async function clockOut(userId: string) {
   return recompute(session.id);
 }
 
-export async function startBreak(userId: string, breakType: string) {
+export async function startBreak(userId: string, breakType: string, remark?: unknown) {
+  // "DISCUSSION" is the Meeting / Team Huddle choice in the activity menu: an unscheduled talk. It is saved as an OTHER row whose reason
+  // carries the remark (see activityClass.ts), and it does not start until a remark is given.
+  let reason: string | null = null;
+  if (breakType === "DISCUSSION") {
+    const text = typeof remark === "string" ? remark.trim() : "";
+    if (text.length < REMARK_MIN) throw new Error("REMARK_REQUIRED");
+    if (text.length > REMARK_MAX) throw new Error("REMARK_TOO_LONG");
+    reason = DISCUSSION_PREFIX + text;
+    breakType = "OTHER";
+  }
   const ctx = await getContext(userId);
   const date = platformToday(ctx.timezone);
 
@@ -319,6 +329,7 @@ export async function startBreak(userId: string, breakType: string) {
       workSessionId: session.id,
       breakType: breakType as never,
       startedAt: new Date(),
+      ...(reason ? { reason } : {}),
     },
   });
 
@@ -783,7 +794,9 @@ export async function getTeamLiveStatus(viewerId: string) {
     const s = byUser.get(person.id) ?? null;
     const team = person.teamMemberships[0]?.team ?? null;
 
-    const openBreak = s?.breaks.find((b) => !b.endedAt) ?? null;
+    // Away time only: an open discussion keeps the person working, so it is not "on break".
+    const openBreak = (s ? awayRows(s.breaks) : []).find((b) => !b.endedAt) ?? null;
+    const openDiscussion = s?.breaks.some((b) => !b.endedAt && isDiscussion(b)) ?? false;
     const openMeeting =
       s?.meetings.find(
         (m) => m.approvalStatus === "APPROVED" && m.startedAt && !m.endedAt
@@ -796,7 +809,7 @@ export async function getTeamLiveStatus(viewerId: string) {
     else if (!s) status = "NOT_CLOCKED_IN";
     else if (s.status === "COMPLETED") status = "DONE";
     else if (openBreak) status = "ON_BREAK";
-    else if (openMeeting) status = "IN_MEETING";
+    else if (openMeeting || openDiscussion) status = "IN_MEETING";
     else status = "WORKING";
 
     let productiveSeconds = s?.productiveSeconds ?? 0;
@@ -925,9 +938,11 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
       productiveSeconds: s.productiveSeconds,
       breakSeconds: awayOf(s, new Date()).breakSeconds,
       washroomSeconds: awayOf(s, new Date()).washroomSeconds,
+      discussionSeconds: awayOf(s, new Date()).discussionSeconds,
       meetingSeconds: s.meetingSeconds,
-      breakCount: s.breaks.filter((b) => isCountedBreak(String(b.breakType))).length,
-      washroomCount: s.breaks.filter((b) => isWashroom(String(b.breakType))).length,
+      breakCount: s.breaks.filter((b) => isCountedBreak(b)).length,
+      washroomCount: s.breaks.filter((b) => isWashroom(b)).length,
+      discussionCount: s.breaks.filter((b) => isDiscussion(b)).length,
       meetingCount: s.meetings.filter((m) => m.approvalStatus === "APPROVED").length,
       wasLateLogin: s.wasLateLogin,
       lateByMinutes: s.lateByMinutes,

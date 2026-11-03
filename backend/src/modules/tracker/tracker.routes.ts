@@ -26,6 +26,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
     message: "You have already completed your workday",
   },
   BREAK_ALREADY_RUNNING: { status: 400, message: "A break is already running" },
+  REMARK_REQUIRED: { status: 400, message: "Tell us why you are taking this time (at least 3 characters)." },
+  REMARK_TOO_LONG: { status: 400, message: "Keep the remark to 300 characters or fewer." },
   NO_BREAK_RUNNING: { status: 400, message: "No break is running" },
   MEETING_RUNNING: {
     status: 400,
@@ -101,15 +103,16 @@ router.post("/clock-out", async (req, res) => {
 // --- Breaks ---------------------------------------------------------------
 
 router.post("/break/start", async (req, res) => {
-  const { breakType } = req.body ?? {};
+  const { breakType, remark } = req.body ?? {};
 
-  const allowed = ["TEA", "LUNCH", "WASHROOM", "PERSONAL", "OTHER"];
+  // DISCUSSION = "Meeting / Team Huddle" from the activity menu (needs a remark). OTHER is not offered to people: the system uses it itself.
+  const allowed = ["TEA", "LUNCH", "WASHROOM", "PERSONAL", "OTHER", "DISCUSSION"];
   if (!allowed.includes(breakType)) {
     return res.status(400).json({ error: "Pick a valid break type" });
   }
 
   try {
-    res.json(await tracker.startBreak(req.user!.userId, breakType));
+    res.json(await tracker.startBreak(req.user!.userId, breakType, remark));
   } catch (error) {
     fail(res, error);
   }

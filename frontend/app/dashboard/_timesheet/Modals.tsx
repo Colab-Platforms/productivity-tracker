@@ -39,6 +39,16 @@ function Entries({ m, tz }: { m: DayModel; tz: string }) {
         <span className="text-slate-500">Clock-out</span>
         <span className="font-semibold text-slate-900">{m.logoutMs ? fmtClock(m.logoutMs, tz) : m.ongoing ? "Ongoing" : "Not recorded"}</span>
       </div>
+      {m.discussions.length > 0 && (
+        <div className="border-t border-slate-100 bg-violet-50/50 px-4 py-2.5 text-xs text-slate-600">
+          <p className="mb-1 font-medium text-violet-900">Discussions (unscheduled, counted as working time)</p>
+          {m.discussions.map((x, i) => (
+            <p key={i} className="py-0.5">
+              {fmtClock(x.start, tz)}{x.end ? ` – ${fmtClock(x.end, tz)} · ${fmtDur((x.end - x.start) / 1000)}` : " – now"}: <span className="text-slate-800">{x.remark}</span>
+            </p>
+          ))}
+        </div>
+      )}
       {m.meetings.length > 0 && (
         <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-2.5 text-xs text-slate-500">
           Meetings (counted as working time):{" "}

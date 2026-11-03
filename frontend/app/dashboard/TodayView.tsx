@@ -32,6 +32,7 @@ import StandupCard from "./_standup/StandupCard";
 import Breakdown from "./_timesheet/Breakdown";
 import HuddleOverview from "./_standup/HuddleOverview";
 import { LateRemarkModal } from "./_timesheet/LateRemarkModal";
+import { DiscussionModal } from "./_timesheet/DiscussionModal";
 import { EntryLogModal, ScheduleModal } from "./_timesheet/Modals";
 import RequestCorrectionModal from "./_corrections/RequestModal";
 import { SEG_COLOR, buildDayModel } from "./_timesheet/model";
@@ -78,6 +79,7 @@ type Session = {
   productiveSeconds: number;
   breakSeconds: number; // Tea / Lunch / Personal / Other only; Washroom is separate
   washroomSeconds?: number;
+  discussionSeconds?: number; // unscheduled discussions: inside productive time, not break
   meetingSeconds: number;
   wasLateLogin: boolean;
   lateByMinutes: number;
@@ -94,7 +96,7 @@ type Config = {
 };
 
 // The activities in the "Select activity" menu that start an away timer. Tea, Lunch and Personal are breaks (they use the break
-// allowance); Washroom is tracked on its own and is NOT a break. "Meeting / Team Huddle" is the Team Huddle timer, shown separately below.
+// allowance); Washroom is tracked on its own and is NOT a break. "Meeting / Team Huddle" starts an unscheduled discussion (asks for a remark; productive time, not break).
 const BREAK_TYPES = [
   { value: "TEA", label: "Tea" },
   { value: "WASHROOM", label: "Washroom" },
@@ -258,7 +260,7 @@ export default function TodayView() {
   const [projectId, setProjectId] = useState("");
   // The Team Huddle you can join right now (accepted, join window open), or whether you are already in one. From the same GET /meetings the
   // huddle card uses; the server decides, this only shows the choice.
-  const [huddleJoin, setHuddleJoin] = useState<{ id: string; title: string } | null>(null);
+  const [discussionAsk, setDiscussionAsk] = useState<{ error: string } | null>(null);
   const [inHuddle, setInHuddle] = useState(false);
   // Team Huddle time so far today, and when the current huddle began (null = not in one). Display only: it is already part of productive time.
   const [huddle, setHuddle] = useState<{ todaySeconds: number; activeSince: string | null; openPastEnd: boolean } | null>(null);
@@ -274,8 +276,6 @@ export default function TodayView() {
       if (huddleRes.status === "fulfilled") {
         const ms = huddleRes.value.meetings;
         setInHuddle(ms.some((m) => m.me?.state === "IN_MEETING"));
-        const open = ms.find((m) => m.tracked && m.canJoin);
-        setHuddleJoin(open ? { id: open.id, title: open.title } : null);
       }
       if (sessionRes.status === "rejected") throw sessionRes.reason;
 
@@ -382,15 +382,19 @@ export default function TodayView() {
 
   // The server's numbers plus the seconds since they were fetched. A meeting is
   // working time, so only a break pauses the productive clock.
-  const productive = (session?.productiveSeconds ?? 0) + (running && !openBreak ? sinceFetch : 0);
+  // An open discussion keeps the person working: the productive clock only pauses for a break or washroom.
+  const openIsDiscussion = !!openBreak && openBreak.breakType === "OTHER" && String(openBreak.reason ?? "").startsWith("Discussion: ");
+  const awayNow = !!openBreak && !openIsDiscussion;
+  const productive = (session?.productiveSeconds ?? 0) + (running && !awayNow ? sinceFetch : 0);
   // Washroom is its own neutral activity: it pauses the productive clock like any time away, but it is not break time.
   const openIsWashroom = openBreak?.breakType === "WASHROOM";
-  const breakSecs = (session?.breakSeconds ?? 0) + (openBreak && !openIsWashroom ? sinceFetch : 0);
-  const washroomSecs = (session?.washroomSeconds ?? 0) + (openBreak && openIsWashroom ? sinceFetch : 0);
+  const breakSecs = (session?.breakSeconds ?? 0) + (awayNow && !openIsWashroom ? sinceFetch : 0);
+  const discussionSecs = (session?.discussionSeconds ?? 0) + (openIsDiscussion ? sinceFetch : 0);
+  const washroomSecs = (session?.washroomSeconds ?? 0) + (awayNow && openIsWashroom ? sinceFetch : 0);
   const meetingSecs = (session?.meetingSeconds ?? 0) + (openMeeting ? sinceFetch : 0);
   const elapsed = productive + breakSecs + washroomSecs; // everything on site: productive + counted break + washroom, each once
   // Live huddle counter: the server's figure plus the seconds since it was fetched while a huddle is running (and the person is clocked in, off a break).
-  const huddleRunning = running && !openBreak && !!huddle?.activeSince;
+  const huddleRunning = running && !awayNow && !!huddle?.activeSince;
   const huddleSecs = (huddle?.todaySeconds ?? 0) + (huddleRunning ? sinceFetch : 0);
 
   // The tab strip is the display when this window is minimised.
@@ -399,7 +403,9 @@ export default function TodayView() {
       document.title = "Avatar HRMS";
       return;
     }
-    document.title = openBreak
+    document.title = openIsDiscussion
+      ? `💬 ${hms(discussionSecs).slice(0, 2).join(":")} discussion · Avatar HRMS`
+      : openBreak
       ? openIsWashroom
         ? `🚻 ${hms(washroomSecs).slice(0, 2).join(":")} washroom · Avatar HRMS`
         : `☕ ${hms(breakSecs).slice(0, 2).join(":")} break · Avatar HRMS`
@@ -479,6 +485,21 @@ export default function TodayView() {
     setBreakOpen(false);
     void act("/tracker/break/start", { breakType: type });
   }
+  async function startDiscussion(remark: string) {
+    if (busy || !canBreak) return;
+    setBusy(true);
+    setError("");
+    try {
+      await apiPost("/tracker/break/start", { breakType: "DISCUSSION", remark });
+      setDiscussionAsk(null);
+      await load();
+      setReloadTs((n) => n + 1);
+    } catch (err) {
+      setDiscussionAsk({ error: err instanceof Error ? err.message : "That didn't work" });
+    } finally {
+      setBusy(false);
+    }
+  }
   function resume() {
     if (busy || !openBreak) return;
     void act("/tracker/break/end");
@@ -489,7 +510,9 @@ export default function TodayView() {
     ? { label: "NOT CLOCKED IN", dot: "bg-slate-300", tone: "text-slate-400" }
     : session.status === "COMPLETED"
       ? { label: "COMPLETED", dot: "bg-slate-400", tone: "text-slate-400" }
-      : openBreak
+      : openIsDiscussion
+        ? { label: "IN A DISCUSSION", dot: "bg-violet-400", tone: "text-violet-500" }
+        : openBreak
         ? { label: breakName ? `ON ${breakName} BREAK` : "ON A BREAK", dot: "bg-sky-400", tone: "text-sky-500" }
         : openMeeting
           ? { label: "IN A MEETING", dot: "bg-violet-400", tone: "text-violet-500" }
@@ -682,6 +705,13 @@ export default function TodayView() {
 
                 {session && config && <BreakBudget used={breakSecs} budget={config.breakBudgetMinutes * 60} onBreak={!!openBreak && !openIsWashroom} />}
 
+                {session && (discussionSecs > 0 || openIsDiscussion) && (
+                  <div className="mx-auto mt-3 flex max-w-xs items-center justify-between gap-3 rounded-xl bg-violet-50 px-4 py-2.5 text-sm text-violet-900" title="Discussion time stays inside your productive time. It is not a break and does not use your break allowance.">
+                    <span className="font-medium">{openIsDiscussion ? "Discussion in progress" : "Discussion today"}</span>
+                    <span className="tabular-nums font-semibold">{hms(discussionSecs).join(":")}</span>
+                  </div>
+                )}
+
                 {session && (washroomSecs > 0 || openIsWashroom) && (
                   <div className="mx-auto mt-3 flex max-w-xs items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-2.5 text-sm text-slate-700" title="Washroom time is tracked on its own. It is not a break, so it does not use your break allowance, and it is not productive time.">
                     <span className="font-medium">{openIsWashroom ? "Washroom in progress" : "Washroom today"}</span>
@@ -716,7 +746,7 @@ export default function TodayView() {
                     <>
                       {openBreak ? (
                         <button disabled={busy} onClick={resume} className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-[13px] font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
-                          {Ico.play} Resume
+                          {Ico.play} {openIsDiscussion ? "End discussion" : "Resume"}
                         </button>
                       ) : (
                         <div ref={breakRef} className="relative">
@@ -738,9 +768,9 @@ export default function TodayView() {
                               ))}
                               <button
                                 type="button"
-                                disabled={!huddleJoin || inHuddle}
-                                onClick={() => { if (!huddleJoin || busy) return; setBreakOpen(false); void act(`/meetings/${huddleJoin.id}/join`); }}
-                                title={inHuddle ? "You are already in a Team Huddle" : huddleJoin ? `Join “${huddleJoin.title}”` : "No Team Huddle you have accepted is open to join right now"}
+                                disabled={inHuddle}
+                                onClick={() => { if (busy) return; setBreakOpen(false); setDiscussionAsk({ error: "" }); }}
+                                title={inHuddle ? "You are already in a Team Huddle" : "A talk with a manager or colleague. You will be asked for a short remark."}
                                 className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-violet-50 hover:text-violet-700 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent disabled:hover:text-slate-300"
                               >
                                 Meeting / Team Huddle
@@ -879,6 +909,7 @@ export default function TodayView() {
         </section>
       </div>
 
+      {discussionAsk && <DiscussionModal busy={busy} error={discussionAsk.error} onSubmit={(r) => void startDiscussion(r)} onCancel={() => setDiscussionAsk(null)} />}
       {lateAsk && <LateRemarkModal minutes={lateAsk.minutes} busy={busy} error={lateAsk.error} onSubmit={(r) => void clockIn(r)} onCancel={() => setLateAsk(null)} />}
       {openLog && tsData && (
         <EntryLogModal models={models} tz={tz} selected={openLog === "all" ? null : openLog} rangeLabel={rangeLabel} onClose={() => setOpenLog(null)} />

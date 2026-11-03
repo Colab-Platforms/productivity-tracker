@@ -11,7 +11,7 @@ import { prisma } from "../../lib/prisma.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { huddleBreakdowns } from "../meetings/participation.service.js";
-import { splitAwayTime } from "../tracker/activityClass.js";
+import { awayRows, isDiscussion, splitAwayTime } from "../tracker/activityClass.js";
 import { photoStamps } from "../photos/photos.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
@@ -76,7 +76,9 @@ function totalsOf(s: SessionWithParts, now: Date) {
   let productive = s.productiveSeconds;
   const breakSec = away.breakSeconds;
   let meeting = s.meetingSeconds;
-  const openBreak = s.breaks.find((b) => !b.endedAt) ?? null;
+  // Away time only: an open discussion is working time (productive keeps running) and shows as "in meeting".
+  const openBreak = awayRows(s.breaks).find((b) => !b.endedAt) ?? null;
+  const openDiscussion = s.breaks.some((b) => !b.endedAt && isDiscussion(b));
   const openMeeting = s.meetings.find((m) => m.approvalStatus === "APPROVED" && m.startedAt && !m.endedAt) ?? null;
 
   if (s.status === "ACTIVE") {
@@ -88,7 +90,7 @@ function totalsOf(s: SessionWithParts, now: Date) {
       if (openMeeting) meeting += since;
     }
   }
-  return { productive, breakSec, washroomSec: away.washroomSeconds, meeting, openBreak, openMeeting };
+  return { productive, breakSec, washroomSec: away.washroomSeconds, meeting, openBreak, openMeeting, openDiscussion };
 }
 
 // When the CURRENT status began.
@@ -186,7 +188,7 @@ export async function getLiveBoard(viewerId: string) {
       shiftSeconds = secondsBetween(s.loginAt, s.logoutAt ?? now);
       if (s.status === "COMPLETED") status = "CLOCKED_OUT";
       else if (tt.openBreak) status = BREAK_GROUP[tt.openBreak.breakType] === "TEA" ? "TEA" : BREAK_GROUP[tt.openBreak.breakType] === "LUNCH" ? "LUNCH" : BREAK_GROUP[tt.openBreak.breakType] === "BIO" ? "BIO" : "OTHER_BREAK";
-      else if (tt.openMeeting) status = "MEETING";
+      else if (tt.openMeeting || tt.openDiscussion) status = "MEETING";
       else status = "WORKING";
     }
 
@@ -275,7 +277,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
     const end = s.logoutAt ?? (s.status === "ACTIVE" && isToday ? now : s.updatedAt);
 
     const per = { TEA: 0, LUNCH: 0, BIO: 0, OTHER: 0 };
-    for (const b of s.breaks) {
+    for (const b of awayRows(s.breaks)) {
       const secs = b.endedAt ? (b.durationSeconds ?? secondsBetween(b.startedAt, b.endedAt)) : s.status === "ACTIVE" && isToday ? secondsBetween(b.startedAt, now) : 0;
       per[BREAK_GROUP[b.breakType] ?? "OTHER"] += secs;
     }

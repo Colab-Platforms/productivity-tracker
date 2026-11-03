@@ -173,7 +173,7 @@ export async function getTeamReport(
           productiveSeconds: true,
           breakSeconds: true,
           // the rows themselves: Break and Washroom are worked out from them, for old and new days alike
-          breaks: { select: { breakType: true, startedAt: true, endedAt: true } },
+          breaks: { select: { breakType: true, reason: true, startedAt: true, endedAt: true } },
           meetingSeconds: true,
           wasLateLogin: true,
           lateByMinutes: true,

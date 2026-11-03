@@ -41,6 +41,8 @@ export type DayModel = {
   overtimeSeconds: number;
   lateMinutes: number;
   meetings: { start: number; end: number | null; label: string }[];
+  // Unscheduled discussions (Meeting / Team Huddle from the activity menu): working time, listed with the remark in the entry log.
+  discussions: { start: number; end: number | null; remark: string }[];
 };
 
 const HOUR = 3_600_000;
@@ -51,7 +53,7 @@ export function buildDayModel(day: TsDay, tz: string, schedule: TsSchedule, nowM
   const empty: DayModel = {
     date: day.date, day, hasSession: false, isToday, loginMs: 0, finishMs: 0, logoutMs: null, ongoing: false,
     missingClockOut: false, autoClosed: false, axisStart: 0, axisEnd: 0, ticks: [], segs: [], elapsedSeconds: 0,
-    workSeconds: 0, breakSeconds: 0, washroomSeconds: 0, overtimeSeconds: 0, lateMinutes: 0, meetings: [],
+    workSeconds: 0, breakSeconds: 0, washroomSeconds: 0, overtimeSeconds: 0, lateMinutes: 0, meetings: [], discussions: [],
   };
   if (!s) return empty;
 
@@ -68,7 +70,9 @@ export function buildDayModel(day: TsDay, tz: string, schedule: TsSchedule, nowM
   const missingClockOut = logout === null && !ongoing;
 
   // --- breaks, clipped to the session --------------------------------------------------
+  const isDiscussionRow = (b: { breakType: string; reason?: string | null }) => b.breakType === "OTHER" && String(b.reason ?? "").startsWith("Discussion: ");
   const breaks = s.breaks
+    .filter((b) => !isDiscussionRow(b))
     .map((b) => ({ start: Date.parse(b.startedAt), end: b.endedAt ? Date.parse(b.endedAt) : finish, label: BREAK_LABEL[b.breakType] ?? b.breakType, washroom: b.breakType === "WASHROOM" }))
     .map((b) => ({ ...b, start: Math.max(b.start, login), end: Math.min(b.end, finish) }))
     .filter((b) => b.end > b.start)
@@ -136,6 +140,7 @@ export function buildDayModel(day: TsDay, tz: string, schedule: TsSchedule, nowM
     washroomSeconds: sum("washroom"),
     overtimeSeconds: sum("overtime"),
     lateMinutes: s.wasLateLogin ? s.lateByMinutes : 0,
+    discussions: s.breaks.filter(isDiscussionRow).map((b) => ({ start: Date.parse(b.startedAt), end: b.endedAt ? Date.parse(b.endedAt) : null, remark: String(b.reason).slice("Discussion: ".length) })),
     meetings: s.meetings
       .filter((m) => m.startedAt)
       .map((m) => ({ start: Date.parse(m.startedAt!), end: m.endedAt ? Date.parse(m.endedAt) : null, label: m.title ? `${MEETING_LABEL[m.meetingType] ?? "Meeting"}: ${m.title}` : (MEETING_LABEL[m.meetingType] ?? "Meeting") })),

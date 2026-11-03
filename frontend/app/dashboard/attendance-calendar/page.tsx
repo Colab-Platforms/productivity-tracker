@@ -19,6 +19,7 @@ type Row = {
   workedSeconds: number | null; breakSeconds: number | null; stillWorking: boolean; payrollStatus: string; leaveType: string | null; holidayName: string | null; note: string | null;
   lateRemark: string | null; correctedBy: string | null; autoClosed: boolean; leaveHalfDay: string | null; leaveReason: string | null;
   tasksPlanned: number | null; tasksCompleted: number | null; remarks: string;
+  discussions: { startedAt: string; endedAt: string | null; seconds: number; remark: string }[];
 };
 type Data = {
   timezone: string; today: string; from: string; to: string; rules: { presentUntil: string; lateUntil: string };
@@ -276,13 +277,18 @@ export default function AttendanceCalendarPage() {
                     {pickedRow.lateRemark && (
                       <p className="rounded-xl bg-amber-50 px-3 py-2 text-amber-900"><span className="font-medium">Reason for arriving late:</span> {pickedRow.lateRemark}</p>
                     )}
+                    {pickedRow.discussions.map((d, i) => (
+                      <p key={i} className="rounded-xl bg-violet-50 px-3 py-2 text-violet-900">
+                        <span className="font-medium">Discussion · {clockTime(d.startedAt, pickedPerson.timezone)}{d.endedAt ? ` – ${clockTime(d.endedAt, pickedPerson.timezone)}` : " – now"} · {hm(d.seconds)}:</span> {d.remark}
+                      </p>
+                    ))}
                     {pickedRow.correctedBy && <p className="rounded-xl bg-indigo-50/60 px-3 py-2 text-slate-700">Corrected by {pickedRow.correctedBy} after a correction request.</p>}
                     {pickedRow.autoClosed && <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700">Clocked out automatically because the day was left open.</p>}
                     {pickedRow.stillWorking && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-emerald-900">Still working: the check-out time will appear once you clock out.</p>}
                     {pickedRow.tasksPlanned !== null && (
                       <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700">Tasks: {pickedRow.tasksCompleted ?? 0} done of {pickedRow.tasksPlanned} planned.</p>
                     )}
-                    {!pickedRow.lateRemark && !pickedRow.correctedBy && !pickedRow.autoClosed && !pickedRow.stillWorking && pickedRow.tasksPlanned === null && (
+                    {!pickedRow.lateRemark && pickedRow.discussions.length === 0 && !pickedRow.correctedBy && !pickedRow.autoClosed && !pickedRow.stillWorking && pickedRow.tasksPlanned === null && (
                       <p className="text-slate-400">Nothing special recorded for this day.</p>
                     )}
                   </div>

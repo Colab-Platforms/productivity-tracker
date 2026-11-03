@@ -241,7 +241,7 @@ export async function getMonthAttendanceBulk(
       logoutAt: true,
       productiveSeconds: true,
       breakSeconds: true,
-      breaks: { select: { breakType: true, startedAt: true, endedAt: true } },
+      breaks: { select: { breakType: true, reason: true, startedAt: true, endedAt: true } },
       meetingSeconds: true,
       autoClosed: true,
     },

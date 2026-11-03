@@ -4,6 +4,7 @@ import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
+import { DISCUSSION_PREFIX } from "../tracker/activityClass.js";
 import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,22 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
       .catch(() => [] as { workSessionId: string | null; actedBy: { firstName: string; lastName: string } }[]);
     for (const a of audits) if (a.workSessionId && !correctedBy.has(a.workSessionId)) correctedBy.set(a.workSessionId, `${a.actedBy.firstName} ${a.actedBy.lastName}`.trim());
   }
+  // Unscheduled discussions ("Meeting / Team Huddle" from the activity menu) with their remark; same people the viewer may already see.
+  const discussionsOf = new Map<string, { startedAt: Date; endedAt: Date | null; remark: string }[]>();
+  if (sessions.length) {
+    const rows = await prisma.trackerBreak
+      .findMany({
+        where: { workSessionId: { in: sessions.map((s) => s.id) }, breakType: "OTHER", reason: { startsWith: DISCUSSION_PREFIX } },
+        orderBy: { startedAt: "asc" },
+        select: { workSessionId: true, startedAt: true, endedAt: true, reason: true },
+      })
+      .catch(() => [] as { workSessionId: string; startedAt: Date; endedAt: Date | null; reason: string | null }[]);
+    for (const r of rows) {
+      const list = discussionsOf.get(r.workSessionId) ?? [];
+      list.push({ startedAt: r.startedAt, endedAt: r.endedAt, remark: String(r.reason).slice(DISCUSSION_PREFIX.length) });
+      discussionsOf.set(r.workSessionId, list);
+    }
+  }
   const leaveOf = new Map(leaveDays.map((l) => [`${l.userId}|${l.date.toISOString().slice(0, 10)}`, l]));
   const tasksOf = new Map<string, { planned: number; completed: number }>();
   for (const t of taskGroups) {
@@ -186,6 +203,12 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
         autoClosed: !!session?.autoClosed,
         leaveHalfDay: leave?.isHalfDay ? (leave.isFirstHalf ? "first half" : "second half") : null,
         leaveReason: leave?.leaveRequest?.reason ?? null,
+        discussions: (session ? discussionsOf.get(session.id) ?? [] : []).map((x) => ({
+          startedAt: x.startedAt,
+          endedAt: x.endedAt,
+          seconds: Math.max(0, Math.floor(((x.endedAt ?? new Date()).getTime() - x.startedAt.getTime()) / 1000)),
+          remark: x.remark,
+        })),
         tasksPlanned: task ? task.planned : null,
         tasksCompleted: task ? task.completed : null,
         remarks: remarkParts.join(" · "),
