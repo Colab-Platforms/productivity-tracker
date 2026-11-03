@@ -28,6 +28,7 @@ type Project = {
   managerId: string | null;
   manager: string | null;
   coManagers: { id: string; name: string; employeeCode: string | null }[];
+  directReports: { id: string; name: string; employeeCode: string | null; designation: string | null; status: string; company: string | null }[];
   members: Member[];
 };
 
@@ -305,6 +306,7 @@ export default function ProjectsPage() {
                         <span className="shrink-0 rounded-full bg-[#EEF0FD] px-2.5 py-1 text-xs font-medium text-slate-600">
                           {p.members.length}{" "}
                           {p.members.length === 1 ? "person" : "people"}
+                          {p.directReports.length > 0 ? ` + ${p.directReports.length} report directly` : ""}
                         </span>
                         <svg
                           viewBox="0 0 20 20"
@@ -543,6 +545,46 @@ export default function ProjectsPage() {
                                 </li>
                               ))}
                             </ul>
+                          )}
+
+                          {p.directReports.length > 0 && (
+                            <div className="mt-4">
+                              <p className="mb-2 text-xs font-medium text-slate-600">
+                                Report directly to {p.manager ?? "the manager"}
+                                {p.coManagers.length > 0 ? " or a co-manager" : ""}{" "}
+                                <span className="font-normal text-slate-400">
+                                  — not members of this project, but this manager sees and approves their work
+                                </span>
+                              </p>
+                              <ul className="divide-y divide-indigo-50 overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)]">
+                                {p.directReports.map((r) => (
+                                  <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium text-slate-900">{r.name}</p>
+                                      <p className="mt-0.5 text-xs text-slate-400">
+                                        {r.employeeCode}
+                                        {r.designation ? ` · ${r.designation}` : ""}
+                                        {r.company ? ` · ${r.company}` : ""}
+                                      </p>
+                                    </div>
+                                    {canManage && (
+                                      <button
+                                        disabled={busy}
+                                        onClick={() =>
+                                          run(
+                                            () => apiPost<Data>(`/projects/${p.id}/members`, { userId: r.id }),
+                                            `${r.name} added to the project.`
+                                          )
+                                        }
+                                        className="rounded-xl border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-indigo-50/60 disabled:opacity-40"
+                                      >
+                                        Add to project
+                                      </button>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
                           )}
                         </div>
                       )}
