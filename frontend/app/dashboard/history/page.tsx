@@ -1,18 +1,31 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPatch } from "@/lib/api";
 import { formatTime, getPlatformTimezone, isoDaysAgo } from "@/lib/time";
 import { NO_REMARK, lateRemarkText } from "../reports/_team/lateRemark";
 import { Modal } from "../_employees/Modal";
 
 type DayTask = {
   id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; outcome: string | null;
-  completionNote: string | null; reviewNote: string | null; rejectionNote: string | null; project: string | null; assigned: boolean;
+  completionNote: string | null; reviewNote: string | null; rejectionNote: string | null; project: string | null; assigned: boolean; completedAt?: string | null;
 };
 type DayData = { date: string; score: { percent: number | null; earned?: number; total?: number } & Record<string, unknown>; tasks: DayTask[] };
 
-const WEIGHT_LABEL: Record<string, string> = { LOW: "Low", MEDIUM: "Medium", HIGH: "High", CRITICAL: "Urgent" };
+// Calendar day of a timestamp in the company timezone (YYYY-MM-DD).
+function dayOf(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: getPlatformTimezone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+}
+// Finished on a later day than the task's own day.
+function markedLate(t: DayTask, taskDay: string): boolean {
+  return t.status === "COMPLETED" && !!t.completedAt && dayOf(t.completedAt) > taskDay;
+}
+// Approved, not finished, not graded. The server also enforces the 30-day limit.
+function canMarkDone(t: DayTask): boolean {
+  return t.approvalStatus === "APPROVED" && (t.status === "PENDING" || t.status === "IN_PROGRESS") && !t.outcome;
+}
+
+const WEIGHT_LABEL:Record<string, string> = { LOW: "Low", MEDIUM: "Medium", HIGH: "High", CRITICAL: "Urgent" };
 
 // What happened to this task, in plain words.
 function taskState(t: DayTask): { label: string; tone: string } {
@@ -38,6 +51,29 @@ function DayTasksModal({ date, onClose }: { date: string; onClose: () => void })
       .catch((e: Error) => live && setRes({ date, error: e.message }));
     return () => { live = false; };
   }, [date]);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
+
+  // Forgot to tick it on the day: mark it done now. The server stamps the real time; the manager sees it as done (flagged late).
+  async function markDone(id: string) {
+    if (busy) return;
+    setBusy(true);
+    setActionError("");
+    try {
+      await apiPatch(`/tasks/${id}`, { status: "COMPLETED", ...(note.trim() ? { completionNote: note.trim() } : {}) });
+      setConfirmId(null);
+      setNote("");
+      const data = await apiGet<DayData>(`/tasks/day?date=${date}`);
+      setRes({ date, data });
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Could not mark the task done");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const current = res && res.date === date ? res : null;
   const title = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-IN", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short", year: "numeric" });
   return (
@@ -60,6 +96,21 @@ function DayTasksModal({ date, onClose }: { date: string; onClose: () => void })
               {t.description && <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{t.description}</p>}
               {t.completionNote && <p className="mt-2 text-sm text-slate-600"><span className="font-medium text-slate-700">Your note: </span>{t.completionNote}</p>}
               {(t.reviewNote || t.rejectionNote) && <p className="mt-1 text-sm text-slate-600"><span className="font-medium text-slate-700">Manager&apos;s comment: </span>{t.reviewNote || t.rejectionNote}</p>}
+              {markedLate(t, date) && <p className="mt-2"><span className="rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700">Ticked later, on {dayOf(t.completedAt!)} · your manager decides</span></p>}
+              {canMarkDone(t) && (
+                confirmId === t.id ? (
+                  <div className="mt-3 space-y-2">
+                    <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} rows={2} placeholder="Note for your manager, e.g. finished on the day, forgot to tick" className="w-full rounded-xl border border-indigo-100 px-3 py-2 text-sm text-slate-900" />
+                    {actionError && <p className="text-sm text-red-700">{actionError}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={() => markDone(t.id)} disabled={busy} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">{busy ? "Saving…" : "Confirm done"}</button>
+                      <button onClick={() => { setConfirmId(null); setNote(""); setActionError(""); }} disabled={busy} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm text-slate-700 hover:bg-indigo-50/60">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => { setConfirmId(t.id); setNote(""); setActionError(""); }} className="mt-3 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Mark as done</button>
+                )
+              )}
             </li>
           );
         })}

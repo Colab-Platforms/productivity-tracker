@@ -115,7 +115,9 @@ export async function listQueries(userId: string, f: ListFilters = {}) {
         ? { raisedById: userId }
         : viewer.role === "MANAGER"
           ? { OR: [{ raisedById: userId }, { assignedToId: userId }, { raisedById: { in: [...me.teamIds] } }] }
-          : { OR: [{ raisedById: userId }, ...(viewer.access.all ? [{}] : [{ platformId: { in: viewer.access.ids } }])] };
+          : viewer.access.all
+            ? {}
+            : { OR: [{ raisedById: userId }, { platformId: { in: viewer.access.ids } }] };
     const rows = await prisma.ticket.findMany({
       where,
       select: {

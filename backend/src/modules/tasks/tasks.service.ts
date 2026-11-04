@@ -446,6 +446,12 @@ export async function updateMyTask(
       throw new Error("NOT_APPROVED_YET");
     }
     if (task.outcome) throw new Error("ALREADY_REVIEWED");
+    // Forgot to tick it on the day: allowed later, but only up to 30 days back.
+    if (status === "COMPLETED" && String(task.status) !== "COMPLETED") {
+      const ctx = await userContext(userId);
+      const ageDays = Math.round((platformToday(ctx.timezone).getTime() - task.date.getTime()) / 86400000);
+      if (ageDays > 30) throw new Error("TASK_TOO_OLD");
+    }
     data.status = status as never;
     // Productivity is counted in the hour a task was actually finished, so the moment is recorded.
     // Moving it back out of COMPLETED (before a manager reviews it) clears it again.
