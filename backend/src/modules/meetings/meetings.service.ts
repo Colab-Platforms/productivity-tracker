@@ -394,6 +394,13 @@ export async function end(userId: string, id: string) {
   const res = await prisma.meeting.updateMany({ where: { id, status: "SCHEDULED", endsAt: { gte: now } }, data: { endsAt: now } });
   if (res.count === 0) throw new Error("MEETING_OVER");
   auditNote({ recordType: "Meeting", recordId: id, before: { endsAt: m.endsAt.toISOString() }, after: { endsAt: now.toISOString() }, summary: `Ended "${m.title}" early` });
+  // Everyone still marked in the meeting is stopped at this same moment. A failure here must not undo the end itself.
+  try {
+    const closed = await part.closeOpenAtMeetingEnd(id, userId, m.title, now);
+    if (closed > 0) auditNote({ after: { endsAt: now.toISOString(), openRecordsClosed: closed }, summary: `Ended "${m.title}" early for everyone; ${closed} open attendance record${closed === 1 ? "" : "s"} closed at the end time` });
+  } catch (e) {
+    console.error("[meetings] could not close open attendance at meeting end:", e);
+  }
   return { ok: true };
 }
 

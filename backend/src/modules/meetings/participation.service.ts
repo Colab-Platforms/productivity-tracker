@@ -160,6 +160,8 @@ export async function extrasFor(items: Item[], viewerId: string, now: Date) {
     out.set(t.meetingId, {
       ...(out.get(t.meetingId) ?? {}),
       tracked: true,
+      // Has the scheduled start passed? A Team Huddle is accepted (= joined) once it has started.
+      started: it.startsAt.getTime() <= now.getTime(),
       lateAfterMinutes: t.lateAfterMinutes,
       joinWindow: { open: w.open, reason: w.reason, opensAt: w.opensAt, closesAt: w.closesAt },
       // The viewer's OWN record: an invitee, or the organizer (who can also mark himself in the meeting).
@@ -252,14 +254,31 @@ export async function respond(userId: string, meetingId: string, response: unkno
   if (m.endsAt.getTime() < now.getTime()) throw new Error("MEETING_OVER");
   if ((await participationReady()) && (await prisma.meetingParticipation.findUnique({ where: { meetingId_userId: { meetingId, userId } }, select: { id: true } }))) throw new Error("ALREADY_JOINED");
 
+  // A Team Huddle (tracked meeting) is accepted when it STARTS, and accepting is joining: no separate Join step.
+  // Before the start there is nothing to accept yet (the person was told it is scheduled); declining is allowed at any time.
+  const tracking = (await participationReady()) ? await prisma.meetingTracking.findUnique({ where: { meetingId }, select: { lateAfterMinutes: true } }) : null;
+  const live = now.getTime() >= m.startsAt.getTime();
+  if (tracking && response === "ACCEPTED" && !live) throw new Error("ACCEPT_WHEN_STARTED");
+
   const before = await prisma.meetingResponse.findUnique({ where: { meetingId_userId: { meetingId, userId } }, select: { response: true } });
   await prisma.meetingResponse.upsert({
     where: { meetingId_userId: { meetingId, userId } },
     update: { response, respondedAt: now },
     create: { meetingId, platformId: v.platformId, userId, response },
   });
+  // Accepting a live huddle = joining it, stamped by the server at this same instant. Not a second record if one already exists.
+  let joinedAt: Date | null = null;
+  if (tracking && response === "ACCEPTED" && live) {
+    try {
+      await prisma.meetingParticipation.create({ data: { meetingId, platformId: v.platformId, userId, joinedAt: now, source: "SELF" } });
+      joinedAt = now;
+      auditNote({ recordType: "Meeting", recordId: meetingId, summary: `Accepted and joined "${m.title}"`, before: before ? { response: before.response } : { response: null }, after: { response, joinedAt: now } });
+    } catch (e) {
+      if (!isUnique(e)) throw e;
+    }
+  }
   const word = response === "ACCEPTED" ? "accepted" : "declined";
-  auditNote({ recordType: "Meeting", recordId: meetingId, summary: `${response === "ACCEPTED" ? "Accepted" : "Declined"} the invitation to "${m.title}"`, before: before ? { response: before.response } : { response: null }, after: { response } });
+  if (!joinedAt) auditNote({ recordType: "Meeting", recordId: meetingId, summary: `${response === "ACCEPTED" ? "Accepted" : "Declined"} the invitation to "${m.title}"`, before: before ? { response: before.response } : { response: null }, after: { response } });
   emitMeetingChange([userId, m.organizerId], meetingId);
   try {
     await notifyUsers({
@@ -274,7 +293,7 @@ export async function respond(userId: string, meetingId: string, response: unkno
   } catch (e) {
     console.error("[meetings] could not notify the organizer of an answer:", e);
   }
-  return { ok: true, response };
+  return { ok: true, response, joinedAt, late: joinedAt && tracking ? L.isLate(joinedAt, m.startsAt, tracking.lateAfterMinutes) : false };
 }
 
 export async function leave(userId: string, meetingId: string) {
@@ -295,6 +314,29 @@ export async function leave(userId: string, meetingId: string) {
   auditNote({ recordType: "Meeting", recordId: meetingId, summary: `Declared leaving "${m?.title ?? "a meeting"}"`, after: { leftAt: now } });
   if (m) emitMeetingChange([userId, m.organizerId], meetingId);
   return { ok: true, leftAt: now, durationSeconds: L.durationSeconds(p.joinedAt, now) };
+}
+
+// The organizer ended the meeting for everyone: every person still marked "in the meeting" is stopped at that same moment.
+// Their time runs from their own join to the end moment (never beyond), they are told by the live signal, and the audit log gets one line.
+// "MANAGER" is the true description (the manager ended it); a person who already pressed End keeps their own time untouched.
+export async function closeOpenAtMeetingEnd(meetingId: string, organizerId: string, title: string, at: Date): Promise<number> {
+  if (!(await participationReady())) return 0;
+  const open = await prisma.meetingParticipation.findMany({ where: { meetingId, leftAt: null }, select: { id: true, userId: true, joinedAt: true } });
+  if (open.length === 0) return 0;
+  const closed: string[] = [];
+  await prisma.$transaction(async (tx) => {
+    for (const p of open) {
+      // Only close while still open, so a person pressing End at the same moment is recorded once.
+      const stop = p.joinedAt.getTime() > at.getTime() ? p.joinedAt : at;
+      const r = await tx.meetingParticipation.updateMany({
+        where: { id: p.id, leftAt: null },
+        data: { leftAt: stop, durationSeconds: L.durationSeconds(p.joinedAt, stop), endedBy: "MANAGER" },
+      });
+      if (r.count > 0) closed.push(p.userId);
+    }
+  });
+  if (closed.length > 0) emitMeetingChange([organizerId, ...closed], meetingId);
+  return closed.length;
 }
 
 // --- the organizing manager: live list and report ---------------------------------------------------------

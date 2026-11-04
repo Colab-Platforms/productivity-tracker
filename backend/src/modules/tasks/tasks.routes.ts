@@ -90,6 +90,14 @@ router.get("/day", async (req, res) => {
   }
 });
 
+router.get("/range", async (req, res) => {
+  try {
+    res.json(await tasks.listMyRange(req.user!.userId, req.query.from, req.query.to));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
 // A manager's OWN task picture (self-managed tasks only). Managers only.
 router.get("/self/summary", async (req, res) => {
   try {

@@ -346,6 +346,25 @@ export async function listMyDay(userId: string, day: unknown) {
   };
 }
 
+// The person's own tasks over a date range (newest day first), for the Daily Tasks date filter. Read-only, own data only, max 93 days.
+export async function listMyRange(userId: string, from: unknown, to: unknown) {
+  const start = parseIsoDay(from);
+  const end = parseIsoDay(to);
+  if (end.getTime() < start.getTime()) throw new Error("BAD_RANGE");
+  if ((end.getTime() - start.getTime()) / 86400000 > 92) throw new Error("RANGE_TOO_LONG");
+  const rows = await prisma.dailyTask.findMany({
+    where: { userId, date: { gte: start, lte: end } },
+    include: { team: { select: { name: true } } },
+    orderBy: [{ date: "desc" }, { title: "asc" }],
+  });
+  return {
+    from: start.toISOString().slice(0, 10),
+    to: end.toISOString().slice(0, 10),
+    score: scoreOf(rows),
+    tasks: rows.map((t) => shape(t, t.team?.name ?? null)),
+  };
+}
+
 // Resolves the project for a new task and refuses one the person isn't on.
 async function resolveProject(
   userId: string,

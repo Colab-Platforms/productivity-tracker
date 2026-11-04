@@ -294,7 +294,7 @@ export default function AttendancePage() {
                   <th className={`${th} text-right`}>Clock out</th>
                   <th className={`${th} text-right`}>Break used</th>
                   <th className={`${th} text-right`} title="Washroom time is tracked on its own. It is not a break and does not use the break allowance.">Washroom</th>
-                  <th className={`${th} text-right`}>Meetings</th>
+                  <th className={`${th} text-right`}>Team Huddle</th>
                   <th className={`${th} text-right`}>Working</th>
                 </tr>
               </thead>

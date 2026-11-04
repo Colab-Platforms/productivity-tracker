@@ -203,7 +203,7 @@ export default function HistoryPage() {
       "Productive",
       "Break",
       "Washroom",
-      "Meetings",
+      "Team Huddle",
       "Breaks taken",
       "Late by (min)",
       "Late remark",
@@ -221,7 +221,7 @@ export default function HistoryPage() {
         hm(r.productiveSeconds),
         hm(r.breakSeconds),
         hm(r.washroomSeconds ?? 0),
-        hm(r.meetingSeconds),
+        hm(r.huddleSeconds ?? 0),
         r.breakCount,
         r.wasLateLogin ? r.lateByMinutes : 0,
         lateRemarkText({ arrival: r.arrival, loginAt: r.loginAt, arrivalMinutes: r.arrivalMinutes, lateReason: r.lateRemark }, getPlatformTimezone()),
@@ -333,7 +333,7 @@ export default function HistoryPage() {
                     Washroom
                   </th>
                   <th className="text-right px-4 py-3 font-medium text-slate-500">
-                    Meetings
+                    Team Huddle
                   </th>
                   <th className="text-right px-5 py-3 font-medium text-slate-500">
                     Tasks
@@ -402,7 +402,6 @@ export default function HistoryPage() {
                         }`}
                       >
                         {hm(r.productiveSeconds)}
-                        {(r.huddleSeconds ?? 0) > 0 && <span className="block text-[11px] font-normal text-slate-400" title="Part of the productive time, not extra">incl. {hm(r.huddleSeconds ?? 0)} Team Huddle</span>}
                       </td>
                       <td
                         className={`px-4 py-3 text-right tabular-nums ${
@@ -417,7 +416,7 @@ export default function HistoryPage() {
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-600">{(r.washroomSeconds ?? 0) > 0 ? hm(r.washroomSeconds ?? 0) : <span className="text-slate-300">—</span>}</td>
                       <td className="px-4 py-3 text-right text-slate-600 tabular-nums">
-                        {hm(r.meetingSeconds)}
+                        {(r.huddleSeconds ?? 0) > 0 ? hm(r.huddleSeconds ?? 0) : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="px-5 py-3 text-right tabular-nums text-slate-600">
                         {r.taskTotal === 0 ? (

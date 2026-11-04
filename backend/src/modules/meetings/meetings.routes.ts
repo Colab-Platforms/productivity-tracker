@@ -33,6 +33,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_LATE_MINUTES: { status: 400, message: "Choose how many minutes late counts as late: a whole number from 0 to 120." },
   JOIN_TOO_EARLY: { status: 409, message: "You can join from 15 minutes before the meeting starts." },
   JOIN_CLOSED: { status: 409, message: "Joining has closed because the meeting's expected end has passed. Ask the organizer to record it." },
+  ACCEPT_WHEN_STARTED: { status: 409, message: "This Team Huddle hasn't started yet. You will be asked to accept when it starts." },
   NOT_ACCEPTED: { status: 409, message: "Accept the invitation first, then you can join." },
   BAD_RESPONSE: { status: 400, message: "Answer must be accept or decline." },
   ALREADY_JOINED: { status: 409, message: "You have already joined this meeting. If you left and came back, ask the organizer to correct it." },
