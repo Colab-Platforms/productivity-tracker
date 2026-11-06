@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { managerIdsByTeam } from "../../lib/teamManagers.js";
+import { getPinnedCompany, onlyPinnedCompany } from "../../lib/deployment.js";
 import { progressOf, type Progress } from "./tasks.entry.logic.js";
 
 // ---------------------------------------------------------------------------
@@ -77,35 +78,28 @@ export function entryView(status: string, d: EntryDetail | undefined) {
 }
 
 /**
- * Who an employee may TAG as the approver of a task. Independent of the project picked and of the reporting line:
- *  - every active Manager of the employee's OWN company,
- *  - active Admins who carry project approval responsibility (they are the main manager or a co-manager of an active project of that company),
- *  - the managers (Manager or Admin) of projects the employee is already assigned to, even when that project is run from another company.
- * Never the employee, HR, an Employee-role person, someone suspended, or an unrelated company's people.
+ * Who an employee may TAG as the approver of a task. Read from the existing records, never typed in, and independent of the employee's own
+ * project and reporting line. The list is every ACTIVE Manager or Admin who is
+ *  - someone's reporting manager (the distinct targets of users.reportsToId), or
+ *  - the main manager or a co-manager of an active project (teams.managerId, team_managers),
+ * in any company (a deployment pinned to one company keeps only that company). Each person appears once (by user id). Never the employee,
+ * HR, Employee-role people (a project "manager" who is an Employee is not eligible) or suspended people.
  */
 export async function eligibleManagers(owner: { id: string; platformId: string }) {
-  const [companyTeams, myTeams] = await Promise.all([
-    prisma.team.findMany({ where: { platformId: owner.platformId, isActive: true }, select: { id: true } }),
-    prisma.team.findMany({ where: { isActive: true, members: { some: { userId: owner.id, isActive: true } } }, select: { id: true } }),
+  const [reportTargets, activeTeams] = await Promise.all([
+    prisma.user.findMany({ where: { reportsToId: { not: null }, status: { in: ["ACTIVE", "INVITED"] } }, select: { reportsToId: true }, distinct: ["reportsToId"] }),
+    prisma.team.findMany({ where: { isActive: true }, select: { id: true } }),
   ]);
-  const byTeam = await managerIdsByTeam([...companyTeams, ...myTeams].map((t) => t.id));
-  const companyTeamIds = new Set(companyTeams.map((t) => t.id));
-  const myTeamIds = new Set(myTeams.map((t) => t.id));
-  const responsible = new Set<string>(); // manage a project of this company
-  const mine = new Set<string>(); // manage a project the employee is on
-  for (const [teamId, ids] of byTeam) for (const id of ids) {
-    if (companyTeamIds.has(teamId)) responsible.add(id);
-    if (myTeamIds.has(teamId)) mine.add(id);
-  }
+  const byTeam = await managerIdsByTeam(activeTeams.map((t) => t.id));
+  const ids = new Set<string>();
+  for (const r of reportTargets) if (r.reportsToId) ids.add(r.reportsToId);
+  for (const list of byTeam.values()) for (const id of list) ids.add(id);
+  ids.delete(owner.id);
+  const pinned = await onlyPinnedCompany([...ids]);
   const users = await prisma.user.findMany({
-    where: {
-      id: { not: owner.id },
-      status: "ACTIVE",
-      role: { in: ["MANAGER", "ADMIN"] },
-      OR: [{ platformId: owner.platformId, role: "MANAGER" }, { id: { in: [...responsible] } }, { id: { in: [...mine] } }],
-    },
+    where: { id: { in: pinned }, status: "ACTIVE", role: { in: ["MANAGER", "ADMIN"] } },
     select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true },
-    orderBy: { firstName: "asc" },
+    orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
   return users.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode, role: String(u.role) }));
 }
@@ -128,14 +122,29 @@ export async function resolveTaggedManager(owner: { id: string; platformId: stri
   throw new Error("TAGGED_MANAGER_REQUIRED");
 }
 
-/** Every project the employee may pick: all ACTIVE projects of their own company, plus the ones they are already assigned to. */
-export async function selectableProjects(owner: { id: string; platformId: string }) {
+/**
+ * Every ACTIVE project in the records (any company; a deployment pinned to one company keeps only that company), whether or not the
+ * employee is on it. Real project ids. Two projects that share a name in different companies (for example "Colab Delivery") are different
+ * records, so the company is added to their label to tell them apart; a unique name is shown as it is. Nothing is merged or created.
+ */
+export async function selectableProjects(_owner: { id: string; platformId: string }) {
+  const pin = await getPinnedCompany();
   const teams = await prisma.team.findMany({
-    where: { isActive: true, OR: [{ platformId: owner.platformId }, { members: { some: { userId: owner.id, isActive: true } } }] },
+    where: { isActive: true, ...(pin ? { platformId: pin.id } : {}) },
     select: { id: true, name: true, platform: { select: { name: true } }, platformId: true },
-    orderBy: { name: "asc" },
+    orderBy: [{ name: "asc" }],
   });
-  return teams.map((t) => ({ id: t.id, name: t.name, company: t.platform?.name ?? null, ownCompany: t.platformId === owner.platformId }));
+  const count = new Map<string, number>();
+  for (const t of teams) count.set(t.name.trim().toLowerCase(), (count.get(t.name.trim().toLowerCase()) ?? 0) + 1);
+  return teams
+    .map((t) => ({
+      id: t.id,
+      name: t.name,
+      company: t.platform?.name ?? null,
+      ownCompany: t.platformId === _owner.platformId,
+      label: (count.get(t.name.trim().toLowerCase()) ?? 0) > 1 && t.platform?.name ? `${t.name} · ${t.platform.name}` : t.name,
+    }))
+    .sort((x, y) => x.label.localeCompare(y.label));
 }
 
 /** What the form needs: all selectable projects and all eligible managers, as two independent lists. */

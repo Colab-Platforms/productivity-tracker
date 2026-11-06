@@ -71,7 +71,7 @@ type Task = {
 // Two independent lists: every project the person may pick, and every manager they may tag. Picking one never changes the other.
 type EntryForm = {
   ready: boolean;
-  projects: { id: string; name: string; company: string | null; ownCompany: boolean }[];
+  projects: { id: string; name: string; label: string; company: string | null; ownCompany: boolean }[];
   managers: { id: string; name: string; code: string | null; role: string }[];
 };
 
@@ -221,7 +221,7 @@ export default function TasksPage() {
 
   const score = data?.score;
   // Project and manager are chosen independently; nothing is preselected and one never changes the other.
-  const projectList = data?.entryForm?.ready ? data.entryForm.projects : (data?.projects ?? []).map((p) => ({ ...p, company: null as string | null, ownCompany: true }));
+  const projectList = data?.entryForm?.ready ? data.entryForm.projects : (data?.projects ?? []).map((p) => ({ ...p, label: p.name, company: null as string | null, ownCompany: true }));
   const managerList = data?.entryForm?.managers ?? [];
   const needProject = projectList.length > 0;
   const needManager = managerList.length > 0;
@@ -289,79 +289,90 @@ export default function TasksPage() {
       {/* --- propose ------------------------------------------------------ */}
       <form
         onSubmit={propose}
-        className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-4 space-y-3"
+        className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-5 space-y-4"
       >
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="What do you plan to do today?"
-          className="w-full rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-500"
-        />
+        <label className="block text-xs text-slate-500">
+          Task description <span className="text-rose-500">*</span>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="What do you plan to do today?"
+            className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-500"
+          />
+        </label>
+
+        <label className="block text-xs text-slate-500">
+          Additional details <span className="text-slate-400">(optional)</span>
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Any detail your manager needs"
+            className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-500"
+          />
+        </label>
 
         {data?.entryForm?.ready && (
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs text-slate-500">
-              Date
-              <p className="mt-1 rounded-xl border border-indigo-100 bg-slate-50 px-3 py-2 text-sm text-slate-700">{formatDate(new Date(), { day: "numeric", month: "short", year: "numeric" })}</p>
-            </label>
-            <label className="text-xs text-slate-500">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="min-w-0 text-xs text-slate-500">
               Select Project{needProject && <span className="text-rose-500"> *</span>}
-              <select value={projectId} required={needProject} disabled={!needProject} onChange={(e) => setProjectId(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+              <select value={projectId} required={needProject} disabled={!needProject} onChange={(e) => setProjectId(e.target.value)} title={projectList.find((p) => p.id === projectId)?.label} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500 truncate">
                 <option value="">{needProject ? "Select a project" : "No project available"}</option>
                 {projectList.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}{!p.ownCompany && p.company ? ` (${p.company})` : ""}</option>
+                  <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
             </label>
-            <label className="text-xs text-slate-500">
+            <label className="min-w-0 text-xs text-slate-500">
               Tag Reporting Manager{needManager && <span className="text-rose-500"> *</span>}
-              <select value={taggedId ?? ""} required={needManager} disabled={!needManager} onChange={(e) => setTaggedId(e.target.value || null)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+              <select value={taggedId ?? ""} required={needManager} disabled={!needManager} onChange={(e) => setTaggedId(e.target.value || null)} title={managerList.find((m) => m.id === taggedId)?.name} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500 truncate">
                 <option value="">{needManager ? "Select a manager" : "No manager available"}</option>
                 {managerList.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}{o.role === "ADMIN" ? " · Admin" : ""}</option>
+                  <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}{o.role === "ADMIN" ? " \u00b7 Admin" : ""}</option>
                 ))}
               </select>
               {!needManager && <span className="mt-1 block text-[11px] text-amber-600">No manager is available. Ask HR or your Admin.</span>}
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-xs text-slate-500">
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {data?.entryForm?.ready && (
+            <>
+              <div className="min-w-0 text-xs text-slate-500">
+                Date
+                <p className="mt-1 w-full truncate rounded-xl border border-indigo-100 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">{formatDate(new Date(), { day: "numeric", month: "short", year: "numeric" })}</p>
+              </div>
+              <label className="min-w-0 text-xs text-slate-500">
                 Hours spent
-                <input type="number" min={0} max={24} step={0.25} value={hours} onChange={(e) => setHours(e.target.value)} placeholder="0" className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900" />
+                <input type="number" min={0} max={24} step={0.25} value={hours} onChange={(e) => setHours(e.target.value)} placeholder="0" className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500" />
               </label>
-              <label className="text-xs text-slate-500">
+              <label className="min-w-0 text-xs text-slate-500">
                 Progress
-                <select value={progress} onChange={(e) => setProgress(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+                <select value={progress} onChange={(e) => setProgress(e.target.value)} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500">
                   <option value="IN_PROGRESS">In Progress</option>
                   <option value="COMPLETED">Completed</option>
                   <option value="BLOCKED">Blocked</option>
                 </select>
               </label>
-            </div>
-          </div>
-        )}
+            </>
+          )}
+          <label className="min-w-0 text-xs text-slate-500">
+            Task priority
+            <select value={weight} onChange={(e) => setWeight(e.target.value)} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500">
+              {WEIGHTS.map((w) => (
+                <option key={w.value} value={w.value}>
+                  {w.label} · {w.points}pt
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
 
-        <div className="flex flex-wrap gap-2">
-          <input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Additional details (optional)"
-            className="min-w-56 flex-1 rounded-xl border border-indigo-200 px-3 py-2 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-500"
-          />
-          <select
-            value={weight}
-            onChange={(e) => setWeight(e.target.value)}
-            className="rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900"
-          >
-            {WEIGHTS.map((w) => (
-              <option key={w.value} value={w.value}>
-                {w.label} · {w.points}pt
-              </option>
-            ))}
-          </select>
+        <div className="flex justify-end">
           <button
             type="submit"
             disabled={busy || !title.trim() || (data?.entryForm?.ready === true && ((needProject && !projectId) || (needManager && !taggedId)))}
-            className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+            className="w-full rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40 sm:w-auto"
           >
             Send for approval
           </button>
