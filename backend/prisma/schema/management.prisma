@@ -1,0 +1,42 @@
+// ===========================================================================
+// TALK TO MANAGEMENT - NEW TABLES ONLY. A private line from a person to ONE Admin they choose.
+//
+//  management_threads   one conversation: who wrote (senderId), which Admin it is addressed to (adminId), subject, status.
+//  management_messages  every message in it (sender and Admin), optional private attachment.
+// Only the sender and that one Admin can ever read a thread. HR, managers, other Admins and the Query Desk never see it:
+// it is deliberately NOT stored in tickets, and the audit log is told to skip these routes.
+// No Prisma relations to existing models on purpose; the foreign keys live in the migration SQL.
+// ===========================================================================
+
+model ManagementThread {
+  id         String @id @default(uuid()) @db.Uuid
+  platformId String @db.Uuid // the sender's company (from their sign-in)
+  senderId   String @db.Uuid
+  adminId    String @db.Uuid // the Admin it is addressed to
+
+  subject String
+  status  String @default("OPEN") // OPEN (waiting for the Admin) | REPLIED (Admin answered) | CLOSED
+
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([senderId, updatedAt])
+  @@index([adminId, updatedAt])
+  @@map("management_threads")
+}
+
+model ManagementMessage {
+  id       String @id @default(uuid()) @db.Uuid
+  threadId String @db.Uuid
+  authorId String @db.Uuid
+  body     String
+
+  attachmentKey  String?
+  attachmentName String?
+
+  createdAt DateTime @default(now())
+
+  @@index([threadId, createdAt])
+  @@map("management_messages")
+}

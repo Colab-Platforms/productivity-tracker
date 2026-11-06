@@ -262,6 +262,8 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/policies", label: "Policies", ready: true, icon: I.shield },
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, icon: I.receipt },
       { href: "/dashboard/queries", label: "Complaint Centre", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
+      { href: "/dashboard/talk-to-management", label: "Talk to Management", ready: true, roles: ["EMPLOYEE", "MANAGER", "HR"], icon: I.lock },
+      { href: "/dashboard/talk-to-management", label: "Management Inbox", ready: true, roles: ["ADMIN"], icon: I.mail },
       { href: "/change-password", label: "Change password", ready: true, icon: I.lock },
     ],
   },

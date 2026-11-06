@@ -43,6 +43,11 @@ type Rule = {
 const verdict = (b: Body, key: string, yes: unknown[], a: AuditAction, no: AuditAction): AuditAction => (yes.includes(b?.[key]) ? a : no);
 
 const RULES: Rule[] = [
+  // Talk to Management is confidential: never logged, so HR (who can read the audit log) can never see it. First rule on purpose.
+  { method: "POST", re: /^\/api\/management-talk(\/.*)?$/, module: "Other", action: "OTHER", summary: "Confidential", skip: true },
+  { method: "PUT", re: /^\/api\/management-talk(\/.*)?$/, module: "Other", action: "OTHER", summary: "Confidential", skip: true },
+  { method: "PATCH", re: /^\/api\/management-talk(\/.*)?$/, module: "Other", action: "OTHER", summary: "Confidential", skip: true },
+  { method: "DELETE", re: /^\/api\/management-talk(\/.*)?$/, module: "Other", action: "OTHER", summary: "Confidential", skip: true },
   { method: "POST", re: /^\/api\/auth\/login$/, module: "Authentication", action: "LOGIN", summary: "Signed in" },
 
   { method: "POST", re: /^\/api\/tracker\/clock-in$/, module: "Attendance", action: "CLOCK", summary: "Clocked in" },
