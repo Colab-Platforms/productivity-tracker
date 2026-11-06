@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTaskRealtime } from "@/lib/realtime";
 import { API_BASE } from "@/lib/api";
-import { todayIso } from "@/lib/time";
+import { todayIso, getPlatformTimezone } from "@/lib/time";
 import { plural } from "@/lib/plural";
 import { useMe } from "../layout";
 import { RevertModal } from "./RevertModal";
@@ -64,7 +64,14 @@ type Task = {
   approvalNote?: string | null;
   project?: string | null;
   canAct?: boolean;
+  date?: string;
+  completedAt?: string | null;
 };
+
+// Calendar day of a timestamp in the company timezone; used to flag work ticked off after its own day.
+function doneDay(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: getPlatformTimezone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+}
 
 // A task as the queue sends it: the task itself plus who it belongs to (an id, a name and an employee ID).
 type Row = Task & { userId: string; who: string; employeeCode: string | null; date: string };
@@ -594,6 +601,7 @@ export default function ApprovalsPage() {
                 {t.weight.toLowerCase()}
               </span>
 
+              {t.completedAt && t.date && doneDay(t.completedAt) > t.date && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Task was for ${t.date}; the employee ticked it done on ${doneDay(t.completedAt)}. Check their note and grade it as you see fit.`}>ticked later · {doneDay(t.completedAt)}</span>}
               {t.reopened?.resubmitted && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Reopened (${t.reopened.label}) and finished again`}>resubmitted</span>}
               <button
                 type="button"

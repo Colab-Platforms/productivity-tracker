@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
+import { Modal } from "../_employees/Modal";
 import { InviteResponse, JoinControl, type TrackedFields } from "../meetings/_participation/Participation";
 
 // ---------------------------------------------------------------------------
@@ -96,11 +97,20 @@ export default function StandupCard() {
   }, [load]);
   useRealtime(["meetings:changed"], load);
 
+  const [dismissed, setDismissed] = useState<string[]>([]);
   if (!data) return null;
   const items = relevant(data.meetings, now);
+  // The moment a Team Huddle you were invited to starts, a popup asks you to accept (accepting = joining). Closing it keeps the card below.
+  const askNow = data.meetings.find((m) => m.tracked && new Date(m.startsAt).getTime() <= now && new Date(m.endsAt).getTime() > now && m.state !== "cancelled" && m.canRespond && m.myResponse !== "DECLINED" && !m.isOrganizer && m.me?.state !== "IN_MEETING" && m.me?.state !== "ENDED" && !dismissed.includes(m.id));
   if (items.length === 0) return null;
   return (
     <div className="mt-4 space-y-3">
+      {askNow && (
+        <Modal title="Team Huddle has started" subtitle={`${askNow.title} · organised by ${askNow.organizer}`} onClose={() => setDismissed((d) => [...d, askNow.id])} width="max-w-md">
+          <p className="mb-4 text-sm text-slate-600">Accepting puts you in the huddle from now. {askNow.lateAfterMinutes ? `Accepting more than ${askNow.lateAfterMinutes} minutes after the start counts as late.` : ""}</p>
+          <InviteResponse meetingId={askNow.id} f={{ ...askNow, started: true }} onChanged={() => void load()} />
+        </Modal>
+      )}
       {items.map((m) => <StandupItem key={m.id} m={m} tz={data.tz} onChanged={() => void load()} />)}
     </div>
   );

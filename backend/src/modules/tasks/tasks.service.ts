@@ -379,6 +379,25 @@ export async function listMyDay(userId: string, day: unknown) {
   };
 }
 
+// The person's own tasks over a date range (newest day first), for the Daily Tasks date filter. Read-only, own data only, max 93 days.
+export async function listMyRange(userId: string, from: unknown, to: unknown) {
+  const start = parseIsoDay(from);
+  const end = parseIsoDay(to);
+  if (end.getTime() < start.getTime()) throw new Error("BAD_RANGE");
+  if ((end.getTime() - start.getTime()) / 86400000 > 92) throw new Error("RANGE_TOO_LONG");
+  const rows = await prisma.dailyTask.findMany({
+    where: { userId, date: { gte: start, lte: end } },
+    include: { team: { select: { name: true } } },
+    orderBy: [{ date: "desc" }, { title: "asc" }],
+  });
+  return {
+    from: start.toISOString().slice(0, 10),
+    to: end.toISOString().slice(0, 10),
+    score: scoreOf(rows),
+    tasks: rows.map((t) => shape(t, t.team?.name ?? null)),
+  };
+}
+
 // Resolves the project for a new task and refuses one the person isn't on.
 async function resolveProject(
   userId: string,
@@ -498,6 +517,12 @@ export async function updateMyTask(
       throw new Error("NOT_APPROVED_YET");
     }
     if (task.outcome) throw new Error("ALREADY_REVIEWED");
+    // Forgot to tick it on the day: allowed later, but only up to 30 days back.
+    if (status === "COMPLETED" && String(task.status) !== "COMPLETED") {
+      const ctx = await userContext(userId);
+      const ageDays = Math.round((platformToday(ctx.timezone).getTime() - task.date.getTime()) / 86400000);
+      if (ageDays > 30) throw new Error("TASK_TOO_OLD");
+    }
     data.status = status as never;
     // Productivity is counted in the hour a task was actually finished, so the moment is recorded.
     // Moving it back out of COMPLETED (before a manager reviews it) clears it again.

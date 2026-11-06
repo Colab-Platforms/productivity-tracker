@@ -13,7 +13,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost , API_BASE } from "@/lib/api";
 import { useTaskRealtime } from "@/lib/realtime";
-import { formatDate } from "@/lib/time";
+import { formatDate, isoDaysAgo } from "@/lib/time";
+import { DateFilter, RangeTasks, rangeFor, type RangeKey } from "./_range/RangeTasks";
 import SelfManagedTasks, { type SelfPayload } from "./_self/SelfManagedTasks";
 
 const API = API_BASE;
@@ -120,6 +121,8 @@ export default function TasksPage() {
   const [progress, setProgress] = useState("IN_PROGRESS");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [rangeKey, setRangeKey] = useState<RangeKey>("today");
+  const [picked, setPicked] = useState(isoDaysAgo(1));
 
   const load = useCallback(async () => {
     try {
@@ -238,6 +241,9 @@ export default function TasksPage() {
         </p>
       </header>
 
+      <DateFilter value={rangeKey} picked={picked} onChange={(k, p) => { setRangeKey(k); setPicked(p); }} />
+      {rangeKey !== "today" && <RangeTasks {...rangeFor(rangeKey, picked)} />}
+      {rangeKey !== "today" ? null : <>
       {/* --- score ------------------------------------------------------- */}
       {score && (
         <section className="rounded-2xl bg-indigo-600 p-6 text-white">
@@ -542,6 +548,7 @@ export default function TasksPage() {
           })}
         </Section>
       )}
+      </>}
     </div>
   );
 }

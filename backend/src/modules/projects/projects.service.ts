@@ -1,7 +1,8 @@
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { prisma } from "../../lib/prisma.js";
 import { isUuid } from "../../lib/params.js";
-import { managedByWhere, coManagersByTeam } from "../../lib/teamManagers.js";
+import { managedByWhere, coManagersByTeam, managerIdsByTeam } from "../../lib/teamManagers.js";
+import { accessFor } from "../../lib/companyAccess.js";
 
 // ---------------------------------------------------------------------------
 // PROJECTS
@@ -82,6 +83,24 @@ export async function listProjects(viewerId: string) {
 
   const coByTeam = await coManagersByTeam(teams.map((t) => t.id));
 
+  // People who REPORT DIRECTLY to a project's manager (or a co-manager) but are not members of the project. They are the
+  // manager's people too (they see and approve their work), but the member list alone does not show them. Read only:
+  // nothing is changed; limited to people of companies the viewer may act on.
+  const managersOfTeam = await managerIdsByTeam(teams.map((t) => t.id));
+  const allManagerIds = [...new Set([...managersOfTeam.values()].flat())];
+  const reach = await accessFor(viewerId);
+  const directReports = allManagerIds.length
+    ? await prisma.user.findMany({
+        where: {
+          reportsToId: { in: allManagerIds },
+          status: { in: ["ACTIVE", "INVITED"] },
+          ...(pinned ? { platformId: pinned.id } : reach.all ? {} : { platformId: { in: reach.ids } }),
+        },
+        select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true, status: true, reportsToId: true, platform: { select: { name: true } } },
+        orderBy: [{ firstName: "asc" }],
+      })
+    : [];
+
   // Who can be picked as a manager: Managers AND Admins (Admins run teams too) who can sign in, in the companies this
   // person can act on. Not just people already listed as managers: a company may have none yet.
   const managerCandidates = isStaff
@@ -155,6 +174,16 @@ export async function listProjects(viewerId: string) {
         : null,
       managerCode: pinned && t.manager?.platformId !== pinned.id ? null : (t.manager?.employeeCode ?? null),
       coManagers: (coByTeam.get(t.id) ?? []).filter((c) => !pinned || c.platformId === pinned.id),
+      directReports: directReports
+        .filter((r) => (managersOfTeam.get(t.id) ?? []).includes(r.reportsToId ?? "") && !t.members.some((m) => m.user.id === r.id))
+        .map((r) => ({
+          id: r.id,
+          name: `${r.firstName} ${r.lastName}`.trim(),
+          employeeCode: r.employeeCode,
+          designation: r.designation,
+          status: String(r.status),
+          company: r.platform?.name ?? null,
+        })),
       members: t.members.map((m) => ({
         id: m.user.id,
         name: `${m.user.firstName} ${m.user.lastName}`.trim(),

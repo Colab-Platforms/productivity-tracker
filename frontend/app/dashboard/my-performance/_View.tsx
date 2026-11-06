@@ -10,7 +10,7 @@ import Link from "next/link";
 export type Person = {
   daysExpected: number; daysPresent: number; daysOnLeave: number; daysAbsent: number; daysNotTracked: number;
   lateDays: number; lateMinutes: number;
-  productiveSeconds: number; breakSeconds: number; meetingSeconds: number; targetSeconds: number; attainment: number;
+  productiveSeconds: number; breakSeconds: number; meetingSeconds: number; huddleSeconds?: number; targetSeconds: number; attainment: number;
   tasksCompleted: number; tasksPending: number; taskCompletion: number; tasksTotal: number; taskScore: number;
 };
 export type Day = {
@@ -79,7 +79,7 @@ export default function PerformanceView({ person, history, standups, selfTasks, 
           accent={p.daysExpected > 0 ? band(p.attainment) : undefined}
           sub={p.daysExpected > 0 ? "productive hours ÷ expected hours" : "No working days expected in this period"}
         />
-        <Card label="Productive time" value={hm(p.productiveSeconds)} sub={`of ${hm(p.targetSeconds)} expected · incl. ${hm(p.meetingSeconds)} in approved meetings`} />
+        <Card label="Productive time" value={hm(p.productiveSeconds)} sub={`of ${hm(p.targetSeconds)} expected · incl. ${hm(p.huddleSeconds ?? 0)} in Team Huddles`} />
         <Card
           label="Days present"
           value={`${p.daysPresent} of ${p.daysExpected}`}

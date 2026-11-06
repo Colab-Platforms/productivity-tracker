@@ -47,6 +47,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_WEIGHT: { status: 400, message: "That isn't a valid weight." },
   NOTHING_TO_UPDATE: { status: 400, message: "There was nothing to change." },
   NOT_MY_PROJECT: { status: 403, message: "You aren't on that project." },
+  TASK_TOO_OLD: { status: 400, message: "That task is more than 30 days old, so it can no longer be marked done." },
   NOT_APPROVED_YET: { status: 400, message: "Your manager hasn't approved that task yet." },
   NOT_FINISHED_YET: { status: 400, message: "It hasn't been marked done yet." },
   ALREADY_ANSWERED: { status: 409, message: "That proposal was already decided." },
@@ -91,6 +92,14 @@ router.get("/", async (req, res) => {
 router.get("/day", async (req, res) => {
   try {
     res.json(await tasks.listMyDay(req.user!.userId, req.query.date));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.get("/range", async (req, res) => {
+  try {
+    res.json(await tasks.listMyRange(req.user!.userId, req.query.from, req.query.to));
   } catch (e) {
     fail(res, e);
   }

@@ -40,6 +40,7 @@ export type TrackedFields = {
   canRespond?: boolean;
   mustAccept?: boolean;
   tracked?: boolean;
+  started?: boolean;
   lateAfterMinutes?: number;
   joinWindow?: { open: boolean; reason: "TOO_EARLY" | "CLOSED" | null; opensAt: string; closesAt: string };
   me?: MeInfo | null;
@@ -104,9 +105,11 @@ export function InviteResponse({ meetingId, f, onChanged, compact = false }: { m
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-slate-500">Your invitation:</span>
         <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${chip.cls}`}>{chip.label}</span>
-        {f.canRespond && f.myResponse !== "ACCEPTED" && (
+        {/* A Team Huddle is accepted when it starts, and accepting is joining. Before the start there is nothing to accept yet. */}
+        {f.canRespond && f.tracked && !f.started && <span className="text-xs text-slate-500">You will be asked to accept when it starts.</span>}
+        {f.canRespond && (!f.tracked || (f.started && f.me?.state !== "IN_MEETING")) && (f.tracked || f.myResponse !== "ACCEPTED") && (
           <button onClick={() => answer("ACCEPTED")} disabled={busy} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
-            {busy ? "Saving…" : f.myResponse === "DECLINED" ? "Accept instead" : "Accept invitation"}
+            {busy ? "Saving…" : f.tracked ? "Accept and join" : f.myResponse === "DECLINED" ? "Accept instead" : "Accept invitation"}
           </button>
         )}
         {f.canRespond && f.myResponse !== "DECLINED" && (
@@ -181,9 +184,9 @@ export function JoinControl({ meetingId, endsAt, tz, f, onChanged, compact = fal
 
   // not joined yet
   const w = f.joinWindow;
-  if (f.mustAccept && w?.reason !== "CLOSED") {
-    return <p className={`${box} bg-slate-50 text-sm text-slate-600`}>Accept the invitation first. The “Join Huddle” button appears here once you have accepted and the meeting is about to start.</p>;
-  }
+  // Invited people join by accepting when the huddle starts (see InviteResponse); there is no Join button for them.
+  // Only the organizer (who is not "invited") keeps a Join button.
+  if (f.myStatus) return null;
   if (f.canJoin) {
     return (
       <div className={`${box} bg-indigo-50`}>
