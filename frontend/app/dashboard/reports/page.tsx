@@ -58,6 +58,8 @@ type PersonRow = {
   tasksCompleted: number;
   tasksPending: number;
   taskCompletion: number;
+  ratedCount: number;
+  avgRating: number | null;
   alertCount: number;
 };
 
@@ -78,6 +80,8 @@ type BucketRow = {
   tasksCompleted: number;
   tasksPending: number;
   taskCompletion: number;
+  ratedCount: number;
+  avgRating: number | null;
   alertCount: number;
 };
 
@@ -108,6 +112,8 @@ type Report = {
     tasksCompleted: number;
     tasksPending: number;
     taskCompletion: number;
+    ratedCount: number;
+    avgRating: number | null;
     alertCount: number;
   };
   people: PersonRow[];
@@ -290,7 +296,7 @@ function SummaryReport() {
           "Days on leave", "Days absent", "Days not tracked", "Late days", "Late minutes",
           "Productive", "Of which Team Huddle", "Break", "Washroom", "Target", "Productivity %",
           "Tasks completed", "Tasks pending", "Task completion %",
-          "Task score %", "Alerts", "Auto-closed days",
+          "Task score %", "Average rating (out of 5)", "Tasks rated", "Alerts", "Auto-closed days",
         ];
         rows = report.people.map((p) => [
           p.name, p.employeeCode, p.role, p.daysExpected, p.daysPresent,
@@ -298,19 +304,19 @@ function SummaryReport() {
           hm(p.productiveSeconds), hm(p.huddleSeconds), hm(p.breakSeconds), hm(p.washroomSeconds),
           hm(p.targetSeconds), Math.round(p.attainment * 100),
           p.tasksCompleted, p.tasksPending, Math.round(p.taskCompletion * 100),
-          Math.round(p.taskScore * 100), p.alertCount, p.autoClosedDays,
+          Math.round(p.taskScore * 100), p.avgRating ?? "", p.ratedCount, p.alertCount, p.autoClosedDays,
         ]);
       } else {
         header = [
           "Period", "People", "Days expected", "Days present", "Days on leave",
           "Late days", "Productive", "Team Huddle", "Break", "Washroom", "Target",
-          "Productivity %", "Tasks completed", "Tasks pending", "Task completion %", "Alerts",
+          "Productivity %", "Tasks completed", "Tasks pending", "Task completion %", "Average rating (out of 5)", "Alerts",
         ];
         rows = report.buckets.map((b) => [
           b.key, b.headcount, b.daysExpected, b.daysPresent, b.daysOnLeave,
           b.lateDays, hm(b.productiveSeconds), hm(b.huddleSeconds), hm(b.breakSeconds), hm(b.washroomSeconds),
           hm(b.targetSeconds),
-          Math.round(b.attainment * 100), b.tasksCompleted, b.tasksPending, Math.round(b.taskCompletion * 100), b.alertCount,
+          Math.round(b.attainment * 100), b.tasksCompleted, b.tasksPending, Math.round(b.taskCompletion * 100), b.avgRating ?? "", b.alertCount,
         ]);
       }
 
@@ -475,7 +481,7 @@ function SummaryReport() {
           <Tile
             label="Tasks completed"
             value={String(t.tasksCompleted)}
-            sub={`${t.tasksPending} pending · ${t.tasksCompleted + t.tasksPending > 0 ? pct(t.taskCompletion) : "no tasks"} complete`}
+            sub={`${t.tasksPending} pending · ${t.tasksCompleted + t.tasksPending > 0 ? pct(t.taskCompletion) : "no tasks"} complete · ${t.avgRating != null ? `avg rating ${t.avgRating}/5 (${t.ratedCount} rated)` : "no ratings yet"}`}
           />
           <Tile
             label="Break"
@@ -541,6 +547,7 @@ function SummaryReport() {
                   <th className="px-4 py-3 text-right" title="Approved tasks not fully done yet (open, partly done or sent back)">Tasks pending</th>
                   <th className="px-4 py-3 text-right" title="Done ÷ (done + pending)">Completion</th>
                   <th className="px-4 py-3 text-right" title="Weighted score of the day's tasks">Task score</th>
+                  <th className="px-4 py-3 text-right" title="Average of the manager's 1 to 5 star ratings on finished tasks">Avg rating</th>
                   <th className="px-4 py-3 text-right">Alerts</th>
                 </tr>
               </thead>
@@ -604,6 +611,9 @@ function SummaryReport() {
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-600">
                       {p.tasksTotal > 0 ? pct(p.taskScore) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-slate-700" title={p.ratedCount > 0 ? `${p.ratedCount} rated task${p.ratedCount === 1 ? "" : "s"}` : "No rated tasks"}>
+                      {p.avgRating != null ? `${p.avgRating}/5` : "—"}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-500">
                       {p.alertCount}

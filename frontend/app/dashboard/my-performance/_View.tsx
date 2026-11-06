@@ -12,6 +12,7 @@ export type Person = {
   lateDays: number; lateMinutes: number;
   productiveSeconds: number; breakSeconds: number; meetingSeconds: number; huddleSeconds?: number; targetSeconds: number; attainment: number;
   tasksCompleted: number; tasksPending: number; taskCompletion: number; tasksTotal: number; taskScore: number;
+  ratedCount?: number; avgRating?: number | null;
 };
 export type Day = {
   date: string; loginAt: string | null; logoutAt: string | null; status: string;
@@ -86,6 +87,9 @@ export default function PerformanceView({ person, history, standups, selfTasks, 
           sub={`${p.daysOnLeave} on leave · ${p.daysAbsent} absent${p.daysNotTracked > 0 ? ` · ${p.daysNotTracked} not tracked` : ""}`}
         />
         <Card label="Tasks" value={`${p.tasksCompleted} done · ${p.tasksPending} pending`} sub={counted > 0 ? `${pct(p.taskCompletion)} complete · counts approved tasks only` : "No approved tasks in this period"} />
+        {(p.ratedCount ?? 0) > 0 && p.avgRating != null && (
+          <Card label="Average rating" value={`${p.avgRating} / 5`} sub={`from ${p.ratedCount} rated task${p.ratedCount === 1 ? "" : "s"}`} />
+        )}
         <Card label="Late arrivals" value={String(p.lateDays)} sub={p.lateDays > 0 ? `${p.lateMinutes} minutes late in total` : "On time every day"} />
         <Card label="Breaks" value={hm(p.breakSeconds)} sub={avgBreak === null ? "No days worked" : `about ${hm(avgBreak)} a day · budget ${hm(history?.breakBudget ?? 0)}`} />
       </div>

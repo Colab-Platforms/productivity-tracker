@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { isoDaysAgo } from "@/lib/time";
+import { Stars } from "../../_ratings/Stars";
 
 export type RangeKey = "today" | "yesterday" | "last7" | "date";
 
@@ -49,7 +50,7 @@ export function DateFilter({ value, picked, onChange }: { value: RangeKey; picke
 }
 
 type RTask = {
-  id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; outcome: string | null;
+  id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; rating: number | null; ratingComment: string | null;
   completionNote: string | null; reviewNote: string | null; rejectionNote: string | null; project: string | null; date: string;
 };
 type RangeData = { from: string; to: string; score: { percent: number | null; done: number; total: number }; tasks: RTask[] };
@@ -58,10 +59,8 @@ function stateOf(t: RTask): { label: string; tone: string } {
   if (t.approvalStatus === "REJECTED") return { label: "Not approved", tone: "bg-red-50 text-red-700" };
   if (t.approvalStatus === "PENDING") return { label: "Waiting for approval", tone: "bg-amber-50 text-amber-700" };
   if (t.status === "COMPLETED") {
-    if (t.outcome === "FAILED") return { label: "Not accepted", tone: "bg-red-50 text-red-700" };
-    if (t.outcome === "PARTIALLY_COMPLETED") return { label: "Partly completed", tone: "bg-sky-50 text-sky-700" };
-    if (t.outcome === "COMPLETED") return { label: "Completed", tone: "bg-emerald-50 text-emerald-700" };
-    return { label: "Done, waiting for review", tone: "bg-amber-50 text-amber-700" };
+    if (t.rating != null) return { label: `Rated ${t.rating}/5`, tone: t.rating >= 4 ? "bg-emerald-50 text-emerald-700" : t.rating === 3 ? "bg-sky-50 text-sky-700" : "bg-red-50 text-red-700" };
+    return { label: "Done, waiting for rating", tone: "bg-amber-50 text-amber-700" };
   }
   if (t.status === "CANCELLED") return { label: "Cancelled", tone: "bg-slate-100 text-slate-600" };
   return { label: t.status === "IN_PROGRESS" ? "In progress" : "To do", tone: "bg-indigo-50 text-indigo-700" };
@@ -107,7 +106,8 @@ export function RangeTasks({ from, to }: { from: string; to: string }) {
                   </div>
                   {t.project && <p className="mt-1 text-xs text-slate-400">{t.project}</p>}
                   {t.description && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{t.description}</p>}
-                  {(t.reviewNote || t.rejectionNote) && <p className="mt-1 text-sm text-slate-600"><span className="font-medium text-slate-700">Manager&apos;s comment: </span>{t.reviewNote || t.rejectionNote}</p>}
+                  {t.rating != null && <p className="mt-1"><Stars value={t.rating} size={14} /></p>}
+                  {(t.ratingComment || t.reviewNote || t.rejectionNote) && <p className="mt-1 text-sm text-slate-600"><span className="font-medium text-slate-700">Manager&apos;s comment: </span>{t.ratingComment || t.reviewNote || t.rejectionNote}</p>}
                 </li>
               );
             })}

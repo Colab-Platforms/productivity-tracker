@@ -17,6 +17,7 @@ import { todayIso, getPlatformTimezone } from "@/lib/time";
 import { plural } from "@/lib/plural";
 import { useMe } from "../layout";
 import { RevertModal } from "./RevertModal";
+import { RateControl, Stars } from "../_ratings/Stars";
 import { EmployeePicker } from "./EmployeePicker";
 import FilterBar from "../_filters/FilterBar";
 import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
@@ -47,7 +48,9 @@ type Task = {
   weight: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   status: string;
   approvalStatus: string;
-  outcome: string | null;
+  // The manager's star rating (1-5) and comment; null = not rated yet.
+  rating: number | null;
+  ratingComment: string | null;
   completionNote: string | null;
   reviewNote: string | null;
   rejectionNote: string | null;
@@ -134,18 +137,6 @@ const WEIGHT_CHIP: Record<string, string> = {
   CRITICAL: "bg-rose-50 text-rose-700",
 };
 
-const OUTCOMES = [
-  { value: "COMPLETED", label: "Completed", cls: "border-emerald-300 text-emerald-700 hover:bg-emerald-50" },
-  { value: "PARTIALLY_COMPLETED", label: "Partially", cls: "border-amber-300 text-amber-700 hover:bg-amber-50" },
-  { value: "FAILED", label: "Not done", cls: "border-rose-300 text-rose-700 hover:bg-rose-50" },
-];
-
-const OUTCOME_CHIP: Record<string, { label: string; cls: string }> = {
-  COMPLETED: { label: "completed", cls: "bg-emerald-50 text-emerald-700" },
-  PARTIALLY_COMPLETED: { label: "partially done", cls: "bg-amber-50 text-amber-700" },
-  FAILED: { label: "not done", cls: "bg-rose-50 text-rose-700" },
-};
-
 // The endpoint sends the person under several keys and the screen was reading
 // one it never sends, so every row showed a blank name. Reading all of them
 // means a rename on either side cannot silently empty this column again.
@@ -158,7 +149,6 @@ type RowLike = {
   date?: string | null;
   status?: string | null;
   approvalStatus?: string | null;
-  outcome?: string | null;
   id?: string;
   title?: string;
 };
@@ -195,6 +185,7 @@ export default function ApprovalsPage() {
   const [rejecting, setRejecting] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [revertFor, setRevertFor] = useState<Row | null>(null);
+  const [ratingEdit, setRatingEdit] = useState<string | null>(null); // the task whose saved rating is being changed
   const [comments, setComments] = useState<Record<string, string>>({});
   const [revertError, setRevertError] = useState("");
   const [assignTo, setAssignTo] = useState("");
@@ -570,7 +561,7 @@ export default function ApprovalsPage() {
       <section className="overflow-hidden rounded-2xl rounded-t-none bg-white shadow-[var(--shadow-card)]">
         <div className="border-b border-indigo-50 px-5 py-3.5">
           <p className="mt-0.5 text-xs text-slate-400">
-            Until you grade a task it scores full marks.
+            Rate each finished task from 1 to 5 stars. A task you have not rated yet scores full marks; stars count as stars out of 5 (4 and 5 stars count as completed).
           </p>
         </div>
 
@@ -612,29 +603,23 @@ export default function ApprovalsPage() {
               >
                 Revert / Reopen
               </button>
-              {t.outcome ? (
-                <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${OUTCOME_CHIP[t.outcome]?.cls ?? ""}`}>
-                  {OUTCOME_CHIP[t.outcome]?.label ?? String(t.outcome).toLowerCase()}
-                </span>
+              {t.rating != null && ratingEdit !== t.id ? (
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <Stars value={t.rating} size={16} />
+                  {t.ratingComment && <p className="max-w-[16rem] break-words text-right text-xs text-slate-500 [overflow-wrap:anywhere]">“{t.ratingComment}”</p>}
+                  <button type="button" disabled={busy} onClick={() => setRatingEdit(t.id)} className="text-xs font-medium text-indigo-700 hover:underline disabled:opacity-40">Change rating</button>
+                </div>
               ) : (
-              <div className="flex shrink-0 gap-2">
-                {OUTCOMES.map((o) => (
-                  <button
-                    key={o.value}
-                    disabled={busy}
-                    onClick={() =>
-                      run(() =>
-                        call<Queue>(`/tasks/review/${t.id}/outcome`, "POST", {
-                          outcome: o.value,
-                        })
-                      )
-                    }
-                    className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition disabled:opacity-40 ${o.cls}`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
+                <RateControl
+                  key={`${t.id}:${t.rating ?? "none"}`}
+                  initial={t.rating}
+                  initialComment={t.ratingComment}
+                  busy={busy}
+                  saveLabel={t.rating != null ? "Update rating" : "Save rating"}
+                  onSave={(rating, comment) =>
+                    run(() => call<Queue>(`/tasks/review/${t.id}/rating`, "POST", { rating, comment: comment || undefined })).then(() => setRatingEdit(null))
+                  }
+                />
               )}
             </li>
           ))}

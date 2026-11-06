@@ -1,0 +1,20 @@
+// ===========================================================================
+// TASK RATINGS - NEW TABLE ONLY. The manager's 1-5 star rating of a finished task. It REPLACES the old
+// Completed / Partial / Failed grade (daily_tasks.outcome stays in the database as a frozen record but is no longer read).
+// One row per task (re-rating overwrites). No column was added to daily_tasks; the foreign keys live in the migration SQL.
+// ===========================================================================
+
+model TaskRating {
+  taskId     String @id @db.Uuid // = daily_tasks.id
+  platformId String @db.Uuid
+  ratedById  String? @db.Uuid // the manager who rated (null if that account was removed)
+
+  rating  Int // 1..5
+  comment String?
+
+  ratedAt   DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([platformId, ratedAt])
+  @@map("task_ratings")
+}

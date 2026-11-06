@@ -18,6 +18,8 @@
 
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds } from "../hr-filters/hrFilters.service.js";
+import { starsFor } from "../tasks/tasks.rating.js";
+import { isCompleteRating } from "../tasks/tasks.rating.logic.js";
 import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
@@ -201,7 +203,7 @@ export async function getTeamReport(
 
       prisma.dailyTask.findMany({
         where: { userId: { in: userIds }, date: dateFilter },
-        select: { userId: true, date: true, weight: true, status: true, approvalStatus: true, outcome: true },
+        select: { id: true, userId: true, date: true, weight: true, status: true, approvalStatus: true, outcome: true },
       }),
 
       prisma.alert.findMany({
@@ -314,6 +316,9 @@ export async function getTeamReport(
       tasksCompleted: 0,
       tasksPending: 0,
       taskCompletion: 0,
+      ratedCount: 0,
+      ratingSum: 0,
+      avgRating: null,
       alertCount: 0,
     });
   }
@@ -338,6 +343,8 @@ export async function getTeamReport(
         targetSeconds: 0,
         tasksCompleted: 0,
         tasksPending: 0,
+        ratedCount: 0,
+        ratingSum: 0,
         alertCount: 0,
       };
       byBucket.set(key, row);
@@ -461,6 +468,7 @@ export async function getTeamReport(
 
   // --- tasks ----------------------------------------------------------------
 
+  const stars = await starsFor(tasks); // the managers' star ratings (batched)
   for (const t of tasks) {
     const person = byPerson.get(t.userId);
     if (!person) continue;
@@ -472,8 +480,17 @@ export async function getTeamReport(
     // (finished and accepted in full). Approved work that is not fully done yet - still open, partly done or sent
     // back - is "pending". Cancelled tasks and proposals nobody approved are in neither.
     if (String(t.approvalStatus) === "APPROVED" && String(t.status) !== "CANCELLED") {
-      const fullyDone = String(t.status) === "COMPLETED" && (t.outcome === null || String(t.outcome) === "COMPLETED");
+      const star = stars.get(t.id) ?? null;
+      const fullyDone = String(t.status) === "COMPLETED" && isCompleteRating(star);
       const b = bucket(bucketKey(t.date, groupBy));
+      if (star !== null && String(t.status) === "COMPLETED") {
+        person.ratedCount += 1;
+        person.ratingSum += star;
+        if (!managerIds.has(t.userId)) {
+          b.ratedCount += 1;
+          b.ratingSum += star;
+        }
+      }
       if (fullyDone) {
         person.tasksCompleted += 1;
         if (!managerIds.has(t.userId)) b.tasksCompleted += 1;
@@ -503,6 +520,7 @@ export async function getTeamReport(
     person.taskScore = person.tasksTotal > 0 ? person.tasksDone / person.tasksTotal : 0;
     const counted = person.tasksCompleted + person.tasksPending;
     person.taskCompletion = counted > 0 ? person.tasksCompleted / counted : 0;
+    person.avgRating = person.ratedCount > 0 ? Math.round((person.ratingSum / person.ratedCount) * 10) / 10 : null;
   }
 
   const buckets = Array.from(byBucket.values())
@@ -524,6 +542,8 @@ export async function getTeamReport(
       tasksCompleted: b.tasksCompleted,
       tasksPending: b.tasksPending,
       taskCompletion: b.tasksCompleted + b.tasksPending > 0 ? b.tasksCompleted / (b.tasksCompleted + b.tasksPending) : 0,
+      ratedCount: b.ratedCount,
+      avgRating: b.ratedCount > 0 ? Math.round((b.ratingSum / b.ratedCount) * 10) / 10 : null,
       alertCount: b.alertCount,
     }))
     .sort((a, z) => a.key.localeCompare(z.key));
@@ -554,8 +574,11 @@ export async function getTeamReport(
       totals.tasksDone += p.tasksDone;
       totals.tasksCompleted += p.tasksCompleted;
       totals.tasksPending += p.tasksPending;
+      totals.ratedCount += p.ratedCount;
+      totals.ratingSum += p.ratingSum;
     }
   }
+  totals.avgRating = totals.ratedCount > 0 ? Math.round((totals.ratingSum / totals.ratedCount) * 10) / 10 : null;
   totals.headcount = people.filter((p) => p.daysExpected > 0 || p.daysPresent > 0).length;
   totals.attainment =
     totals.targetSeconds > 0 ? totals.productiveSeconds / totals.targetSeconds : 0;
@@ -615,6 +638,9 @@ type PersonRow = {
   tasksCompleted: number;
   tasksPending: number;
   taskCompletion: number;
+  ratedCount: number;
+  ratingSum: number;
+  avgRating: number | null;
   alertCount: number;
 };
 
@@ -634,6 +660,8 @@ type BucketRow = {
   targetSeconds: number;
   tasksCompleted: number;
   tasksPending: number;
+  ratedCount: number;
+  ratingSum: number;
   alertCount: number;
 };
 
@@ -660,6 +688,9 @@ function blankTotals() {
     tasksCompleted: 0,
     tasksPending: 0,
     taskCompletion: 0,
+    ratedCount: 0,
+    ratingSum: 0,
+    avgRating: null as number | null,
     alertCount: 0,
   };
 }

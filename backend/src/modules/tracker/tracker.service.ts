@@ -5,6 +5,8 @@ import { managedByWhere } from "../../lib/teamManagers.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { cleanRemark, lateRemarksReady, LateRemarkRequired, remarksBySession } from "./lateRemarks.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
+import { starsFor } from "../tasks/tasks.rating.js";
+import { creditOf } from "../tasks/tasks.rating.logic.js";
 import { calendarStatus, minutesAfterLimit } from "../team-attendance/arrival.logic.js";
 import { DISCUSSION_PREFIX, REMARK_MAX, REMARK_MIN, awayOf, awayRows, isCountedBreak, isDiscussion, isWashroom, splitAwayTime } from "./activityClass.js";
 
@@ -876,13 +878,6 @@ const TASK_WEIGHTS: Record<string, number> = {
   CRITICAL: 5,
 };
 
-// Same scale the Daily Tasks page uses, so a day's score reads identically
-// in both places.
-const OUTCOME_MULTIPLIER: Record<string, number> = {
-  COMPLETED: 1,
-  PARTIALLY_COMPLETED: 0.5,
-  FAILED: 0,
-};
 
 export async function getHistory(userId: string, fromStr?: string, toStr?: string) {
   const ctx = await getContext(userId);
@@ -907,6 +902,9 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
   ]);
 
   const key = (d: Date) => d.toISOString().slice(0, 10);
+
+  // The manager's star ratings. Same scale the Daily Tasks page uses (stars / 5), so a day's score reads identically in both places.
+  const stars = await starsFor(tasks);
 
   const leaveByDate = new Map(leaveDays.map((l) => [key(l.date), l]));
 
@@ -936,10 +934,12 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
 
     const doneWeight = dayTasks.reduce((n, t) => {
       const w = TASK_WEIGHTS[t.weight] ?? 1;
-      if (t.outcome) return n + w * (OUTCOME_MULTIPLIER[String(t.outcome)] ?? 0);
+      const r = stars.get(t.id);
+      if (r != null) return n + w * creditOf(r);
       if (String(t.status) === "COMPLETED") return n + w;
       return n;
     }, 0);
+    const ratedToday = dayTasks.map((t) => stars.get(t.id)).filter((r): r is number => r != null);
 
     return {
       date: k,
@@ -966,9 +966,9 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
       onLeave: leaveByDate.has(k),
       leaveType: leaveByDate.get(k)?.leaveType ?? null,
       taskTotal: dayTasks.length,
-      taskDone: dayTasks.filter(
-        (t) => String(t.status) === "COMPLETED" || String(t.outcome) === "COMPLETED"
-      ).length,
+      taskDone: dayTasks.filter((t) => String(t.status) === "COMPLETED").length,
+      ratedCount: ratedToday.length,
+      avgRating: ratedToday.length ? Math.round((ratedToday.reduce((a, b) => a + b, 0) / ratedToday.length) * 10) / 10 : null,
       taskPercent:
         totalWeight === 0 ? null : Math.round((doneWeight / totalWeight) * 100),
     };
