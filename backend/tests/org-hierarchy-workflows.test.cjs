@@ -210,7 +210,7 @@ const PW = "Org@12345678";
 
   console.log("\n## 9. Daily tasks: Manager-only approval");
   const tl = await call("GET", "/tasks", E1.tok);
-  ok("the task form: ready, the profile's manager preselected, only the authorised Managers to choose from (reporting manager + project managers), own projects", tl.b.entryForm?.ready === true && tl.b.entryForm.defaultId === M1.id && tl.b.entryForm.options.length >= 1 && tl.b.entryForm.options.some((o) => o.id === M1.id) && tl.b.projects.length === 2, tl.b.entryForm);
+  ok("the task form: ready, own projects, and the approver list follows each PROJECT (byProject)", tl.b.entryForm?.ready === true && tl.b.projects.length === 2 && tl.b.projects.every((p) => tl.b.entryForm.byProject && tl.b.entryForm.byProject[p.id]), tl.b.entryForm);
   const t1 = await call("POST", "/tasks", E1.tok, { title: "Build login page", description: "Alpha work", teamId: P1, hoursSpent: 2.5, progress: "COMPLETED" });
   const T1 = t1.b.awaitingApproval?.find((t) => t.title === "Build login page");
   ok("a task can be submitted as Completed while its approval is Pending (two separate fields)", t1.s === 200 && T1?.progress === "COMPLETED" && T1.approvalStatus === "PENDING" && T1.status === "COMPLETED" && T1.hoursSpent === 2.5, T1);

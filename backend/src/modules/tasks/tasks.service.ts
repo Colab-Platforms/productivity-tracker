@@ -9,7 +9,7 @@ import { auditNote } from "../../lib/auditContext.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { isFiltering, type HrFilters } from "../hr-filters/hrFilters.logic.js";
-import { entryDetailsFor, entryReady, entryView, resolveTaggedManager, taggedManagerChoices } from "./tasks.entry.js";
+import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager } from "./tasks.entry.js";
 import { mayReview, parseHours, parseProgress, storeProgress } from "./tasks.entry.logic.js";
 import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
 
@@ -339,7 +339,7 @@ export async function listTasks(userId: string) {
 
   // The new entry form (hours, progress, tagged manager). Not offered to a manager's own self-managed tasks.
   const entryReadyNow = !selfManagedMode && (await entryReady());
-  const entryForm = entryReadyNow ? { ready: true, ...(await taggedManagerChoices({ id: userId, platformId: ctx.platformId })) } : { ready: false, defaultId: null, options: [] };
+  const entryForm = entryReadyNow ? { ready: true, ...(await entryFormChoices(userId, ctx.platformId, projects.map((p) => p.id))) } : { ready: false, byProject: {}, others: [] };
 
   return {
     date: date.toISOString().slice(0, 10),
@@ -452,7 +452,7 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
     if (progress === "BAD") throw new Error("BAD_PROGRESS");
     hours = parseHours(body.hoursSpent);
     if (hours === "BAD") throw new Error("BAD_HOURS");
-    taggedManagerId = await resolveTaggedManager({ id: userId, platformId: ctx.platformId }, body.taggedManagerId);
+    taggedManagerId = await resolveTaggedManager({ id: userId, platformId: ctx.platformId }, body.taggedManagerId, teamId);
   }
   const stored = progress ? storeProgress(progress) : null;
 
@@ -541,7 +541,7 @@ export async function updateMyTask(
 
   // Progress (Completed / In Progress / Blocked), hours spent and the blocked note. Progress is NOT approval: it can change while the
   // approval is still pending, and never touches the approval. Not for a manager's own self-managed task.
-  let entryPatch: { hoursSpent?: number | null; blocked?: boolean; blockedNote?: string | null } | null = null;
+  let entryPatch: { hoursSpent?: number | null; blocked?: boolean; blockedNote?: string | null; taggedManagerId?: string | null } | null = null;
   if (body.progress !== undefined || body.hoursSpent !== undefined || body.blockedNote !== undefined) {
     if (selfManaged) throw new Error("SELF_MANAGED_ONLY");
     if (!(await entryReady())) throw new Error("FEATURES_NOT_READY");
@@ -625,6 +625,12 @@ export async function updateMyTask(
         userId,
         body.teamId ?? body.projectId ?? null
       );
+      // The approver follows the PROJECT: moving a not-yet-approved task to another project re-tags it to that project's manager
+      // (refused when that project has none). An unchanged project keeps its saved approver.
+      if (!selfManaged && data.teamId !== task.teamId && (await entryReady())) {
+        const tag = await resolveTaggedManager({ id: userId, platformId: task.platformId }, body.taggedManagerId, (data.teamId as string | null) ?? null);
+        entryPatch = { ...(entryPatch ?? {}), taggedManagerId: tag };
+      }
     }
 
     // A sent-back task that gets edited goes straight back for approval.
@@ -645,7 +651,7 @@ export async function updateMyTask(
         await tx.taskEntryDetail.upsert({
           where: { taskId },
           update: entryPatch,
-          create: { taskId, platformId: task.platformId, hoursSpent: entryPatch.hoursSpent ?? null, blocked: entryPatch.blocked === true, blockedNote: entryPatch.blockedNote ?? null },
+          create: { taskId, platformId: task.platformId, hoursSpent: entryPatch.hoursSpent ?? null, taggedManagerId: entryPatch.taggedManagerId ?? null, blocked: entryPatch.blocked === true, blockedNote: entryPatch.blockedNote ?? null },
         });
       }
       if (selfManaged && Object.keys(detailPatch).length > 0) await tx.taskSelfDetail.update({ where: { taskId }, data: detailPatch });

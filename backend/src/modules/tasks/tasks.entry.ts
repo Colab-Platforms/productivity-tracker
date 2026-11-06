@@ -77,60 +77,77 @@ export function entryView(status: string, d: EntryDetail | undefined) {
 }
 
 /**
- * The Managers a person is AUTHORISED to tag, read from the existing relationships (nothing is stored for this):
- *  - their own reporting manager (when an active Manager; allowed even in another company, the owner's decision), and
- *  - the active Managers of the same company who manage (primary or co-manager) an active project the person is an active member of.
- * An unrelated manager, or one from an unrelated company, is never offered and is refused on the server.
+ * The people who may approve a task of a PROJECT: the project's manager and its co-managers, read from the existing project assignments
+ * (teams.managerId + team_managers; nothing is hardcoded and nothing new is stored). An active Manager OR Admin qualifies, in any company
+ * (a project can be run from another company). The person's own reporting manager is NOT part of this: it is a separate relationship and
+ * is only offered when that same person also manages the selected project.
  */
-export async function authorizedManagers(owner: { id: string; platformId: string }) {
-  const me = await prisma.user.findUnique({
-    where: { id: owner.id },
-    select: {
-      reportsToId: true,
-      reportsTo: { select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, status: true } },
-      teamMemberships: { where: { isActive: true, team: { isActive: true } }, select: { teamId: true } },
-    },
-  });
-  const byTeam = await managerIdsByTeam((me?.teamMemberships ?? []).map((m) => m.teamId));
-  const projectManagerIds = [...new Set([...byTeam.values()].flat())].filter((id) => id !== owner.id);
-  const projectManagers = projectManagerIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: projectManagerIds }, role: "MANAGER", status: "ACTIVE", platformId: owner.platformId },
-        select: { id: true, firstName: true, lastName: true, employeeCode: true },
-      })
+export type ProjectManagerChoices = { options: { id: string; name: string; code: string | null }[]; defaultId: string | null };
+
+export async function projectManagerChoices(teamIds: string[], exceptUserId: string): Promise<Map<string, ProjectManagerChoices>> {
+  const out = new Map<string, ProjectManagerChoices>();
+  const ids = [...new Set(teamIds)];
+  if (ids.length === 0) return out;
+  const byTeam = await managerIdsByTeam(ids); // primary manager first, then co-managers
+  const allIds = [...new Set([...byTeam.values()].flat())].filter((id) => id !== exceptUserId);
+  const users = allIds.length
+    ? await prisma.user.findMany({ where: { id: { in: allIds }, status: "ACTIVE", role: { in: ["MANAGER", "ADMIN"] } }, select: { id: true, firstName: true, lastName: true, employeeCode: true } })
     : [];
-  const list = new Map<string, { id: string; firstName: string; lastName: string; employeeCode: string | null }>();
-  const rt = me?.reportsTo;
-  const reportingOk = !!rt && rt.id !== owner.id && String(rt.role) === "MANAGER" && String(rt.status) === "ACTIVE";
-  if (reportingOk) list.set(rt!.id, rt!);
-  for (const m of projectManagers) list.set(m.id, m);
-  const options = [...list.values()].sort((a, b) => a.firstName.localeCompare(b.firstName));
-  // Preselected: the reporting manager; failing that, the only authorised manager there is.
-  const defaultId = reportingOk ? rt!.id : options.length === 1 ? options[0].id : null;
-  return { options, defaultId };
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const team = await prisma.team.findMany({ where: { id: { in: ids } }, select: { id: true, managerId: true } });
+  const primaryOf = new Map(team.map((t) => [t.id, t.managerId]));
+  for (const t of ids) {
+    const options = (byTeam.get(t) ?? []).filter((id) => byId.has(id)).map((id) => {
+      const u = byId.get(id)!;
+      return { id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode };
+    });
+    const primary = primaryOf.get(t);
+    const defaultId = primary && options.some((o) => o.id === primary) ? primary : options.length === 1 ? options[0].id : null;
+    out.set(t, { options, defaultId });
+  }
+  return out;
 }
 
 /**
- * Who a new task is tagged to. The tag must be one of the person's authorised managers (BAD_TAGGED_MANAGER otherwise).
- * Nothing sent: the preselected manager is used; if the person has authorised managers but none is preselected, they must choose
- * (TAGGED_MANAGER_REQUIRED). A person with NO authorised manager gets no tag and keeps the earlier review rule (project/team manager or
- * reporting line), so nobody is locked out of submitting while reporting lines are being mapped.
+ * "Other managers": any active Manager or Admin of the person's OWN company (never the person), for work done for a project they are not
+ * on, or when their project has no manager. Same-company only: a manager of an unrelated company is never offered.
  */
-export async function resolveTaggedManager(owner: { id: string; platformId: string }, taggedId: unknown): Promise<string | null> {
-  const tagged = typeof taggedId === "string" && taggedId ? taggedId : null;
-  if (taggedId !== undefined && taggedId !== null && taggedId !== "" && !tagged) throw new Error("BAD_TAGGED_MANAGER");
-  const { options, defaultId } = await authorizedManagers(owner);
-  if (tagged) {
-    if (!options.some((m) => m.id === tagged)) throw new Error("BAD_TAGGED_MANAGER");
-    return tagged;
-  }
-  if (defaultId) return defaultId;
-  if (options.length > 0) throw new Error("TAGGED_MANAGER_REQUIRED");
-  return null;
+export async function otherManagerChoices(platformId: string, exceptUserId: string) {
+  const users = await prisma.user.findMany({
+    where: { platformId, status: "ACTIVE", role: { in: ["MANAGER", "ADMIN"] }, id: { not: exceptUserId } },
+    select: { id: true, firstName: true, lastName: true, employeeCode: true },
+    orderBy: { firstName: "asc" },
+  });
+  return users.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode }));
 }
 
-/** The Managers an employee may tag, and who is preselected. */
-export async function taggedManagerChoices(owner: { id: string; platformId: string }) {
-  const { options, defaultId } = await authorizedManagers(owner);
-  return { defaultId, options: options.map((m) => ({ id: m.id, name: `${m.firstName} ${m.lastName}`.trim(), code: m.employeeCode })) };
+/**
+ * Who a new task goes to. The choices are (1) the managers of the PROJECT picked for the task and (2) any other manager of the person's
+ * own company. Anyone else is refused (BAD_TAGGED_MANAGER).
+ * Nothing sent: the project's own manager is used. If the project has none, the person must choose (TAGGED_MANAGER_REQUIRED), and when
+ * nobody at all is available the task cannot be sent (PROJECT_HAS_NO_MANAGER). A person with NO project is not blocked: no tag unless they
+ * choose one, and the task then keeps the earlier review rule (the reporting line). The tag is saved with the task, so a later change of
+ * the project's manager never moves a task that is already submitted.
+ */
+export async function resolveTaggedManager(owner: { id: string; platformId: string }, taggedId: unknown, teamId: string | null): Promise<string | null> {
+  const tagged = typeof taggedId === "string" && taggedId ? taggedId : null;
+  if (taggedId !== undefined && taggedId !== null && taggedId !== "" && !tagged) throw new Error("BAD_TAGGED_MANAGER");
+  const project = teamId ? ((await projectManagerChoices([teamId], owner.id)).get(teamId) ?? { options: [], defaultId: null }) : { options: [], defaultId: null };
+  const others = await otherManagerChoices(owner.platformId, owner.id);
+  if (tagged) {
+    if (!project.options.some((m) => m.id === tagged) && !others.some((m) => m.id === tagged)) throw new Error("BAD_TAGGED_MANAGER");
+    return tagged;
+  }
+  if (!teamId) return null;
+  if (project.defaultId) return project.defaultId;
+  if (project.options.length === 0 && others.length === 0) throw new Error("PROJECT_HAS_NO_MANAGER");
+  throw new Error("TAGGED_MANAGER_REQUIRED");
+}
+
+/** What the form needs: per project who may approve it and who is preselected, plus the other managers of the person's company. */
+export async function entryFormChoices(userId: string, platformId: string, teamIds: string[]) {
+  const [map, others] = await Promise.all([projectManagerChoices(teamIds, userId), otherManagerChoices(platformId, userId)]);
+  const byProject: Record<string, ProjectManagerChoices> = {};
+  for (const [id, c] of map) byProject[id] = c;
+  return { byProject, others };
 }
