@@ -9,7 +9,7 @@ import { auditNote } from "../../lib/auditContext.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { isFiltering, type HrFilters } from "../hr-filters/hrFilters.logic.js";
-import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager } from "./tasks.entry.js";
+import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager, selectableProjects } from "./tasks.entry.js";
 import { mayReview, parseHours, parseProgress, storeProgress } from "./tasks.entry.logic.js";
 import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
 
@@ -339,7 +339,7 @@ export async function listTasks(userId: string) {
 
   // The new entry form (hours, progress, tagged manager). Not offered to a manager's own self-managed tasks.
   const entryReadyNow = !selfManagedMode && (await entryReady());
-  const entryForm = entryReadyNow ? { ready: true, ...(await entryFormChoices(userId, ctx.platformId, projects.map((p) => p.id))) } : { ready: false, byProject: {}, others: [] };
+  const entryForm = entryReadyNow ? { ready: true, ...(await entryFormChoices(userId, ctx.platformId)) } : { ready: false, projects: [], managers: [] };
 
   return {
     date: date.toISOString().slice(0, 10),
@@ -402,9 +402,11 @@ export async function listMyRange(userId: string, from: unknown, to: unknown) {
 async function resolveProject(
   userId: string,
   given: unknown,
-  required = false
+  required = false,
+  platformId: string | null = null
 ): Promise<string | null> {
-  const projects = await myProjects(userId);
+  // The daily task entry form offers ALL active projects of the person's company (platformId given); other callers keep "own projects only".
+  const projects = platformId ? (await selectableProjects({ id: userId, platformId })).map((p) => ({ ...p, isPrimary: false })) : await myProjects(userId);
   if (projects.length === 0) return null;
 
   const wanted = given ? String(given) : "";
@@ -443,7 +445,7 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
 
   // Daily task entry (hours, progress, tagged manager) once its table exists; a manager's own self-managed tasks use none of it.
   const entry = !selfManaged && (await entryReady());
-  const teamId = await resolveProject(userId, body.teamId ?? body.projectId ?? null, entry);
+  const teamId = await resolveProject(userId, body.teamId ?? body.projectId ?? null, entry, entry ? ctx.platformId : null);
   let progress: ReturnType<typeof parseProgress> = null;
   let hours: ReturnType<typeof parseHours> = null;
   let taggedManagerId: string | null = null;
@@ -452,7 +454,7 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
     if (progress === "BAD") throw new Error("BAD_PROGRESS");
     hours = parseHours(body.hoursSpent);
     if (hours === "BAD") throw new Error("BAD_HOURS");
-    taggedManagerId = await resolveTaggedManager({ id: userId, platformId: ctx.platformId }, body.taggedManagerId, teamId);
+    taggedManagerId = await resolveTaggedManager({ id: userId, platformId: ctx.platformId }, body.taggedManagerId);
   }
   const stored = progress ? storeProgress(progress) : null;
 
@@ -623,14 +625,10 @@ export async function updateMyTask(
     if (body.teamId !== undefined || body.projectId !== undefined) {
       data.teamId = await resolveProject(
         userId,
-        body.teamId ?? body.projectId ?? null
+        body.teamId ?? body.projectId ?? null,
+        false,
+        !selfManaged && (await entryReady()) ? task.platformId : null
       );
-      // The approver follows the PROJECT: moving a not-yet-approved task to another project re-tags it to that project's manager
-      // (refused when that project has none). An unchanged project keeps its saved approver.
-      if (!selfManaged && data.teamId !== task.teamId && (await entryReady())) {
-        const tag = await resolveTaggedManager({ id: userId, platformId: task.platformId }, body.taggedManagerId, (data.teamId as string | null) ?? null);
-        entryPatch = { ...(entryPatch ?? {}), taggedManagerId: tag };
-      }
     }
 
     // A sent-back task that gets edited goes straight back for approval.
@@ -735,7 +733,24 @@ export async function listForApproval(
     userIds = allIds.filter((id) => keep.has(id));
   }
   const scope = { orgTotal: allIds.length, filteredTotal: userIds.length };
-  if (userIds.length === 0) {
+
+  // The employee picks the approver freely, so a task can be tagged to a manager OUTSIDE the usual team of that employee. Those tasks (and
+  // only those) must reach the tagged manager's queue; the employee's other tasks stay invisible to him. Not applied while HR/Admin filters
+  // are active (filters only narrow the authorised list).
+  let extraTaskIds: string[] = [];
+  let extraOwnerIds: string[] = [];
+  if (!(filters && isFiltering(filters)) && (await entryReady())) {
+    const tagged = await prisma.taskEntryDetail.findMany({ where: { taggedManagerId: managerId }, select: { taskId: true } });
+    if (tagged.length > 0) {
+      const outside = await prisma.dailyTask.findMany({
+        where: { AND: [{ id: { in: tagged.map((t) => t.taskId) } }, { userId: { notIn: userIds } }, dateFilter] },
+        select: { id: true, userId: true },
+      });
+      extraTaskIds = outside.map((r) => r.id);
+      extraOwnerIds = [...new Set(outside.map((r) => r.userId))];
+    }
+  }
+  if (userIds.length === 0 && extraOwnerIds.length === 0) {
     return {
       date: dateStr,
       scope,
@@ -756,7 +771,7 @@ export async function listForApproval(
 
   const [people, rawRows, managedProjects] = await Promise.all([
     prisma.user.findMany({
-      where: { id: { in: userIds } },
+      where: { id: { in: [...userIds, ...extraOwnerIds] } },
       select: {
         id: true,
         firstName: true,
@@ -773,8 +788,7 @@ export async function listForApproval(
     }),
     prisma.dailyTask.findMany({
       where: {
-        userId: { in: userIds },
-        ...dateFilter,
+        OR: [{ AND: [{ userId: { in: userIds } }, dateFilter] }, { id: { in: extraTaskIds } }],
       },
       include: {
         team: { select: { id: true, name: true } },

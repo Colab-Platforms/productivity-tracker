@@ -65,8 +65,12 @@ type Task = {
 };
 
 // For each project the person is on: who may approve its tasks (the project's managers) and who is preselected.
-type ProjectManagers = { options: { id: string; name: string; code: string | null }[]; defaultId: string | null };
-type EntryForm = { ready: boolean; byProject: Record<string, ProjectManagers>; others?: { id: string; name: string; code: string | null }[] };
+// Two independent lists: every project the person may pick, and every manager they may tag. Picking one never changes the other.
+type EntryForm = {
+  ready: boolean;
+  projects: { id: string; name: string; company: string | null; ownCompany: boolean }[];
+  managers: { id: string; name: string; code: string | null; role: string }[];
+};
 
 type Score = {
   totalWeight: number;
@@ -162,7 +166,7 @@ export default function TasksPage() {
     setError("");
     try {
       const entry = data?.entryForm?.ready === true;
-      const tagged = projectId ? chosenManager : "";
+      const tagged = taggedId ?? "";
       setData(
         await apiPost<Payload>("/tasks", {
           title,
@@ -222,14 +226,11 @@ export default function TasksPage() {
   }
 
   const score = data?.score;
-  // The managers who may approve a task are those of the SELECTED project, not the person's reporting manager.
-  const choices: ProjectManagers | null = projectId ? (data?.entryForm?.byProject?.[projectId] ?? { options: [], defaultId: null }) : null;
-  // Work for another project, or a project without a manager: any other manager of the company can be tagged.
-  const projectOpts = choices?.options ?? [];
-  const otherOpts = (data?.entryForm?.others ?? []).filter((o) => !projectOpts.some((p) => p.id === o.id));
-  const allOpts = [...projectOpts, ...otherOpts];
-  const noManager = !!projectId && allOpts.length === 0;
-  const chosenManager = taggedId && allOpts.some((o) => o.id === taggedId) ? taggedId : (choices?.defaultId ?? "");
+  // Project and manager are chosen independently; nothing is preselected and one never changes the other.
+  const projectList = data?.entryForm?.ready ? data.entryForm.projects : (data?.projects ?? []).map((p) => ({ ...p, company: null as string | null, ownCompany: true }));
+  const managerList = data?.entryForm?.managers ?? [];
+  const needProject = projectList.length > 0;
+  const needManager = managerList.length > 0;
 
   // A manager's own work: self-managed, no approval. Employees (and everyone else) keep the screen below.
   if (data?.selfManagedMode) {
@@ -310,36 +311,23 @@ export default function TasksPage() {
               <p className="mt-1 rounded-xl border border-indigo-100 bg-slate-50 px-3 py-2 text-sm text-slate-700">{formatDate(new Date(), { day: "numeric", month: "short", year: "numeric" })}</p>
             </label>
             <label className="text-xs text-slate-500">
-              Select Project{(data.projects?.length ?? 0) > 0 && <span className="text-rose-500"> *</span>}
-              <select value={projectId} required={(data.projects?.length ?? 0) > 0} disabled={(data.projects?.length ?? 0) === 0} onChange={(e) => { setProjectId(e.target.value); setTaggedId(null); }} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
-                <option value="">{(data.projects?.length ?? 0) > 0 ? "Select a project" : "No project assigned to you"}</option>
-                {(data.projects ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+              Select Project{needProject && <span className="text-rose-500"> *</span>}
+              <select value={projectId} required={needProject} disabled={!needProject} onChange={(e) => setProjectId(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+                <option value="">{needProject ? "Select a project" : "No project available"}</option>
+                {projectList.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}{!p.ownCompany && p.company ? ` (${p.company})` : ""}</option>
                 ))}
               </select>
-              {(data.projects?.length ?? 0) === 0 && <span className="mt-1 block text-[11px] text-amber-600">Ask HR to add you to a project.</span>}
             </label>
             <label className="text-xs text-slate-500">
-              Tag Project Manager{!!projectId && <span className="text-rose-500"> *</span>}
-              <select value={chosenManager} required={!!projectId} disabled={!projectId || noManager} onChange={(e) => setTaggedId(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
-                <option value="">{!projectId ? "Select a project first" : noManager ? "No manager available" : "Select a manager"}</option>
-                {projectOpts.length > 0 && (
-                  <optgroup label="Manager of this project">
-                    {projectOpts.map((o) => (
-                      <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {otherOpts.length > 0 && (
-                  <optgroup label="Other managers (work for another project)">
-                    {otherOpts.map((o) => (
-                      <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}</option>
-                    ))}
-                  </optgroup>
-                )}
+              Tag Reporting Manager{needManager && <span className="text-rose-500"> *</span>}
+              <select value={taggedId ?? ""} required={needManager} disabled={!needManager} onChange={(e) => setTaggedId(e.target.value || null)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+                <option value="">{needManager ? "Select a manager" : "No manager available"}</option>
+                {managerList.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}{o.role === "ADMIN" ? " · Admin" : ""}</option>
+                ))}
               </select>
-              {!!projectId && projectOpts.length === 0 && !noManager && <span className="mt-1 block text-[11px] text-amber-600">This project has no manager yet, so choose who should approve this task.</span>}
-              {noManager && <span className="mt-1 block text-[11px] text-amber-600">No manager is available. Ask HR or your Admin to assign one.</span>}
+              {!needManager && <span className="mt-1 block text-[11px] text-amber-600">No manager is available. Ask HR or your Admin.</span>}
             </label>
             <div className="grid grid-cols-2 gap-2">
               <label className="text-xs text-slate-500">
@@ -378,7 +366,7 @@ export default function TasksPage() {
           </select>
           <button
             type="submit"
-            disabled={busy || !title.trim() || (data?.entryForm?.ready === true && (((data.projects?.length ?? 0) > 0 && !projectId) || (!!projectId && (noManager || !chosenManager))))}
+            disabled={busy || !title.trim() || (data?.entryForm?.ready === true && ((needProject && !projectId) || (needManager && !taggedId)))}
             className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
           >
             Send for approval

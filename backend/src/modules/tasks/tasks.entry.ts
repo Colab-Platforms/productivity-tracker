@@ -77,77 +77,70 @@ export function entryView(status: string, d: EntryDetail | undefined) {
 }
 
 /**
- * The people who may approve a task of a PROJECT: the project's manager and its co-managers, read from the existing project assignments
- * (teams.managerId + team_managers; nothing is hardcoded and nothing new is stored). An active Manager OR Admin qualifies, in any company
- * (a project can be run from another company). The person's own reporting manager is NOT part of this: it is a separate relationship and
- * is only offered when that same person also manages the selected project.
+ * Who an employee may TAG as the approver of a task. Independent of the project picked and of the reporting line:
+ *  - every active Manager of the employee's OWN company,
+ *  - active Admins who carry project approval responsibility (they are the main manager or a co-manager of an active project of that company),
+ *  - the managers (Manager or Admin) of projects the employee is already assigned to, even when that project is run from another company.
+ * Never the employee, HR, an Employee-role person, someone suspended, or an unrelated company's people.
  */
-export type ProjectManagerChoices = { options: { id: string; name: string; code: string | null }[]; defaultId: string | null };
-
-export async function projectManagerChoices(teamIds: string[], exceptUserId: string): Promise<Map<string, ProjectManagerChoices>> {
-  const out = new Map<string, ProjectManagerChoices>();
-  const ids = [...new Set(teamIds)];
-  if (ids.length === 0) return out;
-  const byTeam = await managerIdsByTeam(ids); // primary manager first, then co-managers
-  const allIds = [...new Set([...byTeam.values()].flat())].filter((id) => id !== exceptUserId);
-  const users = allIds.length
-    ? await prisma.user.findMany({ where: { id: { in: allIds }, status: "ACTIVE", role: { in: ["MANAGER", "ADMIN"] } }, select: { id: true, firstName: true, lastName: true, employeeCode: true } })
-    : [];
-  const byId = new Map(users.map((u) => [u.id, u]));
-  const team = await prisma.team.findMany({ where: { id: { in: ids } }, select: { id: true, managerId: true } });
-  const primaryOf = new Map(team.map((t) => [t.id, t.managerId]));
-  for (const t of ids) {
-    const options = (byTeam.get(t) ?? []).filter((id) => byId.has(id)).map((id) => {
-      const u = byId.get(id)!;
-      return { id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode };
-    });
-    const primary = primaryOf.get(t);
-    const defaultId = primary && options.some((o) => o.id === primary) ? primary : options.length === 1 ? options[0].id : null;
-    out.set(t, { options, defaultId });
+export async function eligibleManagers(owner: { id: string; platformId: string }) {
+  const [companyTeams, myTeams] = await Promise.all([
+    prisma.team.findMany({ where: { platformId: owner.platformId, isActive: true }, select: { id: true } }),
+    prisma.team.findMany({ where: { isActive: true, members: { some: { userId: owner.id, isActive: true } } }, select: { id: true } }),
+  ]);
+  const byTeam = await managerIdsByTeam([...companyTeams, ...myTeams].map((t) => t.id));
+  const companyTeamIds = new Set(companyTeams.map((t) => t.id));
+  const myTeamIds = new Set(myTeams.map((t) => t.id));
+  const responsible = new Set<string>(); // manage a project of this company
+  const mine = new Set<string>(); // manage a project the employee is on
+  for (const [teamId, ids] of byTeam) for (const id of ids) {
+    if (companyTeamIds.has(teamId)) responsible.add(id);
+    if (myTeamIds.has(teamId)) mine.add(id);
   }
-  return out;
-}
-
-/**
- * "Other managers": any active Manager or Admin of the person's OWN company (never the person), for work done for a project they are not
- * on, or when their project has no manager. Same-company only: a manager of an unrelated company is never offered.
- */
-export async function otherManagerChoices(platformId: string, exceptUserId: string) {
   const users = await prisma.user.findMany({
-    where: { platformId, status: "ACTIVE", role: { in: ["MANAGER", "ADMIN"] }, id: { not: exceptUserId } },
-    select: { id: true, firstName: true, lastName: true, employeeCode: true },
+    where: {
+      id: { not: owner.id },
+      status: "ACTIVE",
+      role: { in: ["MANAGER", "ADMIN"] },
+      OR: [{ platformId: owner.platformId, role: "MANAGER" }, { id: { in: [...responsible] } }, { id: { in: [...mine] } }],
+    },
+    select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true },
     orderBy: { firstName: "asc" },
   });
-  return users.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode }));
+  return users.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode, role: String(u.role) }));
 }
 
 /**
- * Who a new task goes to. The choices are (1) the managers of the PROJECT picked for the task and (2) any other manager of the person's
- * own company. Anyone else is refused (BAD_TAGGED_MANAGER).
- * Nothing sent: the project's own manager is used. If the project has none, the person must choose (TAGGED_MANAGER_REQUIRED), and when
- * nobody at all is available the task cannot be sent (PROJECT_HAS_NO_MANAGER). A person with NO project is not blocked: no tag unless they
- * choose one, and the task then keeps the earlier review rule (the reporting line). The tag is saved with the task, so a later change of
- * the project's manager never moves a task that is already submitted.
+ * Who a new task is tagged to: exactly the manager the employee chose, nothing is filled in for them. It must be one of their eligible
+ * managers (BAD_TAGGED_MANAGER otherwise). When managers exist and none was chosen the task is refused (TAGGED_MANAGER_REQUIRED); only a
+ * company with no eligible manager at all keeps the earlier review rule (the reporting line). The choice is saved with the task, so a
+ * later change of a project's manager or of the reporting line never moves a task that is already submitted.
  */
-export async function resolveTaggedManager(owner: { id: string; platformId: string }, taggedId: unknown, teamId: string | null): Promise<string | null> {
+export async function resolveTaggedManager(owner: { id: string; platformId: string }, taggedId: unknown): Promise<string | null> {
   const tagged = typeof taggedId === "string" && taggedId ? taggedId : null;
   if (taggedId !== undefined && taggedId !== null && taggedId !== "" && !tagged) throw new Error("BAD_TAGGED_MANAGER");
-  const project = teamId ? ((await projectManagerChoices([teamId], owner.id)).get(teamId) ?? { options: [], defaultId: null }) : { options: [], defaultId: null };
-  const others = await otherManagerChoices(owner.platformId, owner.id);
+  const eligible = await eligibleManagers(owner);
   if (tagged) {
-    if (!project.options.some((m) => m.id === tagged) && !others.some((m) => m.id === tagged)) throw new Error("BAD_TAGGED_MANAGER");
+    if (!eligible.some((m) => m.id === tagged)) throw new Error("BAD_TAGGED_MANAGER");
     return tagged;
   }
-  if (!teamId) return null;
-  if (project.defaultId) return project.defaultId;
-  if (project.options.length === 0 && others.length === 0) throw new Error("PROJECT_HAS_NO_MANAGER");
+  if (eligible.length === 0) return null;
   throw new Error("TAGGED_MANAGER_REQUIRED");
 }
 
-/** What the form needs: per project who may approve it and who is preselected, plus the other managers of the person's company. */
-export async function entryFormChoices(userId: string, platformId: string, teamIds: string[]) {
-  const [map, others] = await Promise.all([projectManagerChoices(teamIds, userId), otherManagerChoices(platformId, userId)]);
-  const byProject: Record<string, ProjectManagerChoices> = {};
-  for (const [id, c] of map) byProject[id] = c;
-  return { byProject, others };
+/** Every project the employee may pick: all ACTIVE projects of their own company, plus the ones they are already assigned to. */
+export async function selectableProjects(owner: { id: string; platformId: string }) {
+  const teams = await prisma.team.findMany({
+    where: { isActive: true, OR: [{ platformId: owner.platformId }, { members: { some: { userId: owner.id, isActive: true } } }] },
+    select: { id: true, name: true, platform: { select: { name: true } }, platformId: true },
+    orderBy: { name: "asc" },
+  });
+  return teams.map((t) => ({ id: t.id, name: t.name, company: t.platform?.name ?? null, ownCompany: t.platformId === owner.platformId }));
+}
+
+/** What the form needs: all selectable projects and all eligible managers, as two independent lists. */
+export async function entryFormChoices(userId: string, platformId: string) {
+  const owner = { id: userId, platformId };
+  const [projects, managers] = await Promise.all([selectableProjects(owner), eligibleManagers(owner)]);
+  return { projects, managers };
 }
