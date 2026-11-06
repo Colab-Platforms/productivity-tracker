@@ -182,7 +182,12 @@ export default function OnboardingPage() {
     return <PasswordGate onDone={load} name={data.user.name} />;
   }
 
-  const stage = STAGE_COPY[data.onboardingStatus] ?? STAGE_COPY.OFFER_SENT!;
+  // Active but HR has switched "Tracker access" off: the dashboard sends this person here, so saying "you're all set" with a button back
+  // to the dashboard would just loop. Say what is actually wrong and who can fix it.
+  const accessOff = data.onboardingStatus === "ACTIVE" && !data.trackerAccessEnabled;
+  const stage = accessOff
+    ? { title: "Tracker access is switched off", body: "Your account is active, but the tracker has not been switched on for you." }
+    : (STAGE_COPY[data.onboardingStatus] ?? STAGE_COPY.OFFER_SENT!);
   const pct =
     data.progress.total > 0
       ? Math.round((data.progress.done / data.progress.total) * 100)
@@ -217,7 +222,13 @@ export default function OnboardingPage() {
           </div>
         </div>
 
-        {data.onboardingStatus === "ACTIVE" ? (
+        {accessOff ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center">
+            <p className="text-sm text-amber-800">
+              Please ask HR to switch on Tracker access for you (Employees, then Edit, then Tracker access). Once they do, sign in again and your dashboard will open.
+            </p>
+          </div>
+        ) : data.onboardingStatus === "ACTIVE" ? (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center">
             <p className="text-sm text-emerald-800">
               Your account is active. The tracker, your offer letter and the company

@@ -53,7 +53,17 @@ type Task = {
   assignedBy: string | null;
   approvedBy: string | null;
   reviewedBy: string | null;
+  // Daily task entry (present once the server has it switched on): progress is separate from approval.
+  progress?: "COMPLETED" | "IN_PROGRESS" | "BLOCKED" | "NOT_STARTED";
+  hoursSpent?: number | null;
+  taggedManager?: string | null;
+  blockedNote?: string | null;
+  approvalNote?: string | null;
+  project?: string | null;
+  projectId?: string | null;
 };
+
+type EntryForm = { ready: boolean; defaultId: string | null; options: { id: string; name: string; code: string | null }[] };
 
 type Score = {
   totalWeight: number;
@@ -67,6 +77,8 @@ type Score = {
 type Payload = {
   // true for a manager once self-managed tasks are available: his own tasks need no approval (see _self/SelfManagedTasks)
   selfManagedMode?: boolean;
+  entryForm?: EntryForm;
+  projects?: { id: string; name: string }[];
   awaitingApproval: Task[];
   rejected: Task[];
   active: Task[];
@@ -102,6 +114,10 @@ export default function TasksPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [weight, setWeight] = useState("MEDIUM");
+  const [projectId, setProjectId] = useState("");
+  const [taggedId, setTaggedId] = useState<string | null>(null);
+  const [hours, setHours] = useState("");
+  const [progress, setProgress] = useState("IN_PROGRESS");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -140,10 +156,23 @@ export default function TasksPage() {
     setBusy(true);
     setError("");
     try {
-      setData(await apiPost<Payload>("/tasks", { title, description, weight }));
+      const entry = data?.entryForm?.ready === true;
+      const tagged = taggedId ?? data?.entryForm?.defaultId ?? "";
+      setData(
+        await apiPost<Payload>("/tasks", {
+          title,
+          description,
+          weight,
+          ...(entry ? { progress, ...(hours.trim() ? { hoursSpent: Number(hours) } : {}), ...(projectId ? { teamId: projectId } : {}), ...(tagged ? { taggedManagerId: tagged } : {}) } : {}),
+        })
+      );
       setTitle("");
       setDescription("");
       setWeight("MEDIUM");
+      setHours("");
+      setProgress("IN_PROGRESS");
+      setProjectId("");
+      setTaggedId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add that");
     } finally {
@@ -156,6 +185,18 @@ export default function TasksPage() {
     setError("");
     try {
       setData(await call<Payload>(`/tasks/${task.id}`, "PATCH", { status }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update that");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeProgress(task: Task, next: string) {
+    setBusy(true);
+    setError("");
+    try {
+      setData(await call<Payload>(`/tasks/${task.id}`, "PATCH", { progress: next }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update that");
     } finally {
@@ -246,11 +287,54 @@ export default function TasksPage() {
           className="w-full rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-500"
         />
 
+        {data?.entryForm?.ready && (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-xs text-slate-500">
+              Date
+              <p className="mt-1 rounded-xl border border-indigo-100 bg-slate-50 px-3 py-2 text-sm text-slate-700">{formatDate(new Date(), { day: "numeric", month: "short", year: "numeric" })}</p>
+            </label>
+            <label className="text-xs text-slate-500">
+              Select Project{(data.projects?.length ?? 0) > 0 && <span className="text-rose-500"> *</span>}
+              <select value={projectId} required={(data.projects?.length ?? 0) > 0} disabled={(data.projects?.length ?? 0) === 0} onChange={(e) => setProjectId(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+                <option value="">{(data.projects?.length ?? 0) > 0 ? "Select a project" : "No project assigned to you"}</option>
+                {(data.projects ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              {(data.projects?.length ?? 0) === 0 && <span className="mt-1 block text-[11px] text-amber-600">Ask HR to add you to a project.</span>}
+            </label>
+            <label className="text-xs text-slate-500">
+              Tag Reporting Manager{data.entryForm.options.length > 0 && <span className="text-rose-500"> *</span>}
+              <select value={taggedId ?? data.entryForm.defaultId ?? ""} required={data.entryForm.options.length > 0} disabled={data.entryForm.options.length === 0} onChange={(e) => setTaggedId(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+                <option value="">{data.entryForm.options.length > 0 ? "Select a manager" : "No manager mapped to you"}</option>
+                {data.entryForm.options.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}</option>
+                ))}
+              </select>
+              {data.entryForm.options.length === 0 && <span className="mt-1 block text-[11px] text-amber-600">Ask HR to set your reporting manager.</span>}
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs text-slate-500">
+                Hours spent
+                <input type="number" min={0} max={24} step={0.25} value={hours} onChange={(e) => setHours(e.target.value)} placeholder="0" className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900" />
+              </label>
+              <label className="text-xs text-slate-500">
+                Progress
+                <select value={progress} onChange={(e) => setProgress(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+                  <option value="IN_PROGRESS">In Progress</option>
+                  <option value="COMPLETED">Completed</option>
+                  <option value="BLOCKED">Blocked</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Any detail your manager needs (optional)"
+            placeholder="Additional details (optional)"
             className="min-w-56 flex-1 rounded-xl border border-indigo-200 px-3 py-2 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-500"
           />
           <select
@@ -266,7 +350,7 @@ export default function TasksPage() {
           </select>
           <button
             type="submit"
-            disabled={busy || !title.trim()}
+            disabled={busy || !title.trim() || (data?.entryForm?.ready === true && (((data.projects?.length ?? 0) > 0 && !projectId) || (data.entryForm.options.length > 0 && !(taggedId ?? data.entryForm.defaultId))))}
             className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
           >
             Send for approval
@@ -294,7 +378,15 @@ export default function TasksPage() {
                 {t.description && (
                   <p className="mt-0.5 text-xs text-slate-400">{t.description}</p>
                 )}
+                <EntryMeta t={t} />
               </div>
+              {t.progress && (
+                <select aria-label="Progress" value={t.progress === "NOT_STARTED" ? "IN_PROGRESS" : t.progress} disabled={busy} onChange={(e) => changeProgress(t, e.target.value)} className="shrink-0 rounded-lg border border-indigo-100 px-2 py-1 text-xs text-slate-700">
+                  <option value="IN_PROGRESS">In Progress</option>
+                  <option value="COMPLETED">Completed</option>
+                  <option value="BLOCKED">Blocked</option>
+                </select>
+              )}
               <span
                 className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
                   WEIGHT_CHIP[t.weight]
@@ -320,6 +412,7 @@ export default function TasksPage() {
           {data.rejected.map((t) => (
             <li key={t.id} className="px-5 py-3.5">
               <p className="text-sm text-slate-700 line-through">{t.title}</p>
+              <EntryMeta t={t} />
               {t.rejectionNote && (
                 <p className="mt-1 rounded-md bg-rose-50 px-2 py-1 text-xs text-rose-700">
                   {t.approvedBy ?? "Your manager"}: {t.rejectionNote}
@@ -357,6 +450,7 @@ export default function TasksPage() {
                 {t.isCarriedOver && " · carried over"}
                 {t.fromEarlierDay && ` · from ${t.date}`}
               </p>
+              <EntryMeta t={t} />
               {t.reopened && (
                 <p className="mt-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-900">
                   <span className="font-medium">Reopened by your manager · {t.reopened.label}:</span> {t.reopened.remark}
@@ -414,6 +508,7 @@ export default function TasksPage() {
                 <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-slate-700">{t.title}</p>
+                  <EntryMeta t={t} />
                   {t.reviewNote && (
                     <p className="mt-0.5 text-xs text-slate-500">
                       {t.reviewedBy}: {t.reviewNote}
@@ -447,6 +542,36 @@ export default function TasksPage() {
           })}
         </Section>
       )}
+    </div>
+  );
+}
+
+const PROGRESS_CHIP: Record<string, { label: string; cls: string }> = {
+  COMPLETED: { label: "Completed", cls: "bg-emerald-50 text-emerald-700" },
+  IN_PROGRESS: { label: "In Progress", cls: "bg-sky-50 text-sky-700" },
+  BLOCKED: { label: "Blocked", cls: "bg-rose-50 text-rose-700" },
+  NOT_STARTED: { label: "Not started", cls: "bg-slate-100 text-slate-500" },
+};
+const APPROVAL_CHIP: Record<string, { label: string; cls: string }> = {
+  PENDING: { label: "Approval: Pending", cls: "bg-amber-50 text-amber-700" },
+  APPROVED: { label: "Approval: Approved", cls: "bg-emerald-50 text-emerald-700" },
+  REJECTED: { label: "Approval: Rejected", cls: "bg-red-50 text-red-600" },
+};
+
+// Progress (is the work done?) and approval (has the manager accepted it?) are shown as two separate chips.
+function EntryMeta({ t }: { t: Task }) {
+  if (!t.progress) return null;
+  const p = PROGRESS_CHIP[t.progress];
+  const a = APPROVAL_CHIP[t.approvalStatus];
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+      <span className={`rounded-full px-2 py-0.5 font-medium ${p.cls}`}>{p.label}</span>
+      <span className={`rounded-full px-2 py-0.5 font-medium ${a.cls}`}>{a.label}</span>
+      {t.hoursSpent != null && <span className="text-slate-500">{t.hoursSpent} h</span>}
+      {t.project && <span className="text-slate-500">· {t.project}</span>}
+      {t.taggedManager && <span className="text-slate-500">· Manager: {t.taggedManager}</span>}
+      {t.progress === "BLOCKED" && t.blockedNote && <span className="text-rose-600">· {t.blockedNote}</span>}
+      {t.approvalNote && <span className="text-slate-500">· Manager's comment: “{t.approvalNote}”</span>}
     </div>
   );
 }

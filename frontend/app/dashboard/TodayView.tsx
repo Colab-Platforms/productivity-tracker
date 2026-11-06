@@ -23,6 +23,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { roleLabel } from "@/lib/roles";
 import { apiGet, apiPost } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
 import { unit } from "@/lib/plural";
@@ -32,6 +33,7 @@ import DayRow from "./_timesheet/DayRow";
 import StandupCard from "./_standup/StandupCard";
 import Breakdown from "./_timesheet/Breakdown";
 import HuddleOverview from "./_standup/HuddleOverview";
+import OrgOverview from "./_approvals/OrgOverview";
 import { LateRemarkModal } from "./_timesheet/LateRemarkModal";
 import { DiscussionModal } from "./_timesheet/DiscussionModal";
 import { EntryLogModal, ScheduleModal } from "./_timesheet/Modals";
@@ -575,7 +577,7 @@ export default function TodayView() {
 
   const [eh, em, es] = hms(elapsed);
   const dim = ts.loading && ts.data ? "opacity-60 transition-opacity" : "transition-opacity";
-  const roleLine = me.designation ?? `${String(me.role).charAt(0)}${String(me.role).slice(1).toLowerCase()}`;
+  const roleLine = me.designation ?? roleLabel(me.role);
 
   return (
     <div className="mx-auto page-6xl p-3 sm:p-6">
@@ -874,6 +876,7 @@ export default function TodayView() {
 
         {/* ===================== My Timesheets ===================== */}
         {me.role === "MANAGER" && <HuddleOverview compact />}
+        {(me.role === "MANAGER" || me.role === "EMPLOYEE") && <OrgOverview />}
 
         {tsData && (
           <Breakdown totals={tsData.totals} days={days} tz={tz} today={today} rangeLabel={rangeLabel} />

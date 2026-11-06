@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { parseIsoDay, zonedToUtc, localDayOf } from "../../lib/dates.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { sendMail } from "../../lib/mailer.js";
@@ -233,8 +234,10 @@ export async function oversight(userId: string, f: { scope?: unknown }) {
   if (!OVERSIGHT.includes(v.role)) throw new Error("NOT_ALLOWED");
   const now = new Date();
   const scope = (["upcoming", "past", "cancelled"] as const).find((s) => s === f.scope) ?? "upcoming";
+  // HR/Admin see the meetings of every company they act on (company access), still only title, organizer, time and head-count.
+  const companyScope = scopeWhere(await accessFor(userId));
   const rows = await prisma.meeting.findMany({
-    where: { platformId: v.platformId, ...(scope === "upcoming" ? { status: "SCHEDULED", endsAt: { gte: now } } : scope === "past" ? { status: "SCHEDULED", endsAt: { lt: now } } : { status: "CANCELLED" }) },
+    where: { ...companyScope, ...(scope === "upcoming" ? { status: "SCHEDULED", endsAt: { gte: now } } : scope === "past" ? { status: "SCHEDULED", endsAt: { lt: now } } : { status: "CANCELLED" }) },
     select: { id: true, title: true, startsAt: true, endsAt: true, status: true, organizer: { select: { firstName: true, lastName: true } }, _count: { select: { attendees: true } } },
     orderBy: { startsAt: scope === "upcoming" ? "asc" : "desc" },
     take: 200,
@@ -413,7 +416,8 @@ export async function end(userId: string, id: string) {
 
 export async function cancel(userId: string, id: string, reason: unknown) {
   const v = await who(userId);
-  const m = await prisma.meeting.findFirst({ where: { id, platformId: v.platformId }, include: { attendees: { select: { user: { select: { id: true, firstName: true, email: true } } } } } });
+  // HR/Admin may cancel a meeting of any company they act on (the same reach as the overview that lists it); everyone else stays in their own company.
+  const m = await prisma.meeting.findFirst({ where: { id, ...(OVERSIGHT.includes(v.role) ? scopeWhere(await accessFor(userId)) : { platformId: v.platformId }) }, include: { attendees: { select: { user: { select: { id: true, firstName: true, email: true } } } } } });
   if (!m) throw new Error("NOT_FOUND");
   // The organizer, or HR/Admin of the company (oversight).
   if (m.organizerId !== userId && !OVERSIGHT.includes(v.role)) throw new Error("NOT_FOUND");

@@ -21,6 +21,8 @@ import { useMe } from "../layout";
 import AttendanceReport from "./_team/AttendanceReport";
 import ShiftBreakdownCard from "./_team/ShiftBreakdownCard";
 import ProductivityReport from "./_team/ProductivityReport";
+import FilterBar from "../_filters/FilterBar";
+import { useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 
 type Tab = "summary" | "attendance" | "shift" | "productivity";
 import { addDaysIso, firstOfMonthIso as firstOfMonth, formatTime, todayIso } from "@/lib/time";
@@ -164,6 +166,11 @@ export default function ReportsPage() {
   const me = useMe();
   const [tab, setTab] = useState<Exclude<Tab, "summary">>("attendance");
   const canSeeTeam = !!me && ["MANAGER", "HR", "ADMIN"].includes(me.role);
+  // Company, project, reporting manager and name/ID search narrow all three reports to the SAME people (the server builds the tables, KPIs and charts from
+  // that one list, so the exports match). HR and Admin: every company they act on; a manager: their own people.
+  const { filters, update, clear, ready } = useHrFilters();
+  const { options } = useFilterOptions(filters, update, ready && canSeeTeam);
+  const [scope, setScope] = useState<{ orgTotal: number; filteredTotal: number } | null>(null);
   const tabs: [Exclude<Tab, "summary">, string][] = [
     ["attendance", "Attendance report"],
     ["shift", "Shift breakdown"],
@@ -177,7 +184,7 @@ export default function ReportsPage() {
     <div className="mx-auto page-7xl space-y-6 p-4 sm:p-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Reports &amp; Analytics</h1>
-        <p className="mt-1 text-sm text-slate-500">History and trends for your team: the teams you run and the people who report to you. For who is working right now, open Team Attendance.</p>
+        <p className="mt-1 text-sm text-slate-500">History and trends for your people: HR and Admin see every company they act on, a manager sees their own team. For who is working right now, open Attendance.</p>
       </div>
       <div role="tablist" className="inline-flex flex-wrap rounded-xl bg-white p-1 shadow-[var(--shadow-card)]">
         {tabs.map(([key, label]) => (
@@ -192,7 +199,21 @@ export default function ReportsPage() {
           </button>
         ))}
       </div>
-      {tab === "attendance" ? <AttendanceReport /> : tab === "shift" ? <ShiftBreakdownCard /> : <ProductivityReport canSetTargets={!!me && ["HR", "ADMIN"].includes(me.role)} />}
+      <FilterBar
+        filters={filters}
+        update={update}
+        clear={clear}
+        options={options}
+        show={{ search: true, company: me?.role !== "MANAGER" || (options?.companies.length ?? 0) > 1, project: true, manager: me?.role !== "MANAGER" }}
+        counts={scope ? { filtered: scope.filteredTotal, total: scope.orgTotal } : null}
+      />
+      {tab === "attendance" ? (
+        <AttendanceReport filters={filters} ready={ready} onScope={setScope} />
+      ) : tab === "shift" ? (
+        <ShiftBreakdownCard filters={filters} ready={ready} onScope={setScope} />
+      ) : (
+        <ProductivityReport canSetTargets={!!me && ["HR", "ADMIN"].includes(me.role)} filters={filters} ready={ready} onScope={setScope} />
+      )}
     </div>
   );
 }

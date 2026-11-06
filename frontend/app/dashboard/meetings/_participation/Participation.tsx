@@ -235,6 +235,8 @@ type Panel = {
   timezone: string; now: string; lateAfterMinutes: number;
   summary: { invited: number; accepted?: number; declined?: number; awaitingAnswer?: number; joined: number; notJoined: number; inMeeting: number; ended: number; late: number; stillActivePastEnd: number; actualDurationSeconds: number | null; actualDurationOngoing: boolean; averageParticipationSeconds: number | null };
   rows: Row[];
+  // true when an Admin is looking at somebody else's meeting: names and times are shown, nothing can be corrected
+  readOnly?: boolean;
 };
 
 const CHIP: Record<Row["state"], { label: string; cls: string }> = {
@@ -316,7 +318,7 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
             {data.organizer && (
               <tr className="bg-[#F6F7FE]/70">
                 <td className="px-3 py-2.5">
-                  <p className="font-medium text-slate-900">{data.organizer.name} <span className="ml-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">you · organizer</span></p>
+                  <p className="font-medium text-slate-900">{data.organizer.name} <span className="ml-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{data.readOnly ? "organizer" : "you · organizer"}</span></p>
                   <p className="text-xs text-slate-400">Not counted among the invited people</p>
                 </td>
                 <td className="px-3 py-2.5">
@@ -351,9 +353,11 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
                   <td className="px-3 py-2.5 tabular-nums text-slate-700">{r.state === "ENDED" ? timeFmt(r.leftAt, tz) : "—"}</td>
                   <td className="px-3 py-2.5 tabular-nums text-slate-700">{live !== null ? <span className="text-emerald-700">{clock(live)}</span> : dur(r.durationSeconds)}</td>
                   <td className="px-3 py-2.5 text-right">
-                    <button onClick={() => setFixing(r)} className="rounded-lg border border-indigo-100 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                      {r.state === "NOT_JOINED" ? "Record joined" : "Correct"}
-                    </button>
+                    {!data.readOnly && (
+                      <button onClick={() => setFixing(r)} className="rounded-lg border border-indigo-100 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                        {r.state === "NOT_JOINED" ? "Record joined" : "Correct"}
+                      </button>
+                    )}
                   </td>
                 </tr>
               );

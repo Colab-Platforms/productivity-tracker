@@ -6,6 +6,9 @@ import { unit } from "@/lib/plural";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
 import { ManagerDecisionBox, SkipManagerBox, StepNote, stepBadge, type ManagerStep } from "../_approvals/ManagerStep";
+import { FlowLine, History, StageBadge, type FlowFields } from "../_approvals/LeaveFlow";
+import FilterBar from "../_filters/FilterBar";
+import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 
 // ---------------------------------------------------------------------------
 // LEAVE
@@ -30,11 +33,21 @@ type Request = {
   decidedBy: string | null;
   createdAt: string;
   managerStep?: ManagerStep;
+} & FlowFields;
+type FormOptions = {
+  ready: boolean;
+  mode: "MANAGER" | "ADMIN" | "NONE";
+  role: string;
+  editable: boolean;
+  defaultId: string | null;
+  options: { id: string; name: string; code: string | null }[];
+  projects: { id: string; name: string }[];
 };
 type Mine = { year: number; taken: Taken; pending: number; requests: Request[] };
 type Review = Request & { person: { id: string; name: string; employeeCode: string | null; designation: string | null }; takenThisYear: Taken };
 type TeamLeave = { year: number; pending: Review[]; answered: Review[] };
-type Summary = { year: number; people: { id: string; name: string; employeeCode: string | null; designation: string | null; taken: Taken; pending: number }[] };
+type PeopleScope = { orgTotal: number; filteredTotal: number };
+type Summary = { year: number; scope?: PeopleScope; people: { id: string; name: string; employeeCode: string | null; designation: string | null; taken: Taken; pending: number }[] };
 type PersonDetail = {
   year: number;
   person: { name: string; employeeCode: string | null; designation: string | null };
@@ -73,7 +86,8 @@ function useApi<T>(path: string | null, reload: number) {
   return { data: res?.data ?? null, error: res && res.path === path ? (res.error ?? "") : "", loading: path !== null && res?.path !== path };
 }
 
-function Badge({ status, step }: { status: string; step?: ManagerStep }) {
+function Badge({ status, step, r }: { status: string; step?: ManagerStep; r?: FlowFields }) {
+  if (r?.stage && r.stageLabel) return <StageBadge stage={r.stage} label={r.stageLabel} />;
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[status] ?? ""}`}>{stepBadge(status, step) ?? STATUS_LABEL[status] ?? status}</span>;
 }
 
@@ -96,6 +110,7 @@ export default function LeavePage() {
   const me = useMe();
   const isHr = me?.role === "HR" || me?.role === "ADMIN";
   const isManager = me?.role === "MANAGER";
+  const isAdmin = me?.role === "ADMIN";
   const [tab, setTab] = useState<"mine" | "review" | "taken" | "team">("mine");
   const [reload, setReload] = useState(0);
   const [asking, setAsking] = useState(false);
@@ -103,17 +118,45 @@ export default function LeavePage() {
   const [actionError, setActionError] = useState("");
   const [busyId, setBusyId] = useState("");
 
+  // A link from the dashboard can open a tab directly (?tab=review or ?tab=team). Read once, when the person is known.
+  const role = me?.role;
+  useEffect(() => {
+    if (!role) return;
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t === "review" || t === "team" || t === "taken" || t === "mine") setTab(t);
+  }, [role]);
+
   const mine = useApi<Mine>("/leave/mine", reload);
   const [status, setStatus] = useState("PENDING");
-  const review = useApi<{ requests: Review[] }>(isHr && tab === "review" ? `/leave/requests?status=${status}` : null, reload);
+  // The shared HR filters (company, project, reporting manager, name/ID search) plus this page's own: leave type, approval stage and a date range.
+  const { filters, update, clear, ready } = useHrFilters();
+  const { options: fOptions } = useFilterOptions(filters, update, ready && isHr);
+  const [leaveType, setLeaveType] = useState("");
+  const [stageFilter, setStageFilter] = useState("");
+  const [dFrom, setDFrom] = useState("");
+  const [dTo, setDTo] = useState("");
+  const reviewParams = new URLSearchParams(filterQuery(filters));
+  reviewParams.set("status", status);
+  if (leaveType) reviewParams.set("leaveType", leaveType);
+  if (stageFilter) reviewParams.set("stage", stageFilter);
+  if (dFrom) reviewParams.set("from", dFrom);
+  if (dTo) reviewParams.set("to", dTo);
+  const badRange = !!dFrom && !!dTo && dTo < dFrom;
+  const review = useApi<{ requests: Review[]; scope?: PeopleScope; requestCount?: number }>(isHr && tab === "review" && ready && !badRange ? "/leave/requests?" + reviewParams.toString() : null, reload);
   const pendingCount = useApi<{ requests: Review[] }>(isHr ? "/leave/requests?status=PENDING" : null, reload);
 
-  // Manager step: requests from the people who report to this manager.
-  const team = useApi<TeamLeave>(isManager ? "/leave/manager/requests" : null, reload);
+  // The organization flow (tagged approver, projects, history) once the server has switched it on.
+  const formOpts = useApi<FormOptions>("/leave/form-options", reload);
+  const flow = formOpts.data?.ready === true;
+
+  // First-level step: requests tagged to this person (a manager for an employee's leave, an Admin for a manager's or HR's leave).
+  const isApprover = isManager || (isAdmin && flow);
+  const team = useApi<TeamLeave>(isApprover ? "/leave/manager/requests" : null, reload);
 
   const [year, setYear] = useState(new Date().getFullYear());
   const [search, setSearch] = useState("");
-  const summary = useApi<Summary>(isHr && tab === "taken" ? `/leave/summary?year=${year}` : null, reload);
+  const takenQuery = filterQuery(filters);
+  const summary = useApi<Summary>(isHr && tab === "taken" && ready ? "/leave/summary?year=" + year + (takenQuery ? "&" + takenQuery : "") : null, reload);
   const [personId, setPersonId] = useState<string | null>(null);
   const person = useApi<PersonDetail>(personId ? `/leave/person/${personId}?year=${year}` : null, reload);
 
@@ -126,7 +169,8 @@ export default function LeavePage() {
     setActionError("");
     try {
       await apiPost(`/leave/manager/requests/${id}/decide`, { decision, note: comment });
-      setNotice(decision === "APPROVE" ? "Approved. HR has been told and makes the final decision." : "Rejected. The employee has been told.");
+      const done = (team.data?.pending ?? []).find((x) => x.id === id);
+      setNotice(decision === "APPROVE" ? (done?.requesterRole === "HR" ? "Approved. This leave is now approved." : "Approved. HR has been told and makes the final decision.") : "Rejected. The person has been told.");
       setReload((n) => n + 1);
     } catch (e) {
       setActionError((e as Error).message);
@@ -174,10 +218,14 @@ export default function LeavePage() {
 
   const card = "rounded-2xl bg-white shadow-[var(--shadow-card)]";
   const waitingForMe = team.data?.pending.length ?? 0;
+  // With the flow on, HR's count is the requests whose turn it is (first level already answered); the rest are only visible.
+  const hrTurn = (pendingCount.data?.requests ?? []).filter((r) => !flow || r.stage === "PENDING_HR").length;
+  const reviewLabel = `${flow ? "All requests" : "Requests to review"}${hrTurn ? ` (${hrTurn})` : ""}`;
+  const teamLabel = isAdmin ? "For my approval" : "Team requests";
   const tabs: [typeof tab, string][] = isHr
-    ? [["mine", "My leave"], ["review", `Requests to review${pendingCount.data?.requests.length ? ` (${pendingCount.data.requests.length})` : ""}`], ["taken", "Leave taken"]]
+    ? [["mine", "My leave"], ...(isApprover ? ([["team", `${teamLabel}${waitingForMe ? ` (${waitingForMe})` : ""}`]] as [typeof tab, string][]) : []), ["review", reviewLabel], ["taken", "Leave taken"]]
     : isManager
-      ? [["mine", "My leave"], ["team", `Team requests${waitingForMe ? ` (${waitingForMe})` : ""}`]]
+      ? [["mine", "My leave"], ["team", `${teamLabel}${waitingForMe ? ` (${waitingForMe})` : ""}`]]
       : [["mine", "My leave"]];
 
   return (
@@ -212,7 +260,7 @@ export default function LeavePage() {
             <p className="text-sm text-slate-500">Leave taken in {mine.data?.year ?? new Date().getFullYear()}</p>
             <p className="mt-1 text-3xl font-semibold text-slate-900">
               {mine.data ? num(mine.data.taken.total) : "–"} <span className="text-base font-normal text-slate-400">days</span>
-              {mine.data && mine.data.pending > 0 && <span className="ml-3 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">{mine.data.pending} waiting for HR</span>}
+              {mine.data && mine.data.pending > 0 && <span className="ml-3 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">{mine.data.pending} {flow ? "pending" : "waiting for HR"}</span>}
             </p>
             <div className="mt-3">{mine.data && <TakenChips t={mine.data.taken} />}</div>
           </section>
@@ -236,10 +284,11 @@ export default function LeavePage() {
                         {r.decisionNote && <> · “{r.decisionNote}”</>}
                       </p>
                     )}
-                    <StepNote step={r.managerStep} />
+                    {flow ? <FlowLine r={r} /> : <StepNote step={r.managerStep} />}
+                    <History items={r.history} />
                   </div>
                   <div className="flex items-center gap-3">
-                    <Badge status={r.status} step={r.managerStep} />
+                    <Badge status={r.status} step={r.managerStep} r={r} />
                     {r.status === "PENDING" && (
                       <button disabled={busyId === r.id} onClick={() => cancel(r.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                         Cancel
@@ -255,9 +304,59 @@ export default function LeavePage() {
 
       {/* ---------------- HR: requests to review ---------------- */}
       {tab === "review" && isHr && (
+        <>
+        <FilterBar
+          filters={filters}
+          update={update}
+          clear={() => {
+            clear();
+            setLeaveType("");
+            setStageFilter("");
+            setDFrom("");
+            setDTo("");
+          }}
+          options={fOptions}
+          show={{ search: true, company: true, project: true, manager: true }}
+          counts={review.data?.scope ? { filtered: review.data.scope.filteredTotal, total: review.data.scope.orgTotal } : null}
+          extraActive={(leaveType ? 1 : 0) + (stageFilter ? 1 : 0) + (dFrom || dTo ? 1 : 0)}
+          extra={
+            <>
+              <div className="w-36">
+                <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400" htmlFor="hf-ltype">Leave type</label>
+                <select id="hf-ltype" value={leaveType} onChange={(e) => setLeaveType(e.target.value)} className="h-9 w-full rounded-xl border border-indigo-100 bg-white px-3 text-sm text-slate-800 outline-none focus:border-indigo-400">
+                  <option value="">All types</option>
+                  {REQUEST_TYPES.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
+                </select>
+              </div>
+              {flow && (
+                <div className="w-48">
+                  <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400" htmlFor="hf-stage">Approval stage</label>
+                  <select id="hf-stage" value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="h-9 w-full rounded-xl border border-indigo-100 bg-white px-3 text-sm text-slate-800 outline-none focus:border-indigo-400">
+                    <option value="">All stages</option>
+                    <option value="PENDING_MANAGER">Pending Manager Approval</option>
+                    <option value="PENDING_ADMIN">Pending Admin Approval</option>
+                    <option value="PENDING_HR">Pending HR Approval</option>
+                    <option value="APPROVED">Approved</option>
+                    <option value="REJECTED">Rejected</option>
+                    <option value="CANCELLED">Cancelled</option>
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400" htmlFor="hf-dfrom">Leave dates</label>
+                <div className="flex items-center gap-1.5">
+                  <input id="hf-dfrom" type="date" value={dFrom} onChange={(e) => setDFrom(e.target.value)} aria-label="From date" className="h-9 rounded-xl border border-indigo-100 bg-white px-2 text-sm text-slate-800 outline-none focus:border-indigo-400" />
+                  <span className="text-xs text-slate-400">to</span>
+                  <input type="date" min={dFrom || undefined} value={dTo} onChange={(e) => setDTo(e.target.value)} aria-label="To date" className="h-9 rounded-xl border border-indigo-100 bg-white px-2 text-sm text-slate-800 outline-none focus:border-indigo-400" />
+                </div>
+              </div>
+            </>
+          }
+        />
+        {badRange && <p className="rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-600">The end date can&apos;t be before the start date.</p>}
         <section className={`${card} p-6`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-semibold text-slate-900">Requests</h2>
+            <h2 className="font-semibold text-slate-900">Requests{review.data?.requestCount !== undefined ? <span className="ml-2 text-sm font-normal text-slate-400">{review.data.requestCount}</span> : null}</h2>
             <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-700">
               <option value="PENDING">Waiting for HR</option>
               <option value="APPROVED">Approved</option>
@@ -269,7 +368,13 @@ export default function LeavePage() {
           {review.error && <p className="mt-3 text-sm text-red-600">{review.error}</p>}
           {review.data && review.data.requests.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">Nothing here.</p>}
           <div className="mt-4 divide-y divide-indigo-100">
-            {review.data?.requests.map((r) => (
+            {review.data?.requests.map((r) => {
+              // HR's turn only once the first level has approved; before that the buttons are visible but disabled. An Admin gives a final
+              // answer only on an older request that never had a first-level step.
+              const hrCan = r.stage ? (r.stage === "PENDING_HR" && (me?.role === "HR" || !r.managerStep)) : r.managerStep?.status !== "PENDING";
+              const waitingFirst = !!r.stage && (r.stage === "PENDING_MANAGER" || r.stage === "PENDING_ADMIN");
+              const ownRequest = r.person.id === me?.id;
+              return (
               <div key={r.id} className="py-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -283,24 +388,26 @@ export default function LeavePage() {
                     <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
                     <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} {unit(r.takenThisYear.total, "day")}</p>
                     {r.decidedBy && <p className="mt-1 text-xs text-slate-400">Decided by {r.decidedBy}{r.decisionNote ? ` · “${r.decisionNote}”` : ""}</p>}
-                    <StepNote step={r.managerStep} />
+                    {flow ? <FlowLine r={r} /> : <StepNote step={r.managerStep} />}
+                    <History items={r.history} />
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge status={r.status} step={r.managerStep} />
-                    {r.status === "PENDING" && r.person.id !== me?.id && r.managerStep?.status === "PENDING" && (
+                    <Badge status={r.status} step={r.managerStep} r={r} />
+                    {r.status === "PENDING" && !flow && !ownRequest && r.managerStep?.status === "PENDING" && (
                       <SkipManagerBox busy={busyId === r.id} onDecide={(d, reason) => decide(r.id, d, reason)} />
                     )}
-                    {r.status === "PENDING" && r.person.id !== me?.id && r.managerStep?.status !== "PENDING" && (
+                    {r.status === "PENDING" && !ownRequest && (flow || r.managerStep?.status !== "PENDING") && (r.stage !== "PENDING_ADMIN" || me?.role === "HR" || !r.stage) && (
                       <>
-                        <button disabled={busyId === r.id} onClick={() => decide(r.id, "APPROVE")} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+                        <button disabled={busyId === r.id || !hrCan} title={waitingFirst ? "Waiting for the first approver" : undefined} onClick={() => decide(r.id, "APPROVE")} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
                           Approve
                         </button>
-                        <button disabled={busyId === r.id} onClick={() => setNoteFor(noteFor === r.id ? null : r.id)} className="rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">
+                        <button disabled={busyId === r.id || !hrCan} title={waitingFirst ? "Waiting for the first approver" : undefined} onClick={() => setNoteFor(noteFor === r.id ? null : r.id)} className="rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">
                           Reject
                         </button>
                       </>
                     )}
-                    {r.status === "PENDING" && r.person.id === me?.id && <span className="text-xs text-slate-400">Another HR/Admin must decide this</span>}
+                    {r.status === "PENDING" && ownRequest && <span className="text-xs text-slate-400">{flow ? "The tagged Admin decides this" : "Another HR/Admin must decide this"}</span>}
+                    {r.status === "PENDING" && flow && !ownRequest && waitingFirst && <span className="text-xs text-slate-400">HR can act after {r.tagged ?? "the first approver"} approves</span>}
                   </div>
                 </div>
                 {noteFor === r.id && (
@@ -312,16 +419,18 @@ export default function LeavePage() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </section>
+        </>
       )}
 
       {/* ---------------- Manager: requests from my team ---------------- */}
-      {tab === "team" && isManager && (
+      {tab === "team" && isApprover && (
         <section className={`${card} p-6`}>
-          <h2 className="font-semibold text-slate-900">Requests from your team</h2>
-          <p className="mt-1 text-sm text-slate-500">You answer first. If you approve, HR makes the final decision; if you reject, it is closed.</p>
+          <h2 className="font-semibold text-slate-900">{isAdmin ? "Leave sent to you for approval" : "Requests from your team"}</h2>
+          <p className="mt-1 text-sm text-slate-500">{isAdmin ? "Only requests tagged to you appear here. A manager's leave goes to HR for the final decision after you approve; HR's own leave is final with you. A rejection closes it." : "You answer first. If you approve, HR makes the final decision; if you reject, it is closed."}</p>
           {team.error && <p className="mt-3 text-sm text-red-600">{team.error}</p>}
           {team.data && team.data.pending.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">Nothing is waiting for you.</p>}
           <div className="mt-4 divide-y divide-indigo-100">
@@ -336,7 +445,8 @@ export default function LeavePage() {
                 </p>
                 <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
                 <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} {unit(r.takenThisYear.total, "day")}</p>
-                <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => managerDecide(r.id, d, c)} />
+                <FlowLine r={r} />
+                <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => managerDecide(r.id, d, c)} hint={r.requesterRole === "HR" ? "Your approval is final for HR's leave. A rejection is final." : "After you approve, HR makes the final decision. A rejection is final."} />
               </div>
             ))}
           </div>
@@ -361,6 +471,15 @@ export default function LeavePage() {
 
       {/* ---------------- HR: leave taken ---------------- */}
       {tab === "taken" && isHr && (
+        <>
+        <FilterBar
+          filters={filters}
+          update={update}
+          clear={clear}
+          options={fOptions}
+          show={{ company: true, project: true, manager: true }}
+          counts={summary.data?.scope ? { filtered: summary.data.scope.filteredTotal, total: summary.data.scope.orgTotal } : null}
+        />
         <section className={`${card} p-6`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-semibold text-slate-900">Leave taken in {year}</h2>
@@ -405,14 +524,16 @@ export default function LeavePage() {
           </div>
           <p className="mt-3 text-xs text-slate-400">Counted from approved leave (half days count 0.5). Click a person to see every request and day.</p>
         </section>
+        </>
       )}
 
       {asking && (
         <RequestModal
+          options={formOpts.data}
           onClose={() => setAsking(false)}
           onDone={() => {
             setAsking(false);
-            setNotice("Request sent. HR will review it, and you will see the answer here.");
+            setNotice(me?.role === "ADMIN" && flow ? "Your leave is approved automatically and is visible to everyone." : "Request sent. The first approver answers, then HR where needed. You will see the answer here.");
             setTab("mine");
             setReload((n) => n + 1);
           }}
@@ -461,7 +582,7 @@ export default function LeavePage() {
 }
 
 // ---------------------------------------------------------------------------
-function RequestModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+function RequestModal({ options, onClose, onDone }: { options: FormOptions | null; onClose: () => void; onDone: () => void }) {
   const [leaveType, setLeaveType] = useState("CASUAL");
   const [from, setFrom] = useState(todayIso());
   const [to, setTo] = useState(todayIso());
@@ -470,16 +591,36 @@ function RequestModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const flow = options?.ready === true;
+  const [approverId, setApproverId] = useState<string | null>(null);
+  const [projectIds, setProjectIds] = useState<string[]>([]);
+  const [days, setDays] = useState<number | null>(null);
 
   const oneDay = from === to;
   const invalid = !from || !to || to < from;
+  // the tagged approver: preselected from the profile, editable where the rules allow it
+  const chosenApprover = approverId ?? options?.defaultId ?? "";
+  const needsApprover = flow && options?.mode === "ADMIN" && options.role === "HR";
+  const noApproverMapped = flow && options?.mode !== "NONE" && options?.options.length === 0;
+
+  // "Total days" is worked out by the server (weekly offs and holidays are not counted), the same count approval uses.
+  useEffect(() => {
+    if (invalid) return;
+    let live = true;
+    apiGet<{ days: number }>(`/leave/preview?from=${from}&to=${to}&half=${half && oneDay}`)
+      .then((r) => live && setDays(r.days))
+      .catch(() => live && setDays(null));
+    return () => {
+      live = false;
+    };
+  }, [from, to, half, oneDay, invalid]);
 
   async function submit() {
     if (busy) return;
     setBusy(true);
     setError("");
     try {
-      await apiPost("/leave/requests", { from, to, leaveType, isHalfDay: half && oneDay, isFirstHalf: firstHalf, reason });
+      await apiPost("/leave/requests", { from, to, leaveType, isHalfDay: half && oneDay, isFirstHalf: firstHalf, reason, ...(flow ? { projectIds, ...(chosenApprover ? { approverId: chosenApprover } : {}) } : {}) });
       onDone();
     } catch (e) {
       setError((e as Error).message);
@@ -491,13 +632,13 @@ function RequestModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
   return (
     <Modal
       title="Request leave"
-      subtitle="HR approves it first. It only counts as leave once approved."
+      subtitle={flow ? (options?.mode === "NONE" ? "As an Admin your leave is approved automatically." : "It goes to the person tagged below first, and counts as leave only once fully approved.") : "HR approves it first. It only counts as leave once approved."}
       onClose={onClose}
       width="max-w-lg"
       footer={
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Close</button>
-          <button disabled={busy || invalid || reason.trim().length < 3} onClick={submit} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+          <button disabled={busy || invalid || reason.trim().length < 3 || (needsApprover && !chosenApprover)} onClick={submit} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
             {busy ? "Sending…" : "Send request"}
           </button>
         </div>
@@ -531,6 +672,37 @@ function RequestModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
             )}
           </div>
         )}
+        <p className="text-sm text-slate-600">Total days: <span className="font-semibold text-slate-900">{invalid || days === null ? "–" : days}</span></p>
+        {flow && (options?.projects.length ?? 0) > 0 && (
+          <fieldset className="text-sm text-slate-600">
+            <legend>Projects (optional, choose any that apply)</legend>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {options!.projects.map((p) => {
+                const on = projectIds.includes(p.id);
+                return (
+                  <label key={p.id} className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-1.5 ${on ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-indigo-100 bg-white text-slate-600"}`}>
+                    <input type="checkbox" className="sr-only" checked={on} onChange={() => setProjectIds(on ? projectIds.filter((x) => x !== p.id) : [...projectIds, p.id])} />
+                    {p.name}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        )}
+        {flow && options?.mode !== "NONE" && (
+          <label className="block text-sm text-slate-600">
+            {options?.role === "HR" ? "Tagged Admin" : options?.mode === "ADMIN" ? "Reporting Admin" : "Tagged reporting manager"}
+            {options?.editable ? (
+              <select value={chosenApprover} onChange={(e) => setApproverId(e.target.value)} className={`${input} mt-1`}>
+                {!chosenApprover && <option value="">{options.role === "HR" ? "Choose an Admin" : "No manager set (goes to HR)"}</option>}
+                {options.options.map((o) => <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}</option>)}
+              </select>
+            ) : (
+              <p className={`${input} mt-1 bg-slate-50`}>{options?.options[0]?.name ?? "None mapped"}</p>
+            )}
+          </label>
+        )}
+        {noApproverMapped && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">No approver is set up for you yet, so this goes straight to HR. Ask HR to set your reporting line.</p>}
         <label className="block text-sm text-slate-600">
           Reason
           <textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} rows={3} className={`${input} mt-1`} placeholder="A short reason for HR" />

@@ -17,6 +17,9 @@
 // ===========================================================================
 
 import { prisma } from "../../lib/prisma.js";
+import { narrowIds } from "../hr-filters/hrFilters.service.js";
+import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
@@ -102,8 +105,9 @@ async function resolveScope(viewerId: string) {
     const team = await visibleUserIds(viewer);
     userIds = await onlyPinnedCompany(Array.from(new Set([viewer.id, ...team])));
   } else {
+    // HR and Admin: every company they act on (company access), not only their own.
     const everyone = await prisma.user.findMany({
-      where: { platformId: viewer.platformId },
+      where: { ...scopeWhere(await accessFor(viewer.id)) },
       select: { id: true, status: true },
     });
     userIds = everyone
@@ -121,13 +125,17 @@ export async function getTeamReport(
   fromStr: string,
   toStr: string,
   groupBy: GroupBy = "person",
-  onlyUserId?: string
+  onlyUserId?: string,
+  filters?: HrFilters
 ) {
   const from = parseDay(fromStr);
   const to = parseDay(toStr);
   if (to.getTime() < from.getTime()) throw new Error("BAD_RANGE");
 
-  const { viewer, userIds: visibleIds } = await resolveScope(viewerId);
+  const { viewer, userIds: scopeIds } = await resolveScope(viewerId);
+  // The HR filters (company, project, reporting manager, name/ID search) narrow what the viewer may already see; every figure below is built from this list.
+  const narrowed = await narrowIds(scopeIds, filters);
+  const visibleIds = narrowed.ids;
 
   // Optional single-person view. It can only NARROW the list the viewer is
   // already allowed to see; an id outside that list yields an empty report,
@@ -141,6 +149,11 @@ export async function getTeamReport(
   }
 
   const dateFilter = { gte: from, lte: to };
+
+  // Targets, working days and holidays belong to a COMPANY. HR/Admin may be looking at several, so those are read for every company in view and
+  // applied per person below; for anyone else this is exactly the viewer's own company, as before.
+  const staffView = viewer.role === "HR" || viewer.role === "ADMIN";
+  const companyScope = staffView ? scopeWhere(await accessFor(viewer.id)) : { platformId: viewer.platformId };
 
   // Seven reads, one round trip of latency. Not seven sequential awaits.
   const [users, sessions, leaveDays, tasks, alerts, config, shifts, holidays] =
@@ -196,38 +209,45 @@ export async function getTeamReport(
         select: { userId: true, date: true, alertType: true, severity: true },
       }),
 
-      prisma.teamConfig.findFirst({
-        where: { team: { platformId: viewer.platformId } },
-        select: { productiveHours: true, breakBudgetMinutes: true },
+      prisma.teamConfig.findMany({
+        where: { team: companyScope },
+        select: { productiveHours: true, breakBudgetMinutes: true, team: { select: { platformId: true } } },
       }),
 
       prisma.shift.findMany({
-        where: { platformId: viewer.platformId },
-        select: { id: true, workingDays: true, isDefault: true },
+        where: companyScope,
+        select: { id: true, workingDays: true, isDefault: true, platformId: true },
       }),
 
       prisma.holiday.findMany({
-        where: { platformId: viewer.platformId, date: dateFilter },
-        select: { date: true, dayType: true },
+        where: { ...companyScope, date: dateFilter },
+        select: { date: true, dayType: true, platformId: true },
       }),
     ]);
 
-  const productiveHours = Number(config?.productiveHours ?? DEFAULT_PRODUCTIVE_HOURS);
-  const breakBudgetMinutes = config?.breakBudgetMinutes ?? DEFAULT_BREAK_BUDGET_MINUTES;
-  const dailyTargetSeconds = Math.round(productiveHours * 3600);
+  // The first team configuration of each company (the same one the single-company report always used), and the viewer's own as the headline target.
+  const configOf = new Map<string, { productiveHours: unknown; breakBudgetMinutes: number }>();
+  for (const c of config) if (!configOf.has(c.team.platformId)) configOf.set(c.team.platformId, c);
+  const own = configOf.get(viewer.platformId) ?? config[0];
+  const productiveHours = Number(own?.productiveHours ?? DEFAULT_PRODUCTIVE_HOURS);
+  const breakBudgetMinutes = own?.breakBudgetMinutes ?? DEFAULT_BREAK_BUDGET_MINUTES;
+  const targetSecondsOf = (platformId: string) => Math.round(Number(configOf.get(platformId)?.productiveHours ?? productiveHours) * 3600);
 
   // --- lookups --------------------------------------------------------------
 
   const shiftDays = new Map<string, number[]>();
-  let defaultDays = DEFAULT_WORKING_DAYS;
+  const defaultDaysOf = new Map<string, number[]>(); // each company's default shift
   for (const s of shifts) {
     shiftDays.set(s.id, s.workingDays);
-    if (s.isDefault) defaultDays = s.workingDays;
+    if (s.isDefault) defaultDaysOf.set(s.platformId, s.workingDays);
   }
 
-  const holidayDays = new Set<string>();
+  const holidayDaysOf = new Map<string, Set<string>>(); // each company's own holidays
   for (const h of holidays) {
-    if (NON_WORKING_DAY_TYPES.has(String(h.dayType))) holidayDays.add(toKey(h.date));
+    if (!NON_WORKING_DAY_TYPES.has(String(h.dayType))) continue;
+    const set = holidayDaysOf.get(h.platformId) ?? new Set<string>();
+    set.add(toKey(h.date));
+    holidayDaysOf.set(h.platformId, set);
   }
 
   // userId|YYYY-MM-DD -> isHalfDay
@@ -338,7 +358,9 @@ export async function getTeamReport(
 
   for (const u of users) {
     const person = byPerson.get(u.id)!;
-    const days = (u.shiftId ? shiftDays.get(u.shiftId) : undefined) ?? defaultDays;
+    const days = (u.shiftId ? shiftDays.get(u.shiftId) : undefined) ?? defaultDaysOf.get(u.platformId) ?? DEFAULT_WORKING_DAYS;
+    const holidayDays = holidayDaysOf.get(u.platformId) ?? new Set<string>();
+    const dailyTargetSeconds = targetSecondsOf(u.platformId);
     const mgr = managerIds.has(u.id);
 
     const joined = u.dateOfJoining ? u.dateOfJoining.getTime() : -Infinity;
@@ -545,6 +567,7 @@ export async function getTeamReport(
     range: { from: fromStr, to: toStr },
     groupBy,
     platform: viewer.platform?.name ?? null,
+    peopleScope: narrowed.scope,
     scope:
       viewer.role === "EMPLOYEE" ? "self" : viewer.role === "MANAGER" ? "team" : "platform",
     target: { productiveHours, breakBudgetMinutes },

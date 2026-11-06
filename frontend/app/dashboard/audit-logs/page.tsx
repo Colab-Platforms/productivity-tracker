@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { roleLabel } from "@/lib/roles";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
@@ -280,7 +281,7 @@ function DetailModal({ id, onClose }: { id: string; onClose: () => void }) {
   const meta: [string, string | null][] = d
     ? [
         ["When", when(d.at, tz)],
-        ["Done by", d.actor ? `${d.actor.name}${d.actor.employeeCode ? ` (${d.actor.employeeCode})` : ""}${d.actor.role ? ` · ${d.actor.role.toLowerCase()}` : ""}` : "System"],
+        ["Done by", d.actor ? `${d.actor.name}${d.actor.employeeCode ? ` (${d.actor.employeeCode})` : ""}${d.actor.role ? ` · ${roleLabel(d.actor.role)}` : ""}` : "System"],
         ["Module", d.module],
         ["Action", ACTION_LABEL[d.action] ?? d.action],
         ["About employee", d.target ? `${d.target.name}${d.target.employeeCode ? ` (${d.target.employeeCode})` : ""}` : null],

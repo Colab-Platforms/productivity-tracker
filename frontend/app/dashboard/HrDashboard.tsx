@@ -23,12 +23,14 @@
 "use client";
 
 import Link from "next/link";
+import { dashboardTitle } from "@/lib/roles";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useMe } from "./layout";
 import Avatar from "./_photos/Avatar";
 import EmployeeActions from "./_employees/EmployeeActions";
 import { AttendanceChart, ProductivityChart, type ChartRow } from "./_hr/Charts";
+import OrgOverview from "./_approvals/OrgOverview";
 import {
   ActivityList,
   type ActivityItem,
@@ -366,7 +368,7 @@ export default function HrDashboard() {
       {/* profile row: first on small screens, top of the right column on wide ones */}
       <div className="flex items-center justify-end gap-3 xl:col-start-2 xl:row-start-1">
         <Link
-          href="/dashboard/admin?tab=Teams"
+          href="/dashboard/employees?tab=Teams"
           aria-label="Teams, shifts and rules"
           className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-[var(--shadow-card)] hover:text-indigo-600"
         >
@@ -418,6 +420,7 @@ export default function HrDashboard() {
 
       {/* ===================== centre column ===================== */}
       <div className="min-w-0 space-y-5 xl:col-start-1 xl:row-span-2 xl:row-start-1">
+        <OrgOverview />
         {/* search + quick actions */}
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex min-w-[14rem] flex-1 items-center gap-2 rounded-xl bg-white px-4 py-2.5 shadow-[var(--shadow-card)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
@@ -444,7 +447,7 @@ export default function HrDashboard() {
             {addOpen && (
               <div className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-xl bg-white py-1.5 text-sm shadow-[var(--shadow-lift)] ring-1 ring-indigo-100">
                 {[
-                  ["/dashboard/admin", "Add an employee"],
+                  ["/dashboard/employees", "Add an employee"],
                   ["/dashboard/offers", "Send an offer letter"],
                   ["/dashboard/holidays", "Add a holiday"],
                   ["/dashboard/projects", "Create a project"],
@@ -477,6 +480,7 @@ export default function HrDashboard() {
             <circle cx="40" cy="150" r="10" opacity=".6" />
           </svg>
           <div className="relative max-w-md">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-indigo-100">{dashboardTitle(me?.role) ?? "Dashboard"}</p>
             <h1 className="text-2xl font-bold tracking-tight sm:text-[28px]">
               {greeting()} {firstName}
             </h1>

@@ -6,6 +6,8 @@ import { visibleUserIds } from "../tracker/tracker.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
 import { DISCUSSION_PREFIX } from "../tracker/activityClass.js";
 import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
+import { resolvePeople } from "../hr-filters/hrFilters.service.js";
+import { isFiltering, NO_FILTERS, type HrFilters } from "../hr-filters/hrFilters.logic.js";
 
 // ---------------------------------------------------------------------------
 // ATTENDANCE CALENDAR (read-only, no schema change)
@@ -44,7 +46,7 @@ async function peopleFor(viewerId: string) {
   });
 }
 
-export async function getAttendanceCalendar(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string }) {
+export async function getAttendanceCalendar(viewerId: string, q: { from?: string; to?: string; userId?: string; filters?: HrFilters }) {
   const people = await peopleFor(viewerId);
   const own = people.find((p) => p.id === viewerId) ?? (await prisma.user.findUnique({ where: { id: viewerId }, select: { platform: { select: { timezone: true } } } }).then((u) => (u ? { platform: u.platform } : null)));
   const viewerTz = own?.platform.timezone ?? "Asia/Kolkata";
@@ -74,9 +76,14 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
     people: meta.map((m) => ({ id: m.id, name: m.name, code: m.code })),
     teams: Array.from(new Map(meta.filter((m) => m.teamId).map((m) => [m.teamId as string, m.teamName as string])).entries()).map(([id, name]) => ({ id, name })),
   };
-  // Filters only narrow what the viewer may already see.
-  const chosen = meta.filter((m) => (!q.userId || m.id === q.userId) && (!q.teamId || m.teamId === q.teamId));
-  const base = { timezone: viewerTz, today: todayIso, from: fromIso, to: toIso, rules: ARRIVAL_RULES, options };
+  // Filters only narrow what the viewer may already see. The HR filters (company, project, reporting manager, name or ID search) come from the one
+  // shared resolver, so the calendar, its counts and the other pages agree on who is in the list; a project means anyone ACTIVELY on that project.
+  const filters = q.filters ?? NO_FILTERS;
+  const resolved = isFiltering(filters) ? await resolvePeople(viewerId, filters) : null;
+  const keep = resolved ? new Set(resolved.ids) : null;
+  const chosen = meta.filter((m) => (!q.userId || m.id === q.userId) && (!keep || keep.has(m.id)));
+  const scope = { orgTotal: meta.length, filteredTotal: chosen.length };
+  const base = { timezone: viewerTz, today: todayIso, from: fromIso, to: toIso, rules: ARRIVAL_RULES, options, scope };
   if (chosen.length === 0) return { ...base, people: [] as typeof chosen, rows: [] as unknown[], counts: emptyCounts() };
 
   // Every month the window touches, batched (one call per month, never one per person).
@@ -160,7 +167,7 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
     for (const d of month.days) {
       if (d.date < fromIso || d.date > toIso) continue;
       const loginAt = d.loginAt ? new Date(d.loginAt) : null;
-      const status = calendarStatus({ engineStatus: d.status, loginAt, isToday: d.date === todayIso, timezone: who.timezone });
+      const status = calendarStatus({ engineStatus: d.status, loginAt, isToday: d.date === todayIso, timezone: who.timezone, halfDayLeave: d.leaveHalfDay !== null });
       if (!status) continue;
       counts[status] = (counts[status] ?? 0) + 1;
       const key = `${month.userId}|${d.date}`;
@@ -175,7 +182,8 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
       const remarkParts: string[] = [];
       if (running) remarkParts.push("Still working");
       if (session?.autoClosed) remarkParts.push("Auto clocked out");
-      if (status === "LEAVE") remarkParts.push(`${d.leaveType ? `${d.leaveType.toLowerCase()} leave` : "On leave"}${leave?.isHalfDay ? " (half day)" : ""}`);
+      if (status === "LEAVE" || status === "HALF_DAY_LEAVE") remarkParts.push(`${d.leaveType ? `${d.leaveType.toLowerCase()} leave` : "On leave"}${d.leaveHalfDay ? ` (half day, ${d.leaveHalfDay})` : ""}`);
+      if (d.note && (status === "LEAVE" || status === "HOLIDAY" || status === "WEEK_OFF") && /^Worked /.test(d.note)) remarkParts.push(d.note);
       if (status === "HOLIDAY" && d.holidayName) remarkParts.push(d.holidayName);
       if (lateBy > 0) remarkParts.push(`Arrived ${lateBy} min after ${ARRIVAL_RULES.presentUntil}`);
       if (lateText) remarkParts.push(`Reason: ${lateText}`);
@@ -201,7 +209,7 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
         lateRemark: lateText,
         correctedBy: fixedBy,
         autoClosed: !!session?.autoClosed,
-        leaveHalfDay: leave?.isHalfDay ? (leave.isFirstHalf ? "first half" : "second half") : null,
+        leaveHalfDay: d.leaveHalfDay ?? (leave?.isHalfDay ? (leave.isFirstHalf ? "first half" : "second half") : null),
         leaveReason: leave?.leaveRequest?.reason ?? null,
         discussions: (session ? discussionsOf.get(session.id) ?? [] : []).map((x) => ({
           startedAt: x.startedAt,
@@ -220,5 +228,5 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
 }
 
 function emptyCounts(): Record<string, number> {
-  return { PRESENT: 0, LATE: 0, HALF_DAY: 0, ABSENT: 0, LEAVE: 0, HOLIDAY: 0, WEEK_OFF: 0, NOT_TRACKED: 0, NOT_CLOCKED_IN: 0 };
+  return { PRESENT: 0, LATE: 0, HALF_DAY: 0, ABSENT: 0, LEAVE: 0, HALF_DAY_LEAVE: 0, HOLIDAY: 0, WEEK_OFF: 0, NOT_TRACKED: 0, NOT_CLOCKED_IN: 0 };
 }

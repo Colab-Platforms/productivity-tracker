@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { filterQuery, type Filters as HrFilterState } from "../../_filters/useHrFilters";
 import { apiGet } from "@/lib/api";
 import { dayLabel, downloadCsv } from "./format";
 import { PRESETS, rangeFor, type Preset } from "./ranges";
@@ -17,7 +18,7 @@ type Person = {
   targetPerDay: number | null; targetSource: "PERSON" | "TEAM" | "COMPANY" | null;
   daysWithData: number; completedTotal: number | null; targetTotal: number | null; overallPercent: number | null; days: Day[];
 };
-type Productivity = { generatedAt: string; timezone: string; today: string; from: string; to: string; targetsReady: boolean; people: Person[] };
+type Productivity = { generatedAt: string; timezone: string; today: string; from: string; to: string; targetsReady: boolean; scope?: { orgTotal: number; filteredTotal: number }; people: Person[] };
 type Hourly = { date: string; people: { userId: string; name: string; employeeCode: string | null; teamName: string | null; hours: number[]; total: number }[] };
 
 const SOURCE: Record<string, string> = { PERSON: "personal", TEAM: "team", COMPANY: "company" };
@@ -37,7 +38,9 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 
 const pctClass = (p: number | null) => (p === null ? "text-slate-400" : p >= 100 ? "text-emerald-600" : p >= 70 ? "text-amber-600" : "text-red-600");
 
-export default function ProductivityReport({ canSetTargets }: { canSetTargets: boolean }) {
+export default function ProductivityReport({ canSetTargets, filters, ready = true, onScope }: { canSetTargets: boolean; filters?: HrFilterState; ready?: boolean; onScope?: (s: { orgTotal: number; filteredTotal: number } | null) => void }) {
+  // company, project, reporting manager and name/ID search come from the shared bar on the Reports page (the table, the KPIs and the CSV all use that list)
+  const hrQuery = filters ? filterQuery(filters) : "";
   // Always opens on Today (nothing is restored from a previous visit). With no dates the server answers for today in the company timezone.
   const [preset, setPreset] = useState<Preset>("today");
   const [single, setSingle] = useState("");
@@ -65,8 +68,9 @@ export default function ProductivityReport({ canSetTargets }: { canSetTargets: b
     if (range.from) qs.set("from", range.from);
     if (range.to) qs.set("to", range.to);
     try {
-      const d = await apiGet<Productivity>(`/team-attendance/productivity?${qs.toString()}`);
+      const d = await apiGet<Productivity>(`/team-attendance/productivity?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
       setData(d);
+      onScope?.(d.scope ?? null);
       setToday(d.today);
       setError("");
     } catch (e) {
@@ -74,21 +78,22 @@ export default function ProductivityReport({ canSetTargets }: { canSetTargets: b
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [range, hrQuery, onScope]);
 
-  useEffect(() => { const t = setTimeout(() => void load(), 0); return () => clearTimeout(t); }, [load, reloadTargets]);
+  useEffect(() => { if (!ready) return; const t = setTimeout(() => void load(), 0); return () => clearTimeout(t); }, [load, reloadTargets, ready]);
 
   const loadHourly = useCallback(async (d: string) => {
     try {
-      const h = await apiGet<Hourly>(`/team-attendance/productivity/hourly${d ? `?date=${d}` : ""}`);
+      const parts = [d ? `date=${d}` : "", hrQuery].filter(Boolean).join("&");
+      const h = await apiGet<Hourly>(`/team-attendance/productivity/hourly${parts ? `?${parts}` : ""}`);
       setHourly(h);
       setHourError("");
       if (!d) setHourDate(h.date);
     } catch (e) {
       setHourError((e as Error).message);
     }
-  }, []);
-  useEffect(() => { const t = setTimeout(() => void loadHourly(hourDate), 0); return () => clearTimeout(t); }, [hourDate, loadHourly]);
+  }, [hrQuery]);
+  useEffect(() => { if (!ready) return; const t = setTimeout(() => void loadHourly(hourDate), 0); return () => clearTimeout(t); }, [hourDate, loadHourly, ready]);
 
   const k = useMemo(() => {
     const people = data?.people ?? [];

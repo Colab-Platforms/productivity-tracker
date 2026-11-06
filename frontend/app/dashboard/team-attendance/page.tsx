@@ -5,6 +5,9 @@ import { apiGet, apiPost } from "@/lib/api";
 import Avatar from "../_photos/Avatar";
 import Link from "next/link";
 import { clock, clockTime } from "../reports/_team/format";
+import FilterBar from "../_filters/FilterBar";
+import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
+import { useMe } from "../layout";
 
 // ATTENDANCE (live): the ONE screen for who is working right now. It replaces the two earlier screens "Your team
 // today" and "Team Attendance", and keeps everything from both: the live board, the alerts panel and meeting invites.
@@ -23,9 +26,13 @@ type LiveRow = {
   wasLateLogin: boolean; lateByMinutes: number; lateRemark?: string | null;
   shiftSeconds: number | null; productiveSeconds: number | null; breakSeconds: number | null; washroomSeconds?: number | null; meetingSeconds: number | null;
   productiveTargetSeconds: number; breakBudgetSeconds: number;
+  // every project the person is on, their reporting manager and the Calendar's attendance status for today
+  projects?: string[]; reportingManager?: string | null; attendanceStatus?: string;
 };
 type Live = {
   generatedAt: string; timezone: string; date: string;
+  // how many people the filters leave, next to everyone the viewer may see
+  scope?: { orgTotal: number; filteredTotal: number };
   summary: { online: number; clockedOut: number; notClockedIn: number; onLeave: number; present: number; total: number };
   rows: LiveRow[];
 };
@@ -49,6 +56,18 @@ const STATUS: Record<LiveStatus, { label: string; dot: string; row: string }> = 
   ON_LEAVE: { label: "On leave", dot: "bg-sky-500", row: "" },
 };
 
+// The attendance status column and its filter (the Calendar's rule: leave, then Present / Late / Half day by the first clock-in).
+const ATTENDANCE: Record<string, { label: string; chip: string }> = {
+  PRESENT: { label: "Present", chip: "bg-emerald-100 text-emerald-800" },
+  LATE: { label: "Late", chip: "bg-amber-100 text-amber-800" },
+  HALF_DAY: { label: "Half day", chip: "bg-orange-100 text-orange-800" },
+  LEAVE: { label: "On leave", chip: "bg-sky-100 text-sky-800" },
+  HALF_DAY_LEAVE: { label: "Half-day leave", chip: "bg-cyan-100 text-cyan-800" },
+  NOT_CLOCKED_IN: { label: "Not clocked in", chip: "bg-slate-100 text-slate-600" },
+  ABSENT: { label: "Absent", chip: "bg-red-100 text-red-700" },
+};
+const ATTENDANCE_FILTER = ["PRESENT", "LATE", "HALF_DAY", "LEAVE", "NOT_CLOCKED_IN"];
+
 const MEETING_TYPES = [
   { value: "TEAM", label: "Team meeting" },
   { value: "ONE_ON_ONE", label: "One on one" },
@@ -68,6 +87,12 @@ const card = "rounded-2xl bg-white shadow-[var(--shadow-card)]";
 const th = "px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-slate-500";
 
 export default function AttendancePage() {
+  const me = useMe();
+  // Company, project, reporting manager and name/ID search are asked of the server (HR and Admin: every company they act on; a manager: their own
+  // people). The attendance-status filter narrows the table only, so the cards still show how the filtered people are split.
+  const { filters, update, clear, ready } = useHrFilters();
+  const { options } = useFilterOptions(filters, update, ready);
+  const [attStatus, setAttStatus] = useState("");
   const [live, setLive] = useState<Live | null>(null);
   const [liveError, setLiveError] = useState("");
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -80,9 +105,11 @@ export default function AttendancePage() {
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
 
+  const query = filterQuery(filters, { company: "company", project: "project", manager: "manager", q: "q" });
   const loadLive = useCallback(async () => {
+    if (!ready) return;
     try {
-      const [data, alertList] = await Promise.all([apiGet<Live>("/team-attendance/live"), apiGet<Alert[]>("/tracker/alerts").catch(() => [] as Alert[])]);
+      const [data, alertList] = await Promise.all([apiGet<Live>(`/team-attendance/live${query ? `?${query}` : ""}`), apiGet<Alert[]>("/tracker/alerts").catch(() => [] as Alert[])]);
       setLive(data);
       setAlerts(Array.isArray(alertList) ? alertList : []);
       setFetchedAt(Date.now());
@@ -90,7 +117,7 @@ export default function AttendancePage() {
     } catch (e) {
       setLiveError((e as Error).message);
     }
-  }, []);
+  }, [ready, query]);
 
   useEffect(() => {
     const first = setTimeout(loadLive, 0);
@@ -109,18 +136,21 @@ export default function AttendancePage() {
   // Seconds that passed since the server computed the numbers: added to whatever is still running.
   const drift = Math.max(0, (now - fetchedAt) / 1000);
   const tz = live?.timezone ?? "Asia/Kolkata";
+  // `rows` = the people the server left after the filters (the cards are counted from these); `shown` also applies the attendance-status filter.
   const rows = useMemo(() => live?.rows ?? [], [live]);
+  const shown = useMemo(() => (attStatus ? rows.filter((r) => r.attendanceStatus === attStatus) : rows), [rows, attStatus]);
+  const filtersOn = !!(filters.company || filters.project.length || filters.manager || filters.q || attStatus);
 
   // Grouped by team (company shown when the list spans several). People without a team go last.
   const groups = useMemo(() => {
-    const multi = new Set(rows.map((r) => r.company ?? "")).size > 1;
+    const multi = new Set(shown.map((r) => r.company ?? "")).size > 1;
     const map = new Map<string, LiveRow[]>();
-    for (const r of rows) {
+    for (const r of shown) {
       const key = `${multi && r.company ? `${r.company} · ` : ""}${r.teamName?.trim() || "No team"}`;
       map.set(key, [...(map.get(key) ?? []), r]);
     }
     return Array.from(map.entries()).sort(([a], [b]) => (a.endsWith("No team") ? 1 : b.endsWith("No team") ? -1 : a.localeCompare(b)));
-  }, [rows]);
+  }, [shown]);
 
   const counts = useMemo(() => {
     const c = { working: 0, onBreak: 0, washroom: 0, meeting: 0, notIn: 0, leave: 0, out: 0 };
@@ -203,6 +233,28 @@ export default function AttendancePage() {
         <p className="text-xs text-slate-400">Refreshes every 15 s{live ? ` · last updated ${clockTime(live.generatedAt, tz)}` : ""}</p>
       </div>
 
+      <FilterBar
+        filters={filters}
+        update={update}
+        clear={() => {
+          clear();
+          setAttStatus("");
+        }}
+        options={options}
+        show={{ search: true, company: me?.role !== "MANAGER" || (options?.companies.length ?? 0) > 1, project: true, manager: me?.role !== "MANAGER" }}
+        counts={live?.scope ? { filtered: attStatus ? shown.length : live.scope.filteredTotal, total: live.scope.orgTotal } : null}
+        extraActive={attStatus ? 1 : 0}
+        extra={
+          <div className="w-44">
+            <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400" htmlFor="hf-att">Attendance status</label>
+            <select id="hf-att" value={attStatus} onChange={(e) => setAttStatus(e.target.value)} className="h-9 w-full rounded-xl border border-indigo-100 bg-white px-3 text-sm text-slate-800 outline-none focus:border-indigo-400">
+              <option value="">All</option>
+              {ATTENDANCE_FILTER.map((k) => <option key={k} value={k}>{ATTENDANCE[k].label}</option>)}
+            </select>
+          </div>
+        }
+      />
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         {tiles.map(([label, n, dot]) => (
           <div key={label} className={`${card} px-4 py-3`}>
@@ -281,28 +333,37 @@ export default function AttendancePage() {
           {!live && !liveError ? (
             <div className="space-y-2 p-6" aria-busy="true">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-10" />)}</div>
           ) : live && rows.length === 0 ? (
-            <p className="px-6 py-10 text-center text-sm text-slate-500">No one reports to you yet. People appear here once they are in a team you run or report to you.</p>
+            <p className="px-6 py-10 text-center text-sm text-slate-500">
+              {filtersOn ? "No one matches these filters." : "No one reports to you yet. People appear here once they are in a team you run or report to you."}
+            </p>
+          ) : live && shown.length === 0 ? (
+            <p className="px-6 py-10 text-center text-sm text-slate-500">No one matches these filters.</p>
           ) : live ? (
-            <table className="w-full min-w-[1000px] text-sm">
+            <table className="w-full min-w-[1500px] text-sm">
               <thead className="bg-slate-50">
                 <tr>
                   <th className="w-10 px-4 py-2.5" />
                   <th className={th}>Employee</th>
+                  <th className={th}>Employee ID</th>
+                  <th className={th}>Company</th>
+                  <th className={th}>Project</th>
+                  <th className={th}>Reporting manager</th>
                   <th className={th}>Shift</th>
                   <th className={th}>Current activity</th>
                   <th className={`${th} text-right`}>Clock in</th>
                   <th className={`${th} text-right`}>Clock out</th>
                   <th className={`${th} text-right`}>Break used</th>
                   <th className={`${th} text-right`} title="Washroom time is tracked on its own. It is not a break and does not use the break allowance.">Washroom</th>
-                  <th className={`${th} text-right`}>Meetings</th>
-                  <th className={`${th} text-right`}>Working</th>
+                  <th className={`${th} text-right`}>Meeting duration</th>
+                  <th className={`${th} text-right`}>Working duration</th>
+                  <th className={th}>Attendance status</th>
                 </tr>
               </thead>
               <tbody>
                 {groups.map(([group, members]) => (
                   <Fragment key={group}>
                     <tr className="border-t border-indigo-100 bg-[#F6F7FE]">
-                      <td colSpan={10} className="px-4 py-2">
+                      <td colSpan={15} className="px-4 py-2">
                         <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{group}</span>
                         <span className="ml-2 text-xs text-slate-400">{members.length} {members.length === 1 ? "person" : "people"}</span>
                         {members.some(INVITABLE) && (
@@ -336,11 +397,22 @@ export default function AttendancePage() {
                           <td className="px-4 py-3">
                             <p className="flex items-center gap-2 font-medium text-slate-900"><Avatar userId={r.userId} name={r.name} photoAt={r.photoAt} size={28} />{r.name}</p>
                             <p className="text-xs text-slate-400">
-                              {r.employeeCode ?? "—"}{r.designation ? ` · ${r.designation}` : ""}
+                              {r.designation ?? ""}
                               {r.wasLateLogin && <span className="ml-2 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600">late {r.lateByMinutes}m</span>}
                             </p>
                             {r.wasLateLogin && r.lateRemark && <p className="mt-0.5 max-w-xs text-xs text-amber-700" title={r.lateRemark}>Late remark: {r.lateRemark}</p>}
                           </td>
+                          <td className="px-4 py-3 tabular-nums text-slate-700">{r.employeeCode ?? "—"}</td>
+                          <td className="px-4 py-3 text-slate-600">{r.company ?? "—"}</td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {r.projects && r.projects.length > 0 ? (
+                              <span title={r.projects.join(", ")}>
+                                {r.projects.slice(0, 2).join(", ")}
+                                {r.projects.length > 2 && <span className="ml-1 text-xs text-slate-400">+{r.projects.length - 2}</span>}
+                              </span>
+                            ) : <span className="text-slate-400">No project</span>}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">{r.reportingManager ?? <span className="text-slate-400">—</span>}</td>
                           <td className="px-4 py-3 text-slate-600">
                             {r.shiftName ? (
                               <>
@@ -379,6 +451,11 @@ export default function AttendancePage() {
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-slate-900" title="Live meetings plus the time the person actually spent in a Team Huddle (from joining to leaving), counted only while clocked in and outside breaks. 0:00:00 means nothing was recorded.">{clock(meetSec)}</td>
                           <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">{clock(prodSec)}</td>
+                          <td className="px-4 py-3">
+                            {r.attendanceStatus && ATTENDANCE[r.attendanceStatus] ? (
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${ATTENDANCE[r.attendanceStatus].chip}`}>{ATTENDANCE[r.attendanceStatus].label}</span>
+                            ) : <span className="text-slate-400">—</span>}
+                          </td>
                         </tr>
                       );
                     })}

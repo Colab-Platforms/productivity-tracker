@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { managedByWhere } from "../../lib/teamManagers.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
@@ -700,6 +701,15 @@ export async function visibleUserIds(viewer: {
   role: string;
   platformId: string;
 }): Promise<string[]> {
+  // HR and Admin see every company they act on (company access: their own, the ones assigned to them, or all for top management; a deployment
+  // pinned to one company allows only that one). Seeing is not deciding: approvals keep their own rules.
+  if (viewer.role === "HR" || viewer.role === "ADMIN") {
+    const rows = await prisma.user.findMany({
+      where: { ...scopeWhere(await accessFor(viewer.id)), status: { in: ["ACTIVE", "INVITED"] } },
+      select: { id: true },
+    });
+    return rows.map((u) => u.id);
+  }
   if (viewer.role !== "MANAGER") {
     const everyone = await prisma.user.findMany({
       where: {

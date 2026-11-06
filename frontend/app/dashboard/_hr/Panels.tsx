@@ -9,6 +9,7 @@
 // ===========================================================================
 
 import Link from "next/link";
+import { roleLabel } from "@/lib/roles";
 import { Fragment, type ReactNode } from "react";
 import { fmtDay, hm, initials, parseDay, pct, timeOf, weekOf, weekdayShort } from "./format";
 import type { Holiday, Person } from "./types";
@@ -314,7 +315,7 @@ export function PerformanceTable({ people }: { people: Person[] }) {
                     <span className="min-w-0">
                       <span className="block truncate font-medium text-slate-800">{p.name}</span>
                       <span className="block truncate text-[11px] text-slate-400">
-                        {p.designation ?? p.role.toLowerCase()}
+                        {p.designation ?? roleLabel(p.role)}
                         {p.employeeCode ? ` · ${p.employeeCode}` : ""}
                         {p.role === "MANAGER" && <span className="ml-1.5 rounded-full bg-[#EEF0FD] px-1.5 py-0.5 text-[10px] font-medium text-indigo-700" title="Attendance is shown, but managers are left out of the team productivity figures">manager</span>}
                       </span>

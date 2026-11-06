@@ -19,6 +19,7 @@ import * as companyAdmin from "./companyAdmin.service.js";
 import { guardUuidParams, isBadInput, isUuid } from "../../lib/params.js";
 import { accessFor, assertCompany } from "../../lib/companyAccess.js";
 import { peekEmployeeCode } from "./employeeCode.js";
+import { parseFilters } from "../hr-filters/hrFilters.logic.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -68,6 +69,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   DESIGNATION_EXISTS: { status: 409, message: "That designation already exists in this company." },
   BAD_NAME: { status: 400, message: "A name must be 2 to 80 characters." },
   BAD_MANAGER: { status: 400, message: "Pick an active manager or admin of the same company, other than the person themselves." },
+  MANAGER_WRONG_ROLE: { status: 400, message: "An employee must report to a Manager, and a Manager must report to an Admin." },
   MANAGER_CYCLE: { status: 400, message: "That would make two people report to each other." },
   BAD_EMPLOYMENT_TYPE: { status: 400, message: "Pick a valid employee type." },
   FEATURES_NOT_READY: { status: 503, message: "This feature is not set up on this server yet. Ask an administrator to finish the database update." },
@@ -265,13 +267,21 @@ for (const verb of ["put", "post"] as const) {
 
 router.get("/users", async (req, res) => {
   try {
-    const users = await admin.listUsers(req.user!.userId, {
-      search: req.query.search ? String(req.query.search) : undefined,
-      role: req.query.role ? String(req.query.role) : undefined,
-      status: req.query.status ? String(req.query.status) : undefined,
-      companyId: req.query.companyId ? String(req.query.companyId) : undefined,
-    });
-    res.json({ users });
+    // project, reporting manager and designation come from the shared HR filters (company, role, status and search keep their own parameters)
+    const f = parseFilters(req.query as Record<string, unknown>);
+    const [users, orgTotal] = await Promise.all([
+      admin.listUsers(req.user!.userId, {
+        search: req.query.search ? String(req.query.search) : undefined,
+        role: req.query.role ? String(req.query.role) : undefined,
+        status: req.query.status ? String(req.query.status) : undefined,
+        companyId: req.query.companyId ? String(req.query.companyId) : undefined,
+        projectIds: f.projectIds,
+        managerIds: f.managerIds,
+        designation: f.designation ?? undefined,
+      }),
+      admin.peopleScopeCount(req.user!.userId),
+    ]);
+    res.json({ users, scope: { orgTotal, filteredTotal: users.length } });
   } catch (e) {
     fail(res, e);
   }
@@ -365,7 +375,8 @@ router.get("/shifts", async (req, res) => {
   }
 });
 
-router.post("/shifts", async (req, res) => {
+// Shifts and alert thresholds are organization-wide rules: only an Admin may change them (HR can still read them to assign people).
+router.post("/shifts", requireRole("ADMIN"), async (req, res) => {
   try {
     const shift = await admin.createShift(req.user!.userId, req.body ?? {});
     res.status(201).json({ shift });
@@ -374,7 +385,7 @@ router.post("/shifts", async (req, res) => {
   }
 });
 
-router.patch("/shifts/:id", async (req, res) => {
+router.patch("/shifts/:id", requireRole("ADMIN"), async (req, res) => {
   try {
     await admin.updateShift(req.user!.userId, id(req.params.id), req.body ?? {});
     res.json({ ok: true });
@@ -385,7 +396,7 @@ router.patch("/shifts/:id", async (req, res) => {
 
 // --- thresholds ------------------------------------------------------------
 
-router.patch("/config/:teamId", async (req, res) => {
+router.patch("/config/:teamId", requireRole("ADMIN"), async (req, res) => {
   try {
     const config = await admin.updateTeamConfig(
       req.user!.userId,

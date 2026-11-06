@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { managerIdsByTeam } from "../../lib/teamManagers.js";
+import { entryDetailsFor } from "./tasks.entry.js";
 
 // ---------------------------------------------------------------------------
 // TASK NOTIFICATIONS
@@ -45,6 +46,13 @@ async function managersOf(ownerId: string, assignedById: string | null, exclude:
   return onlyPinnedCompany(live.map((u) => u.id));
 }
 
+// A task tagged to an active manager is that manager's alone: only they are asked. Otherwise the earlier recipients (reporting manager + team managers).
+async function reviewersOf(taskId: string, ownerId: string, assignedById: string | null, exclude: string[]): Promise<string[]> {
+  const d = (await entryDetailsFor([taskId])).get(taskId);
+  if (d?.taggedManagerId && d.taggedManagerActive) return exclude.includes(d.taggedManagerId) ? [] : onlyPinnedCompany([d.taggedManagerId]);
+  return managersOf(ownerId, assignedById, exclude);
+}
+
 // A recipient's notification belongs to THEIR company (a manager can sit in another company than the employee).
 async function send(recipients: string[], base: { type: string; title: string; body: string; link: string; dedupeKey: string; data: Record<string, unknown> }) {
   if (recipients.length === 0) return;
@@ -72,10 +80,10 @@ export async function taskNotice(event: TaskEvent, taskId: string, actorId: stri
       return send([task.userId], { type: "TASK_ASSIGNED", title: "New task assigned", body: `${by} assigned you: ${task.title}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:assigned`, data });
     }
     if (event === "proposed") {
-      return send(await managersOf(task.userId, null, [actorId, task.userId]), { type: "TASK_PROPOSED", title: "Task needs your approval", body: `${owner} proposed: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:proposed`, data });
+      return send(await reviewersOf(task.id, task.userId, null, [actorId, task.userId]), { type: "TASK_PROPOSED", title: "Task needs your approval", body: `${owner} proposed: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:proposed`, data });
     }
     if (event === "submitted") {
-      return send(await managersOf(task.userId, task.assignedById, [actorId, task.userId]), { type: "TASK_SUBMITTED", title: "Work submitted for review", body: `${owner} marked done: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:submitted:${stamp}`, data });
+      return send(await reviewersOf(task.id, task.userId, task.assignedById, [actorId, task.userId]), { type: "TASK_SUBMITTED", title: "Work submitted for review", body: `${owner} marked done: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:submitted:${stamp}`, data });
     }
     // Everything below tells the employee about a manager's decision.
     if (task.userId === actorId) return;

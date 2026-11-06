@@ -65,6 +65,7 @@ function MeetingsInner() {
   const [reload, setReload] = useState(0);
   const [notice, setNotice] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+  const [watching, setWatching] = useState<{ id: string; title: string } | null>(null); // an Admin reading a huddle's participants (read-only)
   // A link like /dashboard/meetings?id=... (from a notification) opens that meeting, even if you are already on this page.
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [closedLink, setClosedLink] = useState<string | null>(null);
@@ -188,7 +189,7 @@ function MeetingsInner() {
       {tab === "overview" && isHr && (
         <section className={`${card} p-5`}>
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-slate-500">Every meeting in your company, with only the title, organizer, time and head-count. Descriptions, links and who is invited stay private to the organizer and attendees.</p>
+            <p className="text-sm text-slate-500">{me?.role === "ADMIN" ? "Every meeting in your companies. Open a huddle's count to see who joined and left, and when (read-only). Descriptions and links stay private to the organizer and attendees." : "Every meeting in your company, with only the title, organizer, time and head-count. Descriptions, links and who is invited stay private to the organizer and attendees."}</p>
             <select aria-label="Overview scope" value={overScope} onChange={(e) => setOverScope(e.target.value as typeof overScope)} className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm">
               <option value="upcoming">Upcoming</option><option value="past">Past</option><option value="cancelled">Cancelled</option>
             </select>
@@ -207,7 +208,15 @@ function MeetingsInner() {
                       <td className="py-3 text-slate-600">{dayFmt(m.startsAt, tz)} · {range(m, tz)}</td>
                       <td className="py-3 text-slate-600">{m.organizer}</td>
                       <td className="py-3 text-right tabular-nums text-slate-600">{m.attendeeCount}</td>
-                      <td className="py-3 text-right tabular-nums text-slate-600">{m.participation ? `${m.participation.joined} of ${m.participation.invited}` : "—"}</td>
+                      <td className="py-3 text-right tabular-nums text-slate-600">
+                        {m.participation ? (
+                          me?.role === "ADMIN" ? (
+                            <button onClick={() => setWatching({ id: m.id, title: m.title })} className="font-medium text-indigo-600 hover:underline" title="See who joined and when">{m.participation.joined} of {m.participation.invited}</button>
+                          ) : (
+                            `${m.participation.joined} of ${m.participation.invited}`
+                          )
+                        ) : "—"}
+                      </td>
                       <td className="py-3 text-right">{m.canCancel && <CancelInline id={m.id} onDone={() => { setNotice("Meeting cancelled. The people invited were notified."); setReload((n) => n + 1); }} />}</td>
                     </tr>
                   ))}
@@ -218,6 +227,11 @@ function MeetingsInner() {
         </section>
       )}
 
+      {watching && (
+        <Modal title={watching.title} subtitle="Who joined and when (read-only)" onClose={() => setWatching(null)} width="max-w-4xl">
+          <ParticipationPanel meetingId={watching.id} />
+        </Modal>
+      )}
       {showHistory && <HistoryModal onClose={() => setShowHistory(false)} />}
       {openId && <DetailsModal id={openId} tz={tz} onClose={() => setOpenId(null)} onEdit={(m) => { setOpenId(null); setEditing(m); }} onChanged={(t) => { setOpenId(null); setNotice(t); setReload((n) => n + 1); }} />}
       {editing && <EditModal meeting={editing === "new" ? null : editing} tz={tz} onClose={() => setEditing(null)} onDone={(t) => { setEditing(null); setNotice(t); setReload((n) => n + 1); }} />}

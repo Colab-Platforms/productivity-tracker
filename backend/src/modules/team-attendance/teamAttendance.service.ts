@@ -8,6 +8,8 @@
 // "Today" and every calendar day are the VIEWER'S company day (platform timezone).
 
 import { prisma } from "../../lib/prisma.js";
+import { narrowIds, resolvePeople } from "../hr-filters/hrFilters.service.js";
+import { NO_FILTERS, type HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { huddleBreakdowns } from "../meetings/participation.service.js";
@@ -116,7 +118,8 @@ async function loadPeople(userIds: string[]) {
       lastName: true,
       employeeCode: true,
       designation: true,
-      platform: { select: { name: true } },
+      platform: { select: { name: true, timezone: true } },
+      reportsTo: { select: { firstName: true, lastName: true } },
       shift: { select: { name: true, startTime: true, endTime: true } },
       teamMemberships: {
         where: { isActive: true },
@@ -140,18 +143,27 @@ const targetsFor = (person: Awaited<ReturnType<typeof loadPeople>>[number]) => {
 // ---------------------------------------------------------------------------------------------
 // LIVE BOARD (today)
 // ---------------------------------------------------------------------------------------------
-export async function getLiveBoard(viewerId: string) {
+// Who is on the board: HR and Admin see every company they act on (company access); a manager sees their own people. The HR filters (company,
+// project, reporting manager, name or ID search) only narrow that list. The cards and the table are built from the SAME filtered people, and
+// `scope` says how many of the people the viewer may see are shown.
+export async function getLiveBoard(viewerId: string, filters: HrFilters = NO_FILTERS) {
   const viewer = await getViewer(viewerId);
   const timezone = viewer.platform.timezone;
   const date = platformToday(timezone);
   const now = new Date();
 
-  const userIds = await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId });
-  const empty = { generatedAt: now.toISOString(), timezone, date: date.toISOString().slice(0, 10), summary: { online: 0, clockedOut: 0, notClockedIn: 0, onLeave: 0, present: 0, total: 0 }, rows: [] as unknown[] };
+  const resolved = await resolvePeople(viewerId, filters);
+  const userIds = resolved.ids;
+  const scope = { orgTotal: resolved.orgTotal, filteredTotal: resolved.filteredTotal };
+  const empty = { generatedAt: now.toISOString(), timezone, date: date.toISOString().slice(0, 10), scope, summary: { online: 0, clockedOut: 0, notClockedIn: 0, onLeave: 0, present: 0, total: 0 }, rows: [] as unknown[] };
   if (userIds.length === 0) return empty;
 
   const people = await loadPeople(userIds);
   const ids = people.map((p) => p.id);
+  // Every project (active team) each person is on, for the Project column. One batched read, never one per person.
+  const projectRows = await prisma.teamMember.findMany({ where: { userId: { in: ids }, isActive: true, team: { isActive: true } }, select: { userId: true, team: { select: { name: true } } } });
+  const projectsOf = new Map<string, string[]>();
+  for (const r of projectRows) projectsOf.set(r.userId, [...(projectsOf.get(r.userId) ?? []), r.team.name]);
   const [sessions, leaveDays] = await Promise.all([
     prisma.workSession.findMany({ where: { userId: { in: ids }, date }, include: { breaks: true, meetings: true } }),
     prisma.leaveDay.findMany({ where: { userId: { in: ids }, date }, select: { userId: true } }),
@@ -201,7 +213,11 @@ export async function getLiveBoard(viewerId: string) {
       employeeCode: p.employeeCode,
       designation: p.designation,
       teamName: t.teamName,
+      projects: (projectsOf.get(p.id) ?? []).sort((a, b) => a.localeCompare(b)),
+      reportingManager: p.reportsTo ? `${p.reportsTo.firstName} ${p.reportsTo.lastName}`.trim() : null,
       status,
+      // The attendance status the Calendar uses (leave, then Present / Late / Half day by the first clock-in, else not clocked in yet): the same rule, not a new one.
+      attendanceStatus: calendarStatus({ engineStatus: onLeave.has(p.id) ? "LEAVE" : "ABSENT", loginAt: s ? s.loginAt : null, isToday: true, timezone: p.platform?.timezone ?? timezone }),
       statusStartedAt: startedAt ? startedAt.toISOString() : null,
       company: p.platform?.name ?? null,
       shiftName: p.shift?.name ?? null,
@@ -234,13 +250,13 @@ export async function getLiveBoard(viewerId: string) {
     total: rows.length,
   };
 
-  return { generatedAt: now.toISOString(), timezone, date: date.toISOString().slice(0, 10), summary, rows };
+  return { generatedAt: now.toISOString(), timezone, date: date.toISOString().slice(0, 10), scope, summary, rows };
 }
 
 // ---------------------------------------------------------------------------------------------
 // SHIFT BREAKDOWN (one day)
 // ---------------------------------------------------------------------------------------------
-export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
+export async function getShiftBreakdown(viewerId: string, dateStr?: string, filters?: HrFilters) {
   const viewer = await getViewer(viewerId);
   const timezone = viewer.platform.timezone;
   const today = platformToday(timezone);
@@ -248,8 +264,9 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string) {
   const isToday = date.getTime() === today.getTime();
   const now = new Date();
 
-  const userIds = await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId });
-  const base = { generatedAt: now.toISOString(), timezone, date: date.toISOString().slice(0, 10), isToday, rows: [] as unknown[] };
+  const narrowed = await narrowIds(await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId }), filters);
+  const userIds = narrowed.ids;
+  const base = { generatedAt: now.toISOString(), timezone, date: date.toISOString().slice(0, 10), isToday, scope: narrowed.scope, rows: [] as unknown[] };
   if (userIds.length === 0) return base;
 
   const people = await loadPeople(userIds);
@@ -326,7 +343,7 @@ function istInstant(dateIso: string, hhmm: string): Date | null {
 
 export async function getAttendanceReport(
   viewerId: string,
-  q: { from?: string; to?: string; userId?: string; teamId?: string; shift?: string; status?: string; arrival?: string }
+  q: { from?: string; to?: string; userId?: string; teamId?: string; shift?: string; status?: string; arrival?: string; filters?: HrFilters }
 ) {
   const viewer = await getViewer(viewerId);
   const timezone = viewer.platform.timezone;
@@ -346,9 +363,12 @@ export async function getAttendanceReport(
     role === "HR" || role === "ADMIN"
       ? (await prisma.user.findMany({ where: { ...scopeWhere(await accessFor(viewerId)), status: { in: ["ACTIVE", "INVITED"] } }, select: { id: true } })).map((u) => u.id)
       : await visibleUserIds({ id: viewer.id, role, platformId: viewer.platformId });
-  const people = allowed.length
+  // The HR filters (company, project, reporting manager, name/ID search) narrow what the viewer may already see; the KPIs, the table and the exports are
+  // all built from this one list.
+  const narrowed = await narrowIds(allowed, q.filters);
+  const people = narrowed.ids.length
     ? await prisma.user.findMany({
-        where: { id: { in: allowed }, status: { notIn: ["SUSPENDED", "EXITED"] } },
+        where: { id: { in: narrowed.ids }, status: { notIn: ["SUSPENDED", "EXITED"] } },
         select: {
           id: true,
           firstName: true,
@@ -381,7 +401,7 @@ export async function getAttendanceReport(
   const chosen = meta.filter(
     (m) => (!q.userId || m.id === q.userId) && (!q.teamId || m.teamId === q.teamId) && (!q.shift || m.shift?.name === q.shift)
   );
-  const base = { generatedAt: new Date().toISOString(), timezone, today: today.toISOString().slice(0, 10), from: fromIso, to: toIso, options };
+  const base = { generatedAt: new Date().toISOString(), timezone, today: today.toISOString().slice(0, 10), from: fromIso, to: toIso, options, scope: narrowed.scope };
   if (chosen.length === 0) {
     return { ...base, kpis: { employees: 0, present: 0, halfDay: 0, absent: 0, notYet: 0, workingDays: 0, attendancePct: null as number | null, totalWorkedHours: 0, avgWorkedHours: null as number | null }, rows: [] as unknown[] };
   }
@@ -495,7 +515,7 @@ export async function getAttendanceReport(
       // "Late Remark": the first check-in against the 09:45 / 10:15 arrival rule (the calendar's rule), in the person's company time. A view only:
       // the existing Status and Late columns above keep their own rules. Absent only after the day is over; today is "Not in yet".
       const arrivalAt = d.loginAt ? new Date(d.loginAt) : null;
-      const arrivalCode = calendarStatus({ engineStatus: d.status, loginAt: arrivalAt, isToday: d.date === todayIso, timezone: who.tz });
+      const arrivalCode = calendarStatus({ engineStatus: d.status, loginAt: arrivalAt, isToday: d.date === todayIso, timezone: who.tz, halfDayLeave: d.leaveHalfDay !== null });
       const arrival = arrivalCode === "PRESENT" ? "ON_TIME" : arrivalCode;
       if (q.arrival) {
         const want = q.arrival === "LATE_OR_HALF" ? arrival === "LATE" || arrival === "HALF_DAY" : arrival === q.arrival;

@@ -35,33 +35,30 @@ export function minutesAfterLimit(at: Date, timezone: string, rules: ArrivalRule
   return Math.max(0, localMinuteOfDay(at, timezone) - toMinutes(rules.presentUntil));
 }
 
-export type CalendarStatus = ArrivalStatus | "ABSENT" | "LEAVE" | "HOLIDAY" | "WEEK_OFF" | "NOT_TRACKED" | "NOT_CLOCKED_IN";
+export type CalendarStatus = ArrivalStatus | "ABSENT" | "LEAVE" | "HALF_DAY_LEAVE" | "HOLIDAY" | "WEEK_OFF" | "NOT_TRACKED" | "NOT_CLOCKED_IN";
 
 /**
- * The calendar's status for one day.
- *  - Someone who checked in is classified by that first check-in, whatever else is true that day.
- *  - Nobody is "Absent" while the day is still in progress: today with no check-in is "Not clocked in yet".
- *  - Everything else comes from the existing attendance engine unchanged (leave, holiday, week-off, not tracked, and its own Absent for
- *    a finished day on which the company was tracking and the person never clocked in).
- * Returns null for days that should show nothing (future days, before joining).
+ * The calendar's status for one day, in this order of priority:
+ *  1. Approved leave (a full day is "Leave"; half a day is "Half-day leave", shown apart)
+ *  2. Company holiday
+ *  3. Scheduled week-off
+ *  4. A check-in: classified by the first check-in time (Present / Late / Half day)
+ *  5. Absent: a finished scheduled working day on which the company was tracking and there is neither a check-in nor approved leave
+ *  6. Not tracked: nobody in the company used the tracker that day
+ * Leave, holiday and week-off come from the existing attendance engine (which reads approved leave, the company holiday calendar and the
+ * person's shift), so they win even if the person happened to clock in; the worked time is still shown. Nobody is "Absent" while the day is
+ * still in progress: today with no check-in is "Not clocked in yet". Returns null for days that show nothing (future, before joining).
  */
-export function calendarStatus(input: { engineStatus: string; loginAt: Date | null; isToday: boolean; timezone: string; rules?: ArrivalRules }): CalendarStatus | null {
+export function calendarStatus(input: { engineStatus: string; loginAt: Date | null; isToday: boolean; timezone: string; halfDayLeave?: boolean; rules?: ArrivalRules }): CalendarStatus | null {
   const { engineStatus, loginAt, isToday, timezone, rules } = input;
+  if (engineStatus === "LEAVE" || engineStatus === "HOLIDAY" || engineStatus === "WEEK_OFF") return engineStatus;
+  if (engineStatus === "FUTURE" || engineStatus === "NOT_EMPLOYED") return loginAt ? classifyArrival(loginAt, timezone, rules ?? ARRIVAL_RULES) : null;
+  if (input.halfDayLeave) return "HALF_DAY_LEAVE";
   if (loginAt) return classifyArrival(loginAt, timezone, rules ?? ARRIVAL_RULES);
   switch (engineStatus) {
-    case "FUTURE":
-    case "NOT_EMPLOYED":
-      return null;
-    case "LEAVE":
-    case "HOLIDAY":
-    case "WEEK_OFF":
     case "NOT_TRACKED":
       return engineStatus;
-    case "ABSENT":
-    case "HALF_DAY": // the engine only says these for a day with no check-in when it is absent
-    case "PRESENT":
-      return isToday ? "NOT_CLOCKED_IN" : "ABSENT";
-    default:
+    default: // ABSENT, or the engine's hours-based verdicts for a day with no check-in
       return isToday ? "NOT_CLOCKED_IN" : "ABSENT";
   }
 }

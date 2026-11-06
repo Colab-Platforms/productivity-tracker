@@ -46,5 +46,18 @@ ok("future days show nothing", s("FUTURE", null) === null);
 ok("days before joining show nothing", s("NOT_EMPLOYED", null) === null);
 ok("custom limits are respected", calendarStatus({ engineStatus: "PRESENT", loginAt: ist("09:50"), isToday: false, timezone: IST, rules: { presentUntil: "10:00", lateUntil: "10:30" } }) === "PRESENT");
 
+console.log("\n## priority: leave, then holiday, then week-off, then a check-in, then absent");
+ok("approved leave wins even if the person clocked in", s("LEAVE", ist("09:00")) === "LEAVE");
+ok("a holiday wins over a check-in", s("HOLIDAY", ist("09:00")) === "HOLIDAY");
+ok("a week-off wins over a check-in", s("WEEK_OFF", ist("10:30")) === "WEEK_OFF");
+ok("leave with no check-in today is Leave, never 'not in yet'", s("LEAVE", null, true) === "LEAVE");
+const half = (login: Date | null, engineStatus = "HALF_DAY", isToday = false) => calendarStatus({ engineStatus, loginAt: login, isToday, timezone: IST, halfDayLeave: true });
+ok("half-day leave with no check-in is Half-day leave, not Absent", half(null) === "HALF_DAY_LEAVE");
+ok("half-day leave with a check-in is still shown as Half-day leave", half(ist("09:00"), "PRESENT") === "HALF_DAY_LEAVE");
+ok("half-day leave today with no check-in is Half-day leave", half(null, "HALF_DAY", true) === "HALF_DAY_LEAVE");
+ok("a holiday beats a half-day leave flag", calendarStatus({ engineStatus: "HOLIDAY", loginAt: null, isToday: false, timezone: IST, halfDayLeave: true }) === "HOLIDAY");
+ok("no leave flag: a no-check-in HALF_DAY engine verdict is still Absent on a finished day", s("HALF_DAY", null) === "ABSENT");
+ok("a working day with no check-in and no leave is Absent only when the company was tracking (engine says ABSENT)", s("ABSENT", null) === "ABSENT" && s("NOT_TRACKED", null) === "NOT_TRACKED");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

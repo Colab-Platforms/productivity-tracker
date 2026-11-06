@@ -1,4 +1,5 @@
 import { Router, type Response } from "express";
+import { parseFilters } from "../hr-filters/hrFilters.logic.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import * as svc from "./teamAttendance.service.js";
@@ -39,7 +40,7 @@ function fail(res: Response, error: unknown) {
 // Today, live. Polled every 30 seconds by the page.
 router.get("/live", async (req, res) => {
   try {
-    res.json(await svc.getLiveBoard(req.user!.userId));
+    res.json(await svc.getLiveBoard(req.user!.userId, parseFilters(req.query as Record<string, unknown>)));
   } catch (error) {
     fail(res, error);
   }
@@ -48,7 +49,7 @@ router.get("/live", async (req, res) => {
 // One day, how each person spent it. ?date=YYYY-MM-DD (default: today).
 router.get("/shift-breakdown", async (req, res) => {
   try {
-    res.json(await svc.getShiftBreakdown(req.user!.userId, typeof req.query.date === "string" && req.query.date ? req.query.date : undefined));
+    res.json(await svc.getShiftBreakdown(req.user!.userId, typeof req.query.date === "string" && req.query.date ? req.query.date : undefined, parseFilters(req.query as Record<string, unknown>)));
   } catch (error) {
     fail(res, error);
   }
@@ -67,7 +68,7 @@ router.get("/productivity", async (req, res) => {
       res.status(400).json({ error: "One of the values sent is not valid." });
       return;
     }
-    res.json(await productivity.getProductivity(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), userId, teamId }));
+    res.json(await productivity.getProductivity(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), userId, teamId, filters: parseFilters(req.query as Record<string, unknown>) }));
   } catch (error) {
     fail(res, error);
   }
@@ -81,7 +82,7 @@ router.get("/productivity/hourly", async (req, res) => {
       res.status(400).json({ error: "One of the values sent is not valid." });
       return;
     }
-    res.json(await productivity.getHourly(req.user!.userId, { date: text(req.query.date, 10), userId, teamId }));
+    res.json(await productivity.getHourly(req.user!.userId, { date: text(req.query.date, 10), userId, teamId, filters: parseFilters(req.query as Record<string, unknown>) }));
   } catch (error) {
     fail(res, error);
   }
@@ -129,6 +130,7 @@ router.get("/attendance", async (req, res) => {
         shift: text(req.query.shift),
         status: text(req.query.status, 20),
         arrival: text(req.query.arrival, 20),
+        filters: parseFilters(req.query as Record<string, unknown>),
       })
     );
   } catch (error) {

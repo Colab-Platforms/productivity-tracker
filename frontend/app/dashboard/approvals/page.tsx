@@ -18,6 +18,8 @@ import { plural } from "@/lib/plural";
 import { useMe } from "../layout";
 import { RevertModal } from "./RevertModal";
 import { EmployeePicker } from "./EmployeePicker";
+import FilterBar from "../_filters/FilterBar";
+import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 import { buildPeople } from "./people";
 
 const API = API_BASE;
@@ -54,6 +56,14 @@ type Task = {
   personName: string | null;
   isCarriedOver: boolean;
   createdAt: string;
+  // Daily task entry: progress is separate from approval. canAct is false for HR/Admin and for managers the task is not tagged to.
+  progress?: "COMPLETED" | "IN_PROGRESS" | "BLOCKED" | "NOT_STARTED";
+  hoursSpent?: number | null;
+  taggedManager?: string | null;
+  blockedNote?: string | null;
+  approvalNote?: string | null;
+  project?: string | null;
+  canAct?: boolean;
 };
 
 // A task as the queue sends it: the task itself plus who it belongs to (an id, a name and an employee ID).
@@ -61,6 +71,8 @@ type Row = Task & { userId: string; who: string; employeeCode: string | null; da
 
 type Queue = {
   date: string; // the company's "today"
+  // everyone this person may see, and how many the HR filters leave
+  scope?: { orgTotal: number; filteredTotal: number };
   teamSize: number;
   members: { id: string; name: string; employeeCode: string | null }[];
   proposals: Task[];
@@ -165,12 +177,18 @@ function personLabel(t: RowLike): string {
 }
 export default function ApprovalsPage() {
   const me = useMe();
+  // HR and Admin see every employee of the companies they act on (and can narrow by company, project and reporting manager); a manager sees their
+  // own reporting team, as before. Seeing a task is not approving it: only the tagged manager gets the Approve / Send back buttons.
+  const staff = me?.role === "HR" || me?.role === "ADMIN";
+  const { filters, update, clear, ready } = useHrFilters();
+  const { options: filterOptions } = useFilterOptions(filters, update, ready && staff);
   const [queue, setQueue] = useState<Queue | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [rejecting, setRejecting] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [revertFor, setRevertFor] = useState<Row | null>(null);
+  const [comments, setComments] = useState<Record<string, string>>({});
   const [revertError, setRevertError] = useState("");
   const [assignTo, setAssignTo] = useState("");
   const [title, setTitle] = useState("");
@@ -209,13 +227,14 @@ export default function ApprovalsPage() {
   const pickerPeople = buildPeople(queue?.members ?? [], rows, person);
 
   const range = rangeFor(preset, today, customFrom, customTo);
-  const path = range ? `/tasks/review/queue?from=${range.from}&to=${range.to}` : "/tasks/review/queue";
+  const fq = staff ? filterQuery(filters) : "";
+  const path = range ? `/tasks/review/queue?from=${range.from}&to=${range.to}${fq ? `&${fq}` : ""}` : `/tasks/review/queue${fq ? `?${fq}` : ""}`;
   const waitingForDates = preset === "custom" && !range; // custom needs both ends before anything is asked
 
   // The only place the queue is fetched. The same dates are used by the first load, the 30-second refresh and
   // the reload after an approve/grade, so nothing quietly snaps back to "Today".
   useEffect(() => {
-    if (waitingForDates) return;
+    if (waitingForDates || !ready) return;
     let cancelled = false;
     let lastFetch = Date.now();
     const go = async () => {
@@ -238,7 +257,7 @@ export default function ApprovalsPage() {
       cancelled = true;
       clearInterval(poll);
     };
-  }, [path, waitingForDates, reload]);
+  }, [path, waitingForDates, reload, ready]);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -286,7 +305,7 @@ export default function ApprovalsPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Team tasks</h1>
         <p className="mt-1 text-sm text-slate-500">
           Agree the work before it starts, grade it once it's done.
-          {queue ? ` ${plural(queue.teamSize, "person", "people")} in your teams.` : ""}
+          {queue ? (staff ? ` ${plural(queue.scope?.filteredTotal ?? queue.teamSize, "employee", "employees")} across your companies.` : ` ${plural(queue.teamSize, "person", "people")} in your teams.`) : ""}
         </p>
         <p className={"mt-1.5 inline-flex items-center gap-1.5 text-xs " + (connected ? "text-emerald-600" : "text-amber-600")} aria-live="polite">
           <span className={"h-1.5 w-1.5 rounded-full " + (connected ? "bg-emerald-500" : "bg-amber-400")} />
@@ -304,12 +323,23 @@ export default function ApprovalsPage() {
         <RevertModal title={revertFor.title} who={personLabel(revertFor as RowLike)} busy={busy} error={revertError} onSubmit={(type, remark) => void sendRevert(type, remark)} onCancel={() => setRevertFor(null)} />
       )}
 
+      {staff && (
+        <FilterBar
+          filters={filters}
+          update={update}
+          clear={clear}
+          options={filterOptions}
+          show={{ company: true, project: true, manager: true }}
+          counts={queue?.scope ? { filtered: queue.scope.filteredTotal, total: queue.scope.orgTotal } : null}
+        />
+      )}
+
       {/* --- assign ------------------------------------------------------- */}
       {/* --- who, what state, when --------------------------------------- */}
       <section className="rounded-2xl rounded-b-none border border-b-0 border-indigo-100 bg-white">
         {/* who: one searchable dropdown (default Everyone) instead of a row of name chips */}
         <div className="px-4 py-3">
-          <EmployeePicker people={pickerPeople} total={rows.length} value={person} onChange={setPerson} />
+          <EmployeePicker people={pickerPeople} total={rows.length} value={person} onChange={setPerson} everyoneSub={staff ? "All authorized employees" : "The whole reporting team"} />
         </div>
 
         {/* state + when */}
@@ -409,6 +439,7 @@ export default function ApprovalsPage() {
                   {t.description && (
                     <p className="mt-1 text-xs text-slate-500">{t.description}</p>
                   )}
+                  <TaskMeta t={t} />
                 </div>
 
                 <span
@@ -419,13 +450,27 @@ export default function ApprovalsPage() {
                   {t.weight.toLowerCase()}
                 </span>
 
-                <div className="flex shrink-0 gap-2">
+                {t.canAct === false ? (
+                  <span className="shrink-0 rounded-xl bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
+                    View only{t.taggedManager ? ` · ${t.taggedManager} decides` : ""}
+                  </span>
+                ) : (
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <input
+                    value={comments[t.id] ?? ""}
+                    onChange={(e) => setComments({ ...comments, [t.id]: e.target.value })}
+                    maxLength={300}
+                    aria-label="Comment (optional)"
+                    placeholder="Comment (optional)"
+                    className="w-40 rounded-xl border border-indigo-100 px-3 py-1.5 text-xs"
+                  />
                   <button
                     disabled={busy}
                     onClick={() =>
                       run(() =>
                         call<Queue>(`/tasks/review/${t.id}/approve`, "POST", {
                           approve: true,
+                          ...(comments[t.id]?.trim() ? { comment: comments[t.id].trim() } : {}),
                         })
                       )
                     }
@@ -444,9 +489,10 @@ export default function ApprovalsPage() {
                     Send back
                   </button>
                 </div>
+                )}
               </div>
 
-              {rejecting === t.id && (
+              {rejecting === t.id && t.canAct !== false && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <input
                     value={reason}
@@ -613,6 +659,27 @@ export default function ApprovalsPage() {
           </ul>
         </section>
       )}
+    </div>
+  );
+}
+const PROGRESS_LABEL: Record<string, { label: string; cls: string }> = {
+  COMPLETED: { label: "Completed", cls: "bg-emerald-50 text-emerald-700" },
+  IN_PROGRESS: { label: "In Progress", cls: "bg-sky-50 text-sky-700" },
+  BLOCKED: { label: "Blocked", cls: "bg-rose-50 text-rose-700" },
+  NOT_STARTED: { label: "Not started", cls: "bg-slate-100 text-slate-500" },
+};
+
+// The task's progress (is the work done?) next to its project, hours and tagged manager. Approval is what this screen decides.
+function TaskMeta({ t }: { t: Task }) {
+  if (!t.progress) return null;
+  const p = PROGRESS_LABEL[t.progress];
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+      <span className={`rounded-full px-2 py-0.5 font-medium ${p.cls}`}>{p.label}</span>
+      {t.hoursSpent != null && <span className="text-slate-500">{t.hoursSpent} h</span>}
+      {t.project && <span className="text-slate-500">· {t.project}</span>}
+      {t.taggedManager && <span className="text-slate-500">· Tagged to {t.taggedManager}</span>}
+      {t.progress === "BLOCKED" && t.blockedNote && <span className="text-rose-600">· {t.blockedNote}</span>}
     </div>
   );
 }

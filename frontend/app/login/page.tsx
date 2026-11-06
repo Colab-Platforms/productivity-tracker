@@ -12,8 +12,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { homeFor } from "@/lib/roleHome";
 import { useRouter } from "next/navigation";
-import { apiPost, getToken, setToken } from "@/lib/api";
+import { apiGet, apiPost, getToken, setToken } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -39,7 +40,15 @@ export default function LoginPage() {
         password,
       });
       setToken(result.token);
-      router.push("/dashboard");
+      // The role comes from the server (never from the form); each role has its own home address.
+      let home = "/dashboard";
+      try {
+        const me = await apiGet<{ role: string }>("/auth/me");
+        home = homeFor(me.role);
+      } catch {
+        // /dashboard works too: it sends the person to their own home once the page knows who they are
+      }
+      router.push(home);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in");
       setLoading(false);

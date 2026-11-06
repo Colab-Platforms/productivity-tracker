@@ -15,6 +15,7 @@
 // ===========================================================================
 
 import bcrypt from "bcryptjs";
+import { reportingError } from "./hierarchy.logic.js";
 import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay } from "../../lib/dates.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
@@ -118,9 +119,15 @@ function assertTime(value: string, field: string) {
 // PEOPLE
 // ===========================================================================
 
+/** Everyone this person may see in the Employees list (all statuses): the "organization total" the filtered count is shown against. */
+export async function peopleScopeCount(viewerId: string) {
+  const access = await accessFor(viewerId);
+  return prisma.user.count({ where: { ...scopeWhere(access) } });
+}
+
 export async function listUsers(
   viewerId: string,
-  filters: { search?: string; role?: string; status?: string; companyId?: string } = {}
+  filters: { search?: string; role?: string; status?: string; companyId?: string; projectIds?: string[]; managerIds?: string[]; designation?: string } = {}
 ) {
   const access = await accessFor(viewerId);
 
@@ -140,6 +147,10 @@ export async function listUsers(
       ...companyScope,
       ...(role ? { role } : {}),
       ...(status ? { status } : {}),
+      // Project: anyone ACTIVELY on one of the chosen projects (a person on several is still one row). Reporting manager: who reports to them.
+      ...(filters.projectIds?.length ? { teamMemberships: { some: { teamId: { in: filters.projectIds }, isActive: true } } } : {}),
+      ...(filters.managerIds?.length ? { reportsToId: { in: filters.managerIds } } : {}),
+      ...(filters.designation ? { designation: { equals: filters.designation, mode: "insensitive" as const } } : {}),
       ...(search
         ? {
             OR: [
@@ -260,6 +271,13 @@ export async function createUser(
       if (access.all ? false : !access.ids.includes(chosenTeam.platformId)) throw new Error("TEAM_NOT_FOUND");
       targetPlatformId = chosenTeam.platformId;
     }
+  }
+
+  // The reporting line must follow the organization rule (employee -> a Manager, manager -> an Admin), in the same company.
+  if (data.reportsToId) {
+    const boss = await prisma.user.findUnique({ where: { id: data.reportsToId }, select: { id: true, role: true, status: true, platformId: true } });
+    const bad = reportingError({ id: "new", role, platformId: targetPlatformId }, boss ? { id: boss.id, role: String(boss.role), status: String(boss.status), platformId: boss.platformId } : null);
+    if (bad) throw new Error(bad);
   }
 
   const clash = await prisma.user.findFirst({
