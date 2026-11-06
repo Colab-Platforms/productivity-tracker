@@ -31,6 +31,7 @@ import Avatar from "./_photos/Avatar";
 import EmployeeActions from "./_employees/EmployeeActions";
 import { AttendanceChart, ProductivityChart, type ChartRow } from "./_hr/Charts";
 import OrgOverview from "./_approvals/OrgOverview";
+import { ThemeIconButton } from "./_theme/ThemeToggle";
 import {
   ActivityList,
   type ActivityItem,
@@ -152,10 +153,11 @@ const Ico = {
       <path d="M8.3 16.2a1.8 1.8 0 0 0 3.4 0" strokeLinecap="round" />
     </svg>
   ),
+  // A gear (settings). It used to be a circle with rays, which looks exactly like the theme "sun" and sent people to Employees when they meant to change the theme.
   cog: (
-    <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6">
-      <circle cx="10" cy="10" r="2.4" />
-      <path d="M10 2.6v2M10 15.4v2M4.8 4.8l1.4 1.4M13.8 13.8l1.4 1.4M2.6 10h2M15.4 10h2M4.8 15.2l1.4-1.4M13.8 6.2l1.4-1.4" strokeLinecap="round" />
+    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   ),
   chevron: (
@@ -367,9 +369,11 @@ export default function HrDashboard() {
     <div className="page-fluid grid gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:grid-rows-[auto_1fr]">
       {/* profile row: first on small screens, top of the right column on wide ones */}
       <div className="flex items-center justify-end gap-3 xl:col-start-2 xl:row-start-1">
+        <ThemeIconButton className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-[var(--shadow-card)] hover:text-indigo-600" />
         <Link
           href="/dashboard/employees?tab=Teams"
           aria-label="Teams, shifts and rules"
+          title="Teams, shifts and rules"
           className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-[var(--shadow-card)] hover:text-indigo-600"
         >
           {Ico.cog}

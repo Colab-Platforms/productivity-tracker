@@ -37,16 +37,20 @@ export function ThemeRow() {
   );
 }
 
-/** A compact icon button for the mobile top bar. */
-export function ThemeIconButton() {
+/** A compact icon button (mobile top bar by default; pass `className` for another look). It only switches the theme: the click never reaches a parent link or container. */
+export function ThemeIconButton({ className }: { className?: string }) {
   const { theme, toggle } = useTheme();
   const dark = theme === "DARK";
   return (
     <button
       type="button"
-      onClick={toggle}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggle();
+      }}
       aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
-      className="rounded-lg p-2 text-slate-500 hover:bg-indigo-50 hover:text-indigo-700"
+      title={dark ? "Switch to light theme" : "Switch to dark theme"}
+      className={className ?? "rounded-lg p-2 text-slate-500 hover:bg-indigo-50 hover:text-indigo-700"}
     >
       {dark ? <Moon /> : <Sun />}
     </button>
