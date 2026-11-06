@@ -5,9 +5,10 @@ import { apiGet, apiPatch } from "@/lib/api";
 import { formatTime, getPlatformTimezone, isoDaysAgo } from "@/lib/time";
 import { NO_REMARK, lateRemarkText } from "../reports/_team/lateRemark";
 import { Modal } from "../_employees/Modal";
+import { Stars } from "../_ratings/Stars";
 
 type DayTask = {
-  id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; outcome: string | null;
+  id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; rating: number | null; ratingComment: string | null;
   completionNote: string | null; reviewNote: string | null; rejectionNote: string | null; project: string | null; assigned: boolean; completedAt?: string | null;
 };
 type DayData = { date: string; score: { percent: number | null; earned?: number; total?: number } & Record<string, unknown>; tasks: DayTask[] };
@@ -22,7 +23,7 @@ function markedLate(t: DayTask, taskDay: string): boolean {
 }
 // Approved, not finished, not graded. The server also enforces the 30-day limit.
 function canMarkDone(t: DayTask): boolean {
-  return t.approvalStatus === "APPROVED" && (t.status === "PENDING" || t.status === "IN_PROGRESS") && !t.outcome;
+  return t.approvalStatus === "APPROVED" && (t.status === "PENDING" || t.status === "IN_PROGRESS") && t.rating == null;
 }
 
 const WEIGHT_LABEL:Record<string, string> = { LOW: "Low", MEDIUM: "Medium", HIGH: "High", CRITICAL: "Urgent" };
@@ -32,10 +33,8 @@ function taskState(t: DayTask): { label: string; tone: string } {
   if (t.approvalStatus === "REJECTED") return { label: "Not approved", tone: "bg-red-50 text-red-700" };
   if (t.approvalStatus === "PENDING") return { label: "Waiting for approval", tone: "bg-amber-50 text-amber-700" };
   if (t.status === "COMPLETED") {
-    if (t.outcome === "FAILED") return { label: "Not accepted", tone: "bg-red-50 text-red-700" };
-    if (t.outcome === "PARTIALLY_COMPLETED") return { label: "Partly completed", tone: "bg-sky-50 text-sky-700" };
-    if (t.outcome === "COMPLETED") return { label: "Completed", tone: "bg-emerald-50 text-emerald-700" };
-    return { label: "Done, waiting for review", tone: "bg-amber-50 text-amber-700" };
+    if (t.rating != null) return { label: `Rated ${t.rating}/5`, tone: t.rating >= 4 ? "bg-emerald-50 text-emerald-700" : t.rating === 3 ? "bg-sky-50 text-sky-700" : "bg-red-50 text-red-700" };
+    return { label: "Done, waiting for rating", tone: "bg-amber-50 text-amber-700" };
   }
   if (t.status === "CANCELLED") return { label: "Cancelled", tone: "bg-slate-100 text-slate-600" };
   return { label: t.status === "IN_PROGRESS" ? "In progress" : "To do", tone: "bg-indigo-50 text-indigo-700" };
@@ -95,7 +94,8 @@ function DayTasksModal({ date, onClose }: { date: string; onClose: () => void })
               </p>
               {t.description && <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{t.description}</p>}
               {t.completionNote && <p className="mt-2 text-sm text-slate-600"><span className="font-medium text-slate-700">Your note: </span>{t.completionNote}</p>}
-              {(t.reviewNote || t.rejectionNote) && <p className="mt-1 text-sm text-slate-600"><span className="font-medium text-slate-700">Manager&apos;s comment: </span>{t.reviewNote || t.rejectionNote}</p>}
+              {t.rating != null && <p className="mt-1"><Stars value={t.rating} size={14} /></p>}
+              {(t.ratingComment || t.reviewNote || t.rejectionNote) && <p className="mt-1 text-sm text-slate-600"><span className="font-medium text-slate-700">Manager&apos;s comment: </span>{t.ratingComment || t.reviewNote || t.rejectionNote}</p>}
               {markedLate(t, date) && <p className="mt-2"><span className="rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700">Ticked later, on {dayOf(t.completedAt!)} · your manager decides</span></p>}
               {canMarkDone(t) && (
                 confirmId === t.id ? (
@@ -143,6 +143,8 @@ type Row = {
   taskTotal: number;
   taskDone: number;
   taskPercent: number | null;
+  avgRating: number | null; // average of the manager's star ratings on that day's finished tasks
+  ratedCount: number;
 };
 
 type Data = {
@@ -211,6 +213,7 @@ export default function HistoryPage() {
       "On leave",
       "Tasks done",
       "Task score %",
+      "Avg rating (out of 5)",
     ];
 
     const lines = data.rows.map((r) =>
@@ -229,6 +232,7 @@ export default function HistoryPage() {
         r.onLeave ? r.leaveType ?? "yes" : "no",
         `${r.taskDone}/${r.taskTotal}`,
         r.taskPercent ?? "",
+        r.avgRating ?? "",
       ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
         .join(",")
@@ -427,6 +431,11 @@ export default function HistoryPage() {
                             <span className="ml-1.5 text-xs text-slate-400">
                               {r.taskPercent}%
                             </span>
+                            {r.avgRating != null && (
+                              <span className="ml-1.5 text-xs text-amber-600" title={`Average of ${r.ratedCount} star rating${r.ratedCount === 1 ? "" : "s"} from your manager`}>
+                                ★ {r.avgRating}
+                              </span>
+                            )}
                           </>
                         )}
                       </td>

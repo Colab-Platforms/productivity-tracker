@@ -16,6 +16,7 @@ import { useTaskRealtime } from "@/lib/realtime";
 import { formatDate, isoDaysAgo } from "@/lib/time";
 import { DateFilter, RangeTasks, rangeFor, type RangeKey } from "./_range/RangeTasks";
 import SelfManagedTasks, { type SelfPayload } from "./_self/SelfManagedTasks";
+import { Stars } from "../_ratings/Stars";
 
 const API = API_BASE;
 
@@ -47,7 +48,9 @@ type Task = {
   // Set when a manager reopened the task. fromEarlierDay = it belongs to a past day but is shown here because it is unfinished again.
   reopened?: { type: string; label: string; remark: string; resubmitted: boolean } | null;
   fromEarlierDay?: boolean;
-  outcome: "COMPLETED" | "PARTIALLY_COMPLETED" | "FAILED" | null;
+  // The manager's star rating (1-5) and comment; null = not rated yet.
+  rating: number | null;
+  ratingComment: string | null;
   completionNote: string | null;
   reviewNote: string | null;
   isCarriedOver: boolean;
@@ -105,15 +108,6 @@ const WEIGHT_CHIP: Record<string, string> = {
   MEDIUM: "bg-sky-50 text-sky-700",
   HIGH: "bg-amber-50 text-amber-700",
   CRITICAL: "bg-rose-50 text-rose-700",
-};
-
-const OUTCOME_CHIP: Record<string, { label: string; cls: string }> = {
-  COMPLETED: { label: "Completed", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
-  PARTIALLY_COMPLETED: {
-    label: "Partially done",
-    cls: "bg-amber-50 text-amber-700 ring-amber-200",
-  },
-  FAILED: { label: "Not done", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
 
 export default function TasksPage() {
@@ -515,36 +509,31 @@ export default function TasksPage() {
       {data && data.done.length > 0 && (
         <Section
           title={`Done (${data.done.length})`}
-          hint="Your manager grades these. Until then they score full marks."
+          hint="Your manager rates these from 1 to 5 stars. Until then they score full marks."
         >
           {data.done.map((t) => {
-            const grade = t.outcome ? OUTCOME_CHIP[t.outcome] : null;
             return (
               <li key={t.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
                 <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-slate-700">{t.title}</p>
                   <EntryMeta t={t} />
-                  {t.reviewNote && (
+                  {t.ratingComment ? (
+                    <p className="mt-0.5 break-words text-xs text-slate-500 [overflow-wrap:anywhere]">
+                      {t.reviewedBy ? `${t.reviewedBy}: ` : ""}{t.ratingComment}
+                    </p>
+                  ) : t.reviewNote ? (
                     <p className="mt-0.5 text-xs text-slate-500">
                       {t.reviewedBy}: {t.reviewNote}
                     </p>
-                  )}
+                  ) : null}
                 </div>
 
-                {grade ? (
-                  <span
-                    className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${grade.cls}`}
-                  >
-                    {grade.label}
-                  </span>
-                ) : (
-                  <span className="shrink-0 text-xs text-slate-400">
-                    waiting on review
-                  </span>
-                )}
+                <span className="shrink-0">
+                  <Stars value={t.rating} size={16} emptyText="waiting for a rating" />
+                </span>
 
-                {!t.outcome && (
+                {t.rating == null && (
                   <button
                     onClick={() => setStatus(t, "IN_PROGRESS")}
                     disabled={busy}

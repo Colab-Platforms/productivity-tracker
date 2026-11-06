@@ -12,11 +12,13 @@ import { isFiltering, type HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager, selectableProjects } from "./tasks.entry.js";
 import { mayReview, parseHours, parseProgress, storeProgress } from "./tasks.entry.logic.js";
 import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
+import { checkComment, creditOf, parseRating } from "./tasks.rating.logic.js";
+import { isRated, ratingReady, ratingsFor, withRatings } from "./tasks.rating.js";
 
 // ---------------------------------------------------------------------------
 // SCORING
-// A task's worth is its weight. What it earns depends on the manager's grade:
-// completed earns all of it, partially completed half, failed nothing.
+// A task's worth is its weight. What it earns depends on the manager's star rating (1-5): stars / 5 of the weight
+// (5 stars all of it, 3 stars 60%, 1 star 20%). A finished task not rated yet earns all of it.
 // Nothing unapproved counts at all.
 // ---------------------------------------------------------------------------
 export const TASK_WEIGHTS: Record<string, number> = {
@@ -26,15 +28,8 @@ export const TASK_WEIGHTS: Record<string, number> = {
   CRITICAL: 5,
 };
 
-export const OUTCOME_MULTIPLIER: Record<string, number> = {
-  COMPLETED: 1,
-  PARTIALLY_COMPLETED: 0.5,
-  FAILED: 0,
-};
-
 const WEIGHTS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const STATUSES = ["PENDING", "IN_PROGRESS", "COMPLETED"];
-const OUTCOMES = ["COMPLETED", "PARTIALLY_COMPLETED", "FAILED"];
 const MANAGING_ROLES = ["MANAGER", "HR", "ADMIN"];
 
 async function userContext(userId: string) {
@@ -236,6 +231,8 @@ function shape<
     status: string;
     approvalStatus: string;
     outcome: string | null;
+    rating: number | null;
+    ratingComment: string | null;
     rejectionNote: string | null;
     reviewNote: string | null;
     completionNote: string | null;
@@ -244,15 +241,18 @@ function shape<
     date: Date;
   }
 >(t: T, projectName?: string | null) {
+  // The old grade is not sent any more: the star rating replaced it.
+  const { outcome: _oldGrade, ...rest } = t;
+  void _oldGrade;
   return {
-    ...t,
+    ...rest,
     date: t.date.toISOString().slice(0, 10),
     weightValue: TASK_WEIGHTS[String(t.weight)] ?? 1,
     assigned: t.assignedById !== null,
     project: projectName ?? null,
     projectId: t.teamId,
     // Set when a manager sent this task back (Partially / Not fully completed): the kind, the remark, and whether it was finished again.
-    reopened: reopenedView(t),
+    reopened: reopenedView({ status: String(t.status), outcome: t.rating != null ? "RATED" : null, reviewNote: t.reviewNote }),
   };
 }
 
@@ -260,7 +260,7 @@ type Scorable = {
   weight: string;
   status: string;
   approvalStatus: string;
-  outcome: string | null;
+  rating: number | null;
 };
 
 export function scoreOf(tasks: Scorable[]) {
@@ -273,17 +273,14 @@ export function scoreOf(tasks: Scorable[]) {
 
   const doneWeight = approved.reduce((n, t) => {
     const w = TASK_WEIGHTS[String(t.weight)] ?? 1;
-    if (t.outcome) return n + w * (OUTCOME_MULTIPLIER[String(t.outcome)] ?? 0);
+    if (t.rating != null) return n + w * creditOf(t.rating);
     if (String(t.status) === "COMPLETED") return n + w;
     return n;
   }, 0);
 
   return {
     total: approved.length,
-    done: approved.filter(
-      (t) =>
-        String(t.status) === "COMPLETED" || String(t.outcome) === "COMPLETED"
-    ).length,
+    done: approved.filter((t) => String(t.status) === "COMPLETED").length,
     totalWeight,
     doneWeight,
     percent:
@@ -300,7 +297,7 @@ export async function listTasks(userId: string) {
   const ctx = await userContext(userId);
   const date = platformToday(ctx.timezone);
 
-  const [rows, projects] = await Promise.all([
+  const [rawRows, projects] = await Promise.all([
     prisma.dailyTask.findMany({
       where: { userId, date },
       include: { team: { select: { name: true } } },
@@ -308,14 +305,15 @@ export async function listTasks(userId: string) {
     }),
     myProjects(userId),
   ]);
+  const rows = await withRatings(rawRows);
 
   // A task a manager reopened keeps its original day, which may be earlier than today, but it is unfinished work again: it is shown with
   // the rest of the person's working tasks, flagged with the day it came from. It does not change today's score.
-  const reopenedOld = await prisma.dailyTask.findMany({
+  const reopenedOld = await withRatings(await prisma.dailyTask.findMany({
     where: { userId, approvalStatus: "APPROVED", status: { in: ["PENDING", "IN_PROGRESS"] }, outcome: null, date: { lt: date }, reviewNote: { startsWith: REVERT_MARK_PREFIX } },
     include: { team: { select: { name: true } } },
     orderBy: { date: "asc" },
-  });
+  }));
   const selfDetails = await detailsFor(rows.map((r) => r.id));
   const entries = await entryDetailsFor(rows.map((r) => r.id));
   const nowForSelf = new Date();
@@ -367,11 +365,11 @@ export async function listTasks(userId: string) {
 // One earlier (or later) day of the person's OWN tasks, for My History. Read-only; nothing is recomputed.
 export async function listMyDay(userId: string, day: unknown) {
   const date = parseIsoDay(day);
-  const rows = await prisma.dailyTask.findMany({
+  const rows = await withRatings(await prisma.dailyTask.findMany({
     where: { userId, date },
     include: { team: { select: { name: true } } },
     orderBy: { title: "asc" },
-  });
+  }));
   return {
     date: date.toISOString().slice(0, 10),
     score: scoreOf(rows),
@@ -385,11 +383,11 @@ export async function listMyRange(userId: string, from: unknown, to: unknown) {
   const end = parseIsoDay(to);
   if (end.getTime() < start.getTime()) throw new Error("BAD_RANGE");
   if ((end.getTime() - start.getTime()) / 86400000 > 92) throw new Error("RANGE_TOO_LONG");
-  const rows = await prisma.dailyTask.findMany({
+  const rows = await withRatings(await prisma.dailyTask.findMany({
     where: { userId, date: { gte: start, lte: end } },
     include: { team: { select: { name: true } } },
     orderBy: [{ date: "desc" }, { title: "asc" }],
-  });
+  }));
   return {
     from: start.toISOString().slice(0, 10),
     to: end.toISOString().slice(0, 10),
@@ -518,7 +516,7 @@ export async function updateMyTask(
     if (String(task.approvalStatus) !== "APPROVED") {
       throw new Error("NOT_APPROVED_YET");
     }
-    if (task.outcome) throw new Error("ALREADY_REVIEWED");
+    if (await isRated(task)) throw new Error("ALREADY_REVIEWED");
     // Forgot to tick it on the day: allowed later, but only up to 30 days back.
     if (status === "COMPLETED" && String(task.status) !== "COMPLETED") {
       const ctx = await userContext(userId);
@@ -547,7 +545,7 @@ export async function updateMyTask(
   if (body.progress !== undefined || body.hoursSpent !== undefined || body.blockedNote !== undefined) {
     if (selfManaged) throw new Error("SELF_MANAGED_ONLY");
     if (!(await entryReady())) throw new Error("FEATURES_NOT_READY");
-    if (task.outcome) throw new Error("ALREADY_REVIEWED");
+    if (await isRated(task)) throw new Error("ALREADY_REVIEWED");
     entryPatch = {};
     if (body.progress !== undefined) {
       const pr = parseProgress(body.progress);
@@ -669,7 +667,7 @@ export async function deleteMyTask(userId: string, taskId: string) {
   if (!task || task.userId !== userId) throw new Error("NOT_FOUND");
 
   if (task.assignedById) throw new Error("ASSIGNED_CANNOT_DELETE");
-  if (task.outcome) throw new Error("ALREADY_REVIEWED");
+  if (await isRated(task)) throw new Error("ALREADY_REVIEWED");
   if (
     String(task.approvalStatus) === "APPROVED" &&
     String(task.status) !== "PENDING"
@@ -817,8 +815,8 @@ export async function listForApproval(
   const selfIds = new Set((await detailsFor(rawRows.map((r) => r.id))).keys());
   const rows = rawRows.filter((r) => !selfIds.has(r.id));
 
-  const [entries, acting] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor)]);
-  const all = rows.map((t) => {
+  const [entries, acting, ratedRows] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatings(rows)]);
+  const all = ratedRows.map((t) => {
     const who = `${t.user.firstName} ${t.user.lastName}`.trim();
     const d = entries.get(t.id);
     return {
@@ -849,10 +847,10 @@ export async function listForApproval(
     (t) =>
       t.approvalStatus === "APPROVED" &&
       t.status === "COMPLETED" &&
-      !t.outcome
+      t.rating == null
   );
   const recent = all.filter(
-    (t) => Boolean(t.outcome) || t.approvalStatus === "REJECTED"
+    (t) => t.rating != null || t.approvalStatus === "REJECTED"
   );
 
   return {
@@ -991,43 +989,66 @@ export async function approveTask(
   return listForApproval(managerId);
 }
 
+/**
+ * Rate a finished task 1-5 stars (this replaced the Completed / Partial / Failed grade). Re-rating overwrites the earlier rating.
+ * Who: the people who can grade the task (assertCanReviewTask), never the task's own owner. Only an approved, finished task.
+ */
 export async function reviewTask(
   managerId: string,
   taskId: string,
-  outcome: string,
-  note?: string
+  input: { rating?: unknown; comment?: unknown; outcome?: unknown }
 ) {
   const ctx = await userContext(managerId);
   if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
 
-  const outcomeIn = String(outcome ?? "");
-  if (!OUTCOMES.includes(outcomeIn)) throw new Error("BAD_OUTCOME");
+  // The old three-way grade is gone: a request that still sends it is told to use stars.
+  if (input.rating === undefined && input.outcome !== undefined) throw new Error("USE_RATING");
+  const stars = parseRating(input.rating);
+  if (stars === null) throw new Error("BAD_RATING");
+  const comment = checkComment(input.comment);
+  if ("error" in comment) throw new Error(comment.error);
+  if (!(await ratingReady())) throw new Error("FEATURES_NOT_READY");
 
   const task = await prisma.dailyTask.findUnique({ where: { id: taskId } });
   if (!task) throw new Error("NOT_FOUND");
+  // Nobody rates their own work, whatever their role.
+  if (task.userId === managerId) throw new Error("NOT_YOUR_OWN_TASK");
   await assertCanReviewTask(actor, task);
   if ((await detailsFor([taskId])).has(taskId)) throw new Error("SELF_MANAGED");
 
   if (String(task.approvalStatus) !== "APPROVED") {
     throw new Error("NOT_APPROVED");
   }
-  // A manager cannot fail something that was never finished.
+  // A manager cannot rate something that was never finished.
   if (String(task.status) !== "COMPLETED") {
     throw new Error("NOT_FINISHED_YET");
   }
 
-  await prisma.dailyTask.update({
-    where: { id: taskId },
-    data: {
-      outcome: outcomeIn as never,
-      reviewedById: managerId,
-      reviewedAt: new Date(),
-      reviewNote: note ? String(note).trim().slice(0, 1000) : null,
-    },
+  const before = (await prisma.taskRating.findUnique({ where: { taskId }, select: { rating: true } }))?.rating ?? null;
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.taskRating.upsert({
+      where: { taskId },
+      update: { rating: stars, comment: comment.text, ratedById: managerId },
+      create: { taskId, platformId: task.platformId, ratedById: managerId, rating: stars, comment: comment.text },
+    });
+    // who reviewed and when stay on the task itself; a fresh rating also replaces any "reopened" marker note
+    await tx.dailyTask.update({ where: { id: taskId }, data: { reviewedById: managerId, reviewedAt: now, reviewNote: null } });
+  });
+  auditNote({
+    platformId: task.platformId,
+    module: "Tasks",
+    action: "UPDATE",
+    recordType: "Task",
+    recordId: taskId,
+    targetUserId: task.userId,
+    summary: `Rated task "${task.title}" ${stars}/5`,
+    before: { rating: before },
+    after: { rating: stars, comment: comment.text },
   });
   emitTaskChange({ taskId, ownerId: task.userId, action: "graded" });
-  await taskNotice(outcomeIn === "FAILED" ? "notAccepted" : "approved", taskId, managerId, { note: note ? String(note) : null, partial: outcomeIn === "PARTIALLY_COMPLETED" });
+  await taskNotice("rated", taskId, managerId, { note: comment.text, stars, stamp: now.getTime() });
 
   return listForApproval(managerId);
 }
@@ -1073,6 +1094,9 @@ export async function revertTask(managerId: string, taskId: string, typeIn: unkn
     },
   });
   if (claimed.count !== 1) throw new Error("ALREADY_REOPENED");
+  // The task is unfinished again, so its rating goes too (the previous stars are kept in the audit row below).
+  const previous = (await ratingsFor([task])).get(taskId) ?? null;
+  if (await ratingReady()) await prisma.taskRating.deleteMany({ where: { taskId } });
 
   const managerName = await prisma.user.findUnique({ where: { id: managerId }, select: { firstName: true, lastName: true } });
   auditNote({
@@ -1083,7 +1107,7 @@ export async function revertTask(managerId: string, taskId: string, typeIn: unkn
     recordId: taskId,
     targetUserId: task.userId,
     summary: `Reopened task "${task.title}" (${REVERT_LABEL[type]}): ${String(task.status)} to IN_PROGRESS`,
-    before: { status: String(task.status), outcome: task.outcome ? String(task.outcome) : null, completedAt: task.completedAt, gradedById: task.reviewedById, gradedAt: task.reviewedAt, gradeNote: task.reviewNote, submissionNote: task.completionNote },
+    before: { status: String(task.status), rating: previous?.rating ?? null, ratingComment: previous?.comment ?? null, completedAt: task.completedAt, gradedById: task.reviewedById, gradedAt: task.reviewedAt, gradeNote: task.reviewNote, submissionNote: task.completionNote },
     after: { status: "IN_PROGRESS", revertType: type, revertLabel: REVERT_LABEL[type], remark: remark.text, revertedById: managerId, revertedBy: managerName ? `${managerName.firstName} ${managerName.lastName}`.trim() : null, employeeId: task.userId, revertedAt: now },
   });
   emitTaskChange({ taskId, ownerId: task.userId, action: "reverted" });

@@ -13,6 +13,8 @@
 
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds } from "../hr-filters/hrFilters.service.js";
+import { starsFor } from "../tasks/tasks.rating.js";
+import { isCompleteRating } from "../tasks/tasks.rating.logic.js";
 import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { selfManagedTaskIdsOf } from "../tasks/tasks.self.js";
 import { auditNote } from "../../lib/auditContext.js";
@@ -70,13 +72,18 @@ const addDays = (iso: string, n: number) => {
 const hourIn = (instant: Date, tz: string) =>
   Number(new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", hourCycle: "h23" }).format(instant));
 
-// A task counts only when it is really finished: completed, approved, timestamped, not graded partial/failed.
+// A task counts only when it is really finished: completed, approved, timestamped, and not rated below the "completed" star
+// threshold (unrated finished work counts). The star check happens after the read (keepFullyDone), because ratings live in their own table.
 // (The completion time is required too: every query below filters on completedAt being inside a day.)
 const COUNTED = {
   status: "COMPLETED" as const,
   approvalStatus: "APPROVED" as const,
-  OR: [{ outcome: null }, { outcome: "COMPLETED" as const }],
 };
+
+async function keepFullyDone<T extends { id: string; outcome: unknown }>(rows: T[]): Promise<T[]> {
+  const stars = await starsFor(rows);
+  return rows.filter((r) => isCompleteRating(stars.get(r.id) ?? null));
+}
 
 type ScopedPerson = { id: string; name: string; code: string | null; platformId: string; teamId: string | null; teamName: string | null };
 
@@ -129,7 +136,7 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   // A manager's own (self-managed) tasks are his personal productivity: they never count in TEAM figures.
   const selfIds = await selfManagedTaskIdsOf(ids);
   const [counted, planned, legacy] = await Promise.all([
-    prisma.dailyTask.findMany({ where: { userId: { in: ids }, id: { notIn: selfIds }, ...COUNTED, completedAt: { gte: startUtc, lt: endUtc } }, select: { id: true, userId: true, completedAt: true } }),
+    prisma.dailyTask.findMany({ where: { userId: { in: ids }, id: { notIn: selfIds }, ...COUNTED, completedAt: { gte: startUtc, lt: endUtc } }, select: { id: true, userId: true, completedAt: true, outcome: true } }).then(keepFullyDone),
     prisma.dailyTask.groupBy({ by: ["userId", "date"], where: { userId: { in: ids }, id: { notIn: selfIds }, approvalStatus: "APPROVED", date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, _count: { _all: true } }),
     prisma.dailyTask.groupBy({ by: ["userId", "date"], where: { userId: { in: ids }, id: { notIn: selfIds }, approvalStatus: "APPROVED", status: "COMPLETED", completedAt: null, date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, _count: { _all: true } }),
   ]);
@@ -199,10 +206,10 @@ export async function getHourly(viewerId: string, q: { date?: string; userId?: s
   if (people.length === 0) return { ...base, scope, people: [] as unknown[] };
   const ids = people.map((p) => p.id);
   const selfIds = await selfManagedTaskIdsOf(ids); // a manager's own tasks are not team productivity
-  const tasks = await prisma.dailyTask.findMany({
+  const tasks = await keepFullyDone(await prisma.dailyTask.findMany({
     where: { userId: { in: ids }, id: { notIn: selfIds }, ...COUNTED, completedAt: { gte: zonedToUtc(day, "00:00", tz), lt: zonedToUtc(addDays(day, 1), "00:00", tz) } },
-    select: { id: true, userId: true, completedAt: true },
-  });
+    select: { id: true, userId: true, completedAt: true, outcome: true },
+  }));
   const grid = new Map<string, number[]>();
   const seen = new Set<string>();
   for (const t of tasks) {

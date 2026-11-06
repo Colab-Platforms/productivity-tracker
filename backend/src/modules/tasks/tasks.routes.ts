@@ -30,7 +30,10 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   PROJECT_HAS_NO_MANAGER: { status: 409, message: "No manager is available to approve this task. Please ask HR or your Admin to assign one." },
   PROJECT_REQUIRED: { status: 400, message: "Select the project this task belongs to." },
   FEATURES_NOT_READY: { status: 503, message: "This feature is not switched on yet." },
-  BAD_OUTCOME: { status: 400, message: "Pick completed, partial or failed." },
+  USE_RATING: { status: 400, message: "Tasks are rated with 1 to 5 stars now. Give a star rating." },
+  BAD_RATING: { status: 400, message: "Give a rating from 1 to 5 stars." },
+  COMMENT_TOO_LONG: { status: 400, message: "Keep the comment to 300 characters or fewer." },
+  NOT_YOUR_OWN_TASK: { status: 403, message: "You can't rate your own task." },
   NOT_APPROVED: { status: 400, message: "That task hasn't been approved yet." },
   NOT_FINISHED: { status: 400, message: "It hasn't been marked done yet." },
   ALREADY_DECIDED: { status: 409, message: "That proposal was already decided." },
@@ -183,11 +186,10 @@ router.post("/review/:id/approve", async (req, res) => {
   }
 });
 
-router.post("/review/:id/outcome", async (req, res) => {
+// Rate a finished task 1-5 stars. Body: { rating, comment? }. (/outcome is the old path: it only answers "use stars".)
+router.post(["/review/:id/rating", "/review/:id/outcome"], async (req, res) => {
   try {
-    const outcome = String(req.body?.outcome ?? "");
-    const note = req.body?.reviewNote ? String(req.body.reviewNote) : undefined;
-    res.json(await tasks.reviewTask(req.user!.userId, id(req.params.id), outcome, note));
+    res.json(await tasks.reviewTask(req.user!.userId, id(req.params.id), { rating: req.body?.rating, comment: req.body?.comment, outcome: req.body?.outcome }));
   } catch (e) {
     fail(res, e);
   }

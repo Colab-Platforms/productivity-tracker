@@ -12,7 +12,7 @@ import { API_BASE, apiGet, apiPatch, apiPost, getToken } from "@/lib/api";
 
 export type SelfTask = {
   id: string; title: string; description: string | null; weight: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED"; approvalStatus: string; outcome: string | null; reviewNote?: string | null; assignedBy: string | null;
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED"; approvalStatus: string; rating?: number | null; reviewNote?: string | null; assignedBy: string | null;
   selfManaged: boolean; startedAt?: string | null; dueDate?: string | null; overdue?: boolean;
 };
 export type SelfPayload = { tasks: SelfTask[] };
@@ -133,9 +133,9 @@ export default function SelfManagedTasks({ data, onData, error, setError }: { da
           <ul className="divide-y divide-indigo-50">
             {others.map((t) => (
               <li key={t.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
-                <div className="min-w-0 flex-1"><p className="text-sm text-slate-900">{t.title}</p><p className="mt-0.5 text-xs text-slate-400">{t.assignedBy ? `Assigned by ${t.assignedBy}` : "Not yet converted to a personal task"}{t.outcome ? ` · graded ${t.outcome.toLowerCase().replace(/_/g, " ")}` : ""}</p></div>
+                <div className="min-w-0 flex-1"><p className="text-sm text-slate-900">{t.title}</p><p className="mt-0.5 text-xs text-slate-400">{t.assignedBy ? `Assigned by ${t.assignedBy}` : "Not yet converted to a personal task"}{t.rating != null ? ` · rated ${t.rating}/5` : ""}</p></div>
                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CHIP[t.status]}`}>{STATUS_LABEL[t.status]}</span>
-                {t.approvalStatus === "APPROVED" && t.status !== "COMPLETED" && !t.outcome && <button onClick={() => setStatus(t, t.status === "PENDING" ? "IN_PROGRESS" : "COMPLETED")} disabled={busy} className="shrink-0 rounded-xl border border-indigo-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-indigo-50 disabled:opacity-40">{t.status === "PENDING" ? "Start" : "Mark done"}</button>}
+                {t.approvalStatus === "APPROVED" && t.status !== "COMPLETED" && t.rating == null && <button onClick={() => setStatus(t, t.status === "PENDING" ? "IN_PROGRESS" : "COMPLETED")} disabled={busy} className="shrink-0 rounded-xl border border-indigo-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-indigo-50 disabled:opacity-40">{t.status === "PENDING" ? "Start" : "Mark done"}</button>}
               </li>
             ))}
           </ul>
