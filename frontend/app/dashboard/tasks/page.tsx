@@ -64,7 +64,9 @@ type Task = {
   projectId?: string | null;
 };
 
-type EntryForm = { ready: boolean; defaultId: string | null; options: { id: string; name: string; code: string | null }[] };
+// For each project the person is on: who may approve its tasks (the project's managers) and who is preselected.
+type ProjectManagers = { options: { id: string; name: string; code: string | null }[]; defaultId: string | null };
+type EntryForm = { ready: boolean; byProject: Record<string, ProjectManagers>; others?: { id: string; name: string; code: string | null }[] };
 
 type Score = {
   totalWeight: number;
@@ -160,7 +162,7 @@ export default function TasksPage() {
     setError("");
     try {
       const entry = data?.entryForm?.ready === true;
-      const tagged = taggedId ?? data?.entryForm?.defaultId ?? "";
+      const tagged = projectId ? chosenManager : "";
       setData(
         await apiPost<Payload>("/tasks", {
           title,
@@ -220,6 +222,14 @@ export default function TasksPage() {
   }
 
   const score = data?.score;
+  // The managers who may approve a task are those of the SELECTED project, not the person's reporting manager.
+  const choices: ProjectManagers | null = projectId ? (data?.entryForm?.byProject?.[projectId] ?? { options: [], defaultId: null }) : null;
+  // Work for another project, or a project without a manager: any other manager of the company can be tagged.
+  const projectOpts = choices?.options ?? [];
+  const otherOpts = (data?.entryForm?.others ?? []).filter((o) => !projectOpts.some((p) => p.id === o.id));
+  const allOpts = [...projectOpts, ...otherOpts];
+  const noManager = !!projectId && allOpts.length === 0;
+  const chosenManager = taggedId && allOpts.some((o) => o.id === taggedId) ? taggedId : (choices?.defaultId ?? "");
 
   // A manager's own work: self-managed, no approval. Employees (and everyone else) keep the screen below.
   if (data?.selfManagedMode) {
@@ -301,7 +311,7 @@ export default function TasksPage() {
             </label>
             <label className="text-xs text-slate-500">
               Select Project{(data.projects?.length ?? 0) > 0 && <span className="text-rose-500"> *</span>}
-              <select value={projectId} required={(data.projects?.length ?? 0) > 0} disabled={(data.projects?.length ?? 0) === 0} onChange={(e) => setProjectId(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+              <select value={projectId} required={(data.projects?.length ?? 0) > 0} disabled={(data.projects?.length ?? 0) === 0} onChange={(e) => { setProjectId(e.target.value); setTaggedId(null); }} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
                 <option value="">{(data.projects?.length ?? 0) > 0 ? "Select a project" : "No project assigned to you"}</option>
                 {(data.projects ?? []).map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
@@ -310,14 +320,26 @@ export default function TasksPage() {
               {(data.projects?.length ?? 0) === 0 && <span className="mt-1 block text-[11px] text-amber-600">Ask HR to add you to a project.</span>}
             </label>
             <label className="text-xs text-slate-500">
-              Tag Reporting Manager{data.entryForm.options.length > 0 && <span className="text-rose-500"> *</span>}
-              <select value={taggedId ?? data.entryForm.defaultId ?? ""} required={data.entryForm.options.length > 0} disabled={data.entryForm.options.length === 0} onChange={(e) => setTaggedId(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
-                <option value="">{data.entryForm.options.length > 0 ? "Select a manager" : "No manager mapped to you"}</option>
-                {data.entryForm.options.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}</option>
-                ))}
+              Tag Project Manager{!!projectId && <span className="text-rose-500"> *</span>}
+              <select value={chosenManager} required={!!projectId} disabled={!projectId || noManager} onChange={(e) => setTaggedId(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900">
+                <option value="">{!projectId ? "Select a project first" : noManager ? "No manager available" : "Select a manager"}</option>
+                {projectOpts.length > 0 && (
+                  <optgroup label="Manager of this project">
+                    {projectOpts.map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {otherOpts.length > 0 && (
+                  <optgroup label="Other managers (work for another project)">
+                    {otherOpts.map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
-              {data.entryForm.options.length === 0 && <span className="mt-1 block text-[11px] text-amber-600">Ask HR to set your reporting manager.</span>}
+              {!!projectId && projectOpts.length === 0 && !noManager && <span className="mt-1 block text-[11px] text-amber-600">This project has no manager yet, so choose who should approve this task.</span>}
+              {noManager && <span className="mt-1 block text-[11px] text-amber-600">No manager is available. Ask HR or your Admin to assign one.</span>}
             </label>
             <div className="grid grid-cols-2 gap-2">
               <label className="text-xs text-slate-500">
@@ -356,7 +378,7 @@ export default function TasksPage() {
           </select>
           <button
             type="submit"
-            disabled={busy || !title.trim() || (data?.entryForm?.ready === true && (((data.projects?.length ?? 0) > 0 && !projectId) || (data.entryForm.options.length > 0 && !(taggedId ?? data.entryForm.defaultId))))}
+            disabled={busy || !title.trim() || (data?.entryForm?.ready === true && (((data.projects?.length ?? 0) > 0 && !projectId) || (!!projectId && (noManager || !chosenManager))))}
             className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
           >
             Send for approval
