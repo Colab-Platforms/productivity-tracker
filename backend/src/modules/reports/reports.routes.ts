@@ -6,6 +6,7 @@
 // ===========================================================================
 
 import { Router } from "express";
+import { parseFilters } from "../hr-filters/hrFilters.logic.js";
 import { requireAuth } from "../../middlewares/auth.js";
 import { getTeamReport, type GroupBy } from "./reports.service.js";
 import { isBadInput } from "../../lib/params.js";
@@ -50,7 +51,7 @@ router.get("/", requireAuth, async (req, res) => {
     const groupBy = GROUP_BY_VALUES.includes(requested) ? requested : "person";
 
     const onlyUserId = req.query.userId ? String(req.query.userId) : undefined;
-    const report = await getTeamReport(req.user!.userId, from, to, groupBy, onlyUserId);
+    const report = await getTeamReport(req.user!.userId, from, to, groupBy, onlyUserId, parseFilters(req.query as Record<string, unknown>));
     return res.json(report);
   } catch (error) {
     return fail(res, error);

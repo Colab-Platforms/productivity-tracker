@@ -2,6 +2,7 @@ import { Router, type Response } from "express";
 import { requireAuth } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import { getAttendanceCalendar } from "./attendanceCalendar.service.js";
+import { parseFilters } from "../hr-filters/hrFilters.logic.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -36,12 +37,12 @@ const text = (v: unknown, max = 40) => (typeof v === "string" && v.trim() ? v.tr
 router.get("/", async (req, res) => {
   try {
     const userId = text(req.query.userId);
-    const teamId = text(req.query.teamId);
-    if ((userId && !UUID.test(userId)) || (teamId && !UUID.test(teamId))) {
+    if (userId && !UUID.test(userId)) {
       res.status(400).json({ error: "One of the values sent is not valid." });
       return;
     }
-    res.json(await getAttendanceCalendar(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), userId, teamId }));
+    // company, project (also the old teamId), reporting manager and a name/ID search: see hr-filters
+    res.json(await getAttendanceCalendar(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), userId, filters: parseFilters(req.query as Record<string, unknown>) }));
   } catch (error) {
     fail(res, error);
   }

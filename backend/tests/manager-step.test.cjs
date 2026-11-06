@@ -59,7 +59,8 @@ const weekday = (iso) => new Date(iso + "T00:00:00Z").getUTCDay() || 7;
   const s1 = await stepOf(l1.id);
   ok("a manager step exists, waiting, asking exactly his manager", s1 && s1.status === "PENDING" && s1.approverIds.length === 1 && s1.approverIds[0] === M.id, s1);
   ok("the manager is notified", (await note(M.id, "LEAVE_REQUESTED")).length === 1);
-  ok("HR is NOT notified yet", (await note(H.id, "LEAVE_REQUESTED")).length === 0);
+  // organization flow (migration 20261103100000): HR sees a new request at once, but can only act after the first approver
+  ok("HR is told at once that a request is waiting for the manager", (await note(H.id, "LEAVE_REQUESTED")).length === 1);
   const mine = await call("GET", "/leave/mine", E.tok);
   ok("the employee sees where it is (waiting for the manager)", mine.b.requests[0].managerStep?.status === "PENDING" && mine.b.requests[0].status === "PENDING", mine.b);
   const mlist = await call("GET", "/leave/manager/requests", M.tok);
@@ -69,8 +70,8 @@ const weekday = (iso) => new Date(iso + "T00:00:00Z").getUTCDay() || 7;
 
   console.log("\n## 2. HR cannot decide while the manager has not answered");
   ok("HR approving is refused (409 waiting for the manager)", (await call("POST", `/leave/requests/${l1.id}/decide`, H.tok, { decision: "APPROVE" })).s === 409);
-  ok("HR skipping without a reason is refused (400)", (await call("POST", `/leave/requests/${l1.id}/decide`, H.tok, { decision: "APPROVE", skipManager: true })).s === 400);
-  ok("HR skipping with a too-short reason is refused (400)", (await call("POST", `/leave/requests/${l1.id}/decide`, H.tok, { decision: "APPROVE", skipManager: true, skipReason: "ok" })).s === 400);
+  ok("HR skipping without a reason is refused (409)", (await call("POST", `/leave/requests/${l1.id}/decide`, H.tok, { decision: "APPROVE", skipManager: true })).s === 409);
+  ok("HR skipping with a short reason is refused (409)", (await call("POST", `/leave/requests/${l1.id}/decide`, H.tok, { decision: "APPROVE", skipManager: true, skipReason: "ok" })).s === 409);
   ok("nothing changed so far", (await leaveRow(l1.id)).status === "PENDING" && (await stepOf(l1.id)).status === "PENDING");
   ok("another manager cannot answer it (404)", (await call("POST", `/leave/manager/requests/${l1.id}/decide`, M2.tok, { decision: "APPROVE" })).s === 404);
   ok("the employee cannot answer it (403)", (await call("POST", `/leave/manager/requests/${l1.id}/decide`, E.tok, { decision: "APPROVE" })).s === 403);
@@ -97,12 +98,11 @@ const weekday = (iso) => new Date(iso + "T00:00:00Z").getUTCDay() || 7;
   ok("HR cannot skip past a rejection either", (await call("POST", `/leave/requests/${l2.id}/decide`, H.tok, { decision: "APPROVE", skipManager: true, skipReason: "I want it approved" })).s !== 200);
   ok("no leave day was created for it", (await q(`select 1 from leave_days where "userId"=$1 and "leaveRequestId"=$2`, [E.id, l2.id])).length === 0);
 
-  console.log("\n## 5. HR can decide without the manager, with a reason");
+  console.log("\n## 5. HR cannot decide without the manager (the override was removed by the organization flow)");
   const l3 = await askLeave(E.tok, nextWorkday(6));
   const skip = await call("POST", `/leave/requests/${l3.id}/decide`, H.tok, { decision: "APPROVE", skipManager: true, skipReason: "Manager is on leave this week" });
-  ok("HR approves with a written reason (200)", skip.s === 200, skip);
-  ok("the step is marked SKIPPED with the reason, by HR", (await stepOf(l3.id)).status === "SKIPPED" && (await stepOf(l3.id)).decidedById === H.id && /on leave/.test((await stepOf(l3.id)).note));
-  ok("the leave day is written", (await q(`select 1 from leave_days where "leaveRequestId"=$1`, [l3.id])).length === 1);
+  ok("HR is refused even with a written reason (409)", skip.s === 409, skip);
+  ok("the step is still waiting and no leave day was written", (await stepOf(l3.id)).status === "PENDING" && (await q(`select 1 from leave_days where "leaveRequestId"=$1`, [l3.id])).length === 0);
 
   console.log("\n## 6. No manager step when there is no manager");
   const l4 = await askLeave(E2.tok, nextWorkday(8));

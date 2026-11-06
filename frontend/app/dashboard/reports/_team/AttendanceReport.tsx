@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { filterQuery, type Filters as HrFilterState } from "../../_filters/useHrFilters";
 import { apiGet } from "@/lib/api";
 import { clockTime, dayLabel, dayShort, downloadCsv, hmFromHours, hmFromMinutes } from "./format";
 import { PRESETS, rangeFor, type Preset } from "./ranges";
@@ -28,6 +29,7 @@ type Report = {
   options: { people: { id: string; name: string; code: string | null }[]; teams: { id: string; name: string }[]; shifts: string[] };
   kpis: { employees: number; present: number; halfDay: number; absent: number; notYet: number; workingDays: number; attendancePct: number | null; totalWorkedHours: number; avgWorkedHours: number | null };
   rows: Row[];
+  scope?: { orgTotal: number; filteredTotal: number };
 };
 type Filters = { userId: string; teamId: string; shift: string; status: string; arrival: string };
 const NO_FILTERS: Filters = { userId: "", teamId: "", shift: "", status: "", arrival: "" };
@@ -80,7 +82,10 @@ function Kpi({ tone, icon, label, value, sub }: { tone: "blue" | "green" | "red"
   );
 }
 
-export default function AttendanceReport() {
+export default function AttendanceReport({ filters, ready = true, onScope }: { filters?: HrFilterState; ready?: boolean; onScope?: (s: { orgTotal: number; filteredTotal: number } | null) => void }) {
+  // Company, project, reporting manager and name/ID search come from the shared bar on the Reports page; the server builds the KPIs, the table and
+  // therefore both downloads from that one list.
+  const hrQuery = filters ? filterQuery(filters) : "";
   const [preset, setPreset] = useState<Preset>("today");
   const [single, setSingle] = useState("");
   const [custom, setCustom] = useState<{ from: string; to: string }>({ from: "", to: "" });
@@ -106,12 +111,12 @@ export default function AttendanceReport() {
     if (range.from) qs.set("from", range.from);
     if (range.to) qs.set("to", range.to);
     if (applied.userId) qs.set("userId", applied.userId);
-    if (applied.teamId) qs.set("teamId", applied.teamId);
     if (applied.shift) qs.set("shift", applied.shift);
     if (applied.status) qs.set("status", applied.status);
     if (applied.arrival) qs.set("arrival", applied.arrival);
     try {
-      const data = await apiGet<Report>(`/team-attendance/attendance?${qs.toString()}`);
+      const data = await apiGet<Report>(`/team-attendance/attendance?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
+      onScope?.(data.scope ?? null);
       setReport(data);
       setToday(data.today);
       setError("");
@@ -120,12 +125,13 @@ export default function AttendanceReport() {
     } finally {
       setLoading(false);
     }
-  }, [range, applied]);
+  }, [range, applied, hrQuery, onScope]);
 
   useEffect(() => {
+    if (!ready) return;
     const t = setTimeout(() => void load(), 0);
     return () => clearTimeout(t);
-  }, [load]);
+  }, [load, ready]);
 
   // A day that includes today has people still working: keep it fresh while the page stays open.
   const includesToday = !!report && report.to >= report.today;
@@ -219,13 +225,6 @@ export default function AttendanceReport() {
             <select value={draft.userId} onChange={(e) => setDraft({ ...draft, userId: e.target.value })} className={`${select} mt-1`}>
               <option value="">All Employees</option>
               {report?.options.people.map((p) => <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ""}</option>)}
-            </select>
-          </label>
-          <label className="block w-44 text-xs text-slate-500">
-            Team
-            <select value={draft.teamId} onChange={(e) => setDraft({ ...draft, teamId: e.target.value })} className={`${select} mt-1`}>
-              <option value="">All Teams</option>
-              {report?.options.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </label>
           {report && report.options.shifts.length > 0 && (

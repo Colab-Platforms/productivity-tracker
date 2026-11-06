@@ -51,7 +51,7 @@ const EMPTY: Form = {
   shiftId: "", start: "10:00", end: "19:00", days: [1, 2, 3, 4, 5, 6], createShift: true, onboarding: "NEW_JOINER",
 };
 
-const ROLE_LABEL: Record<string, string> = { EMPLOYEE: "Employee", MANAGER: "Manager", HR: "HR", ADMIN: "Admin" };
+import { ROLE_LABEL } from "@/lib/roles";
 const ROLE_HELP: Record<string, string> = {
   EMPLOYEE: "Records their own time and proposes daily tasks.",
   MANAGER: "Also approves tasks and sees their team's attendance.",

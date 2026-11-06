@@ -10,7 +10,7 @@ import { initialsOf, matchPeople, moveActive, taskWord, withEveryone, type Picke
 // button. Follows the standard combobox + listbox pattern so screen readers announce the choice and the number of matches.
 // ---------------------------------------------------------------------------
 
-export function EmployeePicker({ people, total, value, onChange }: { people: PickerPerson[]; total: number; value: string; onChange: (id: string) => void }) {
+export function EmployeePicker({ people, total, value, onChange, everyoneSub = "The whole reporting team" }: { people: PickerPerson[]; total: number; value: string; onChange: (id: string) => void; everyoneSub?: string }) {
   const uid = useId();
   const labelId = `${uid}-label`;
   const listId = `${uid}-list`;
@@ -79,7 +79,7 @@ export function EmployeePicker({ people, total, value, onChange }: { people: Pic
     }
   }
 
-  const sub = (p: PickerPerson) => (p.id === "" ? "The whole reporting team" : p.code ?? "");
+  const sub = (p: PickerPerson) => (p.id === "" ? everyoneSub : p.code ?? "");
 
   return (
     <div ref={box} className="relative w-full sm:w-80">

@@ -35,6 +35,8 @@ const LABELS: Record<DayStatus, string> = {
   FUTURE: "—",
 };
 
+type LeaveInfo = { leaveType: unknown; isHalfDay: boolean; isFirstHalf: boolean; note: string | null };
+
 export type AttendanceDay = {
   date: string; // "2026-10-27"
   dayOfWeek: number; // 1 = Mon .. 7 = Sun
@@ -55,6 +57,8 @@ export type AttendanceDay = {
   lateByMinutes: number;
   holidayName: string | null;
   leaveType: string | null;
+  // Half-day leave on this day (null when none). Lets the calendar show it apart from a full leave day.
+  leaveHalfDay: "first half" | "second half" | null;
   autoClosed: boolean;
   note: string | null;
 };
@@ -259,6 +263,22 @@ export async function getMonthAttendanceBulk(
     },
   });
 
+  // APPROVED leave requests that touch this month. Normally approval has already written one leave_days row per working day; this is the
+  // safety net for a working day that has no row (for example a shift or holiday changed after approval), so approved leave is never
+  // read as Absent. Pending, rejected and cancelled requests are never read. Read-only; nothing is written.
+  const approvedRequests = await prisma.leaveRequest
+    .findMany({
+      where: { userId: { in: userIds }, status: "APPROVED", fromDate: { lte: to }, toDate: { gte: from } },
+      select: { userId: true, fromDate: true, toDate: true, leaveType: true, isHalfDay: true, isFirstHalf: true, reason: true },
+    })
+    .catch(() => [] as never[]);
+  const requestsByUser = new Map<string, { userId: string; fromDate: Date; toDate: Date; leaveType: string; isHalfDay: boolean; isFirstHalf: boolean; reason: string }[]>();
+  for (const r of approvedRequests) {
+    const list = requestsByUser.get(r.userId);
+    if (list) list.push(r);
+    else requestsByUser.set(r.userId, [r]);
+  }
+
   // The day calendar is per company, so it is fetched once per company in this
   // batch, not once per person.
   const platformIds = Array.from(new Set(users.map((u) => u.platformId)));
@@ -333,7 +353,7 @@ export async function getMonthAttendanceBulk(
       const dow = isoDayOfWeek(date);
 
       const daySessions = sessionsByKey.get(k(user.id, key)) ?? [];
-      const leave = leaveByKey.get(k(user.id, key)) ?? null;
+      let leave: LeaveInfo | null = leaveByKey.get(k(user.id, key)) ?? null;
       const dayHolidays = holidaysByKey.get(k(user.platformId, key)) ?? [];
 
       // A day can have more than one session if somebody clocked in twice.
@@ -385,6 +405,10 @@ export async function getMonthAttendanceBulk(
       const beforeJoining = joined !== null && date.getTime() < joined.getTime();
       const afterExit = exited !== null && date.getTime() > exited.getTime();
       const companyWasTracking = trackedDays.has(k(user.platformId, key));
+      if (!leave && isWorkingDay && !offHoliday) {
+        const cover = (requestsByUser.get(user.id) ?? []).find((r) => r.fromDate.getTime() <= date.getTime() && r.toDate.getTime() >= date.getTime());
+        if (cover) leave = { leaveType: cover.leaveType, isHalfDay: cover.isHalfDay, isFirstHalf: cover.isFirstHalf, note: cover.reason };
+      }
 
       if (isFuture) {
         // Nobody is absent for a day that has not happened. Without this,
@@ -394,15 +418,17 @@ export async function getMonthAttendanceBulk(
         // Outside the employment period: neither earned nor deducted.
         status = "NOT_EMPLOYED";
         note = beforeJoining ? "Before joining date" : "After exit date";
+      } else if (leave && !leave.isHalfDay) {
+        // Approved leave comes first, ahead of a holiday or a week-off, whatever the person did that day.
+        status = "LEAVE";
+        note = leave.note ?? null;
+        if (workedHours > 0) note = `${note ? note + " · " : ""}Worked ${round2(workedHours)}h on a leave day`;
       } else if (offHoliday) {
         status = "HOLIDAY";
         if (workedHours > 0) note = `Worked ${round2(workedHours)}h on a holiday`;
       } else if (!isWorkingDay) {
         status = "WEEK_OFF";
         if (workedHours > 0) note = `Worked ${round2(workedHours)}h on a week-off`;
-      } else if (leave && !leave.isHalfDay) {
-        status = "LEAVE";
-        note = leave.note ?? null;
       } else if (leave && leave.isHalfDay) {
         // Half the day is leave. The other half is only earned by working it.
         if (workedHours >= halfDayAfterHours) {
@@ -478,6 +504,7 @@ export async function getMonthAttendanceBulk(
         lateByMinutes,
         holidayName: offHoliday?.name ?? null,
         leaveType: leave ? String(leave.leaveType) : null,
+        leaveHalfDay: leave?.isHalfDay ? (leave.isFirstHalf ? "first half" : "second half") : null,
         autoClosed: daySessions.some((s) => s.autoClosed),
         note,
       });

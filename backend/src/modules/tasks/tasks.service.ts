@@ -6,6 +6,11 @@ import { inPinnedCompany, onlyPinnedCompany } from "../../lib/deployment.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { detailsFor, recordEvent, selfTasksReady, shapeSelf } from "./tasks.self.js";
 import { auditNote } from "../../lib/auditContext.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
+import { resolvePeople } from "../hr-filters/hrFilters.service.js";
+import { isFiltering, type HrFilters } from "../hr-filters/hrFilters.logic.js";
+import { entryDetailsFor, entryReady, entryView, resolveTaggedManager, taggedManagerChoices } from "./tasks.entry.js";
+import { mayReview, parseHours, parseProgress, storeProgress } from "./tasks.entry.logic.js";
 import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
 
 // ---------------------------------------------------------------------------
@@ -56,14 +61,36 @@ async function userContext(userId: string) {
 // Falls back to the reporting line for tasks with no project, and Admin/HR
 // cover their own company.
 // ---------------------------------------------------------------------------
+// APPROVING or REJECTING a task (`strict`): a task tagged to an active manager can be answered by THAT manager only. Otherwise (no tag, or the
+// tagged person can no longer sign in) the earlier rule applies: the task's project/team manager or the person's reporting line. HR and Admin
+// can SEE every task but are not approvers by their role.
+// Grading the finished work and reopening it (not strict) keep their earlier permissions: the tagged manager, the earlier rule, and HR/Admin of
+// the company.
 async function assertCanReviewTask(
   actor: { id: string; role: string; platformId: string },
-  task: { userId: string; teamId: string | null }
+  task: { id: string; userId: string; teamId: string | null },
+  strict = false
 ) {
   if (!(await inPinnedCompany(task.userId))) throw new Error("NOT_YOUR_TEAM");
-  if (task.teamId) {
-    if (await isTeamManager(actor.id, task.teamId)) return;
+  const detail = (await entryDetailsFor([task.id])).get(task.id);
+  const tagged = detail?.taggedManagerId ?? null;
+  const taggedActive = detail?.taggedManagerActive ?? false;
+  if (strict) {
+    const legacyOk = tagged && taggedActive ? false : await legacyMayReview(actor, task);
+    if (!mayReview({ actorId: actor.id, taggedId: tagged, taggedActive, legacyOk })) throw new Error("NOT_YOUR_TEAM");
+    return;
   }
+  if (tagged && taggedActive && tagged === actor.id) return;
+  if (await legacyMayReview(actor, task)) return;
+  if (actor.role === "ADMIN" || actor.role === "HR") {
+    const owner = await prisma.user.findUnique({ where: { id: task.userId }, select: { platformId: true } });
+    if (owner && owner.platformId === actor.platformId) return;
+  }
+  throw new Error("NOT_YOUR_TEAM");
+}
+
+async function legacyMayReview(actor: { id: string }, task: { userId: string; teamId: string | null }): Promise<boolean> {
+  if (task.teamId && (await isTeamManager(actor.id, task.teamId))) return true;
 
   // Anyone who manages ANY active team the person is on (primary manager or co-manager) can review their work.
   // The approval queue and the notifications already go to all of them; the check has to agree, or a manager sees a
@@ -72,23 +99,10 @@ async function assertCanReviewTask(
     where: { userId: task.userId, isActive: true, team: { ...(await managedByWhere(actor.id)), isActive: true } },
     select: { id: true },
   });
-  if (sharedTeam) return;
+  if (sharedTeam) return true;
 
-  const target = await prisma.user.findUnique({
-    where: { id: task.userId },
-    select: { platformId: true, reportsToId: true },
-  });
-  if (!target) throw new Error("NOT_YOUR_TEAM");
-
-  if (target.reportsToId === actor.id) return;
-  if (
-    (actor.role === "ADMIN" || actor.role === "HR") &&
-    target.platformId === actor.platformId
-  ) {
-    return;
-  }
-
-  throw new Error("NOT_YOUR_TEAM");
+  const target = await prisma.user.findUnique({ where: { id: task.userId }, select: { reportsToId: true } });
+  return !!target && target.reportsToId === actor.id;
 }
 
 // For assigning NEW work, where there is no task to read a project from.
@@ -125,6 +139,19 @@ async function assertCanManage(
   throw new Error("NOT_YOUR_TEAM");
 }
 
+// The people this person actually manages: everyone on the teams they run plus their direct reports. (Not the company-wide list HR/Admin
+// are shown: those are people they can SEE, not people whose tasks they review.)
+export async function actingUserIds(actor: { id: string }): Promise<Set<string>> {
+  const [managedTeams, reports] = await Promise.all([
+    prisma.team.findMany({
+      where: { ...(await managedByWhere(actor.id)), isActive: true },
+      select: { members: { where: { isActive: true }, select: { userId: true } } },
+    }),
+    prisma.user.findMany({ where: { reportsToId: actor.id }, select: { id: true } }),
+  ]);
+  return new Set<string>([...managedTeams.flatMap((t) => t.members.map((m) => m.userId)), ...reports.map((r) => r.id)]);
+}
+
 export async function manageableUserIds(actor: {
   id: string;
   role: string;
@@ -150,14 +177,14 @@ export async function manageableUserIds(actor: {
     ...reports.map((r) => r.id),
   ]);
 
-  // An admin or HR also sees their own company. Note ADDED to the two lists
-  // above, not substituted for them: substituting meant an admin of one
-  // company could not approve for a team they personally run in another, so
-  // tasks submitted to them sat in nobody's queue and silently expired.
+  // An admin or HR also sees every company they act on (company access: their own, the ones assigned to them, or all for top management; a
+  // deployment pinned to one company allows only that one). This is VIEWING: approving or rejecting still belongs to the tagged manager only.
+  // Note ADDED to the two lists above, not substituted for them: substituting meant an admin of one company could not approve for a team they
+  // personally run in another, so tasks submitted to them sat in nobody's queue and silently expired.
   if (actor.role === "ADMIN" || actor.role === "HR") {
     const all = await prisma.user.findMany({
       where: {
-        platformId: actor.platformId,
+        ...scopeWhere(await accessFor(actor.id)),
         status: { in: ["ACTIVE", "INVITED"] },
       },
       select: { id: true },
@@ -290,8 +317,9 @@ export async function listTasks(userId: string) {
     orderBy: { date: "asc" },
   });
   const selfDetails = await detailsFor(rows.map((r) => r.id));
+  const entries = await entryDetailsFor(rows.map((r) => r.id));
   const nowForSelf = new Date();
-  const tasks = rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone) }));
+  const tasks = rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone), ...entryView(String(t.status), entries.get(t.id)) }));
   // True for a manager once the self-managed tables exist: his own tasks need no approval.
   const selfManagedMode = ctx.role === "MANAGER" && (await selfTasksReady());
 
@@ -309,8 +337,13 @@ export async function listTasks(userId: string) {
     return { ...p, taskCount: mine.length, score: scoreOf(mine) };
   });
 
+  // The new entry form (hours, progress, tagged manager). Not offered to a manager's own self-managed tasks.
+  const entryReadyNow = !selfManagedMode && (await entryReady());
+  const entryForm = entryReadyNow ? { ready: true, ...(await taggedManagerChoices({ id: userId, platformId: ctx.platformId })) } : { ready: false, defaultId: null, options: [] };
+
   return {
     date: date.toISOString().slice(0, 10),
+    entryForm,
     selfApproves: !ctx.user.reportsToId || selfManagedMode,
     selfManagedMode,
     score,
@@ -368,7 +401,8 @@ export async function listMyRange(userId: string, from: unknown, to: unknown) {
 // Resolves the project for a new task and refuses one the person isn't on.
 async function resolveProject(
   userId: string,
-  given: unknown
+  given: unknown,
+  required = false
 ): Promise<string | null> {
   const projects = await myProjects(userId);
   if (projects.length === 0) return null;
@@ -378,6 +412,8 @@ async function resolveProject(
     if (!projects.some((p) => p.id === wanted)) throw new Error("NOT_MY_PROJECT");
     return wanted;
   }
+  // The daily task form requires an explicit project whenever the person has any (a person with none is not blocked).
+  if (required) throw new Error("PROJECT_REQUIRED");
 
   // Not chosen: fall back to the primary project, or the only one they have.
   const primary = projects.find((p) => p.isPrimary);
@@ -399,16 +435,26 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
   const weightIn = String(body.weight ?? "MEDIUM");
   const weight = WEIGHTS.includes(weightIn) ? weightIn : "MEDIUM";
 
-  const teamId = await resolveProject(
-    userId,
-    body.teamId ?? body.projectId ?? null
-  );
-
   const date = platformToday(ctx.timezone);
   // A MANAGER's own tasks are self-managed: approved when created, no approval step, nobody notified, no review queue. (Employee
   // tasks keep the approval workflow. Before the migration nothing is self-managed and a manager's task waits as it always did.)
   const selfManaged = ctx.role === "MANAGER" && (await selfTasksReady());
   const selfApprove = !ctx.user.reportsToId || selfManaged;
+
+  // Daily task entry (hours, progress, tagged manager) once its table exists; a manager's own self-managed tasks use none of it.
+  const entry = !selfManaged && (await entryReady());
+  const teamId = await resolveProject(userId, body.teamId ?? body.projectId ?? null, entry);
+  let progress: ReturnType<typeof parseProgress> = null;
+  let hours: ReturnType<typeof parseHours> = null;
+  let taggedManagerId: string | null = null;
+  if (entry) {
+    progress = parseProgress(body.progress);
+    if (progress === "BAD") throw new Error("BAD_PROGRESS");
+    hours = parseHours(body.hoursSpent);
+    if (hours === "BAD") throw new Error("BAD_HOURS");
+    taggedManagerId = await resolveTaggedManager({ id: userId, platformId: ctx.platformId }, body.taggedManagerId);
+  }
+  const stored = progress ? storeProgress(progress) : null;
 
   let due: Date | null = null;
   if (selfManaged && body.dueDate !== undefined && body.dueDate !== null && body.dueDate !== "") {
@@ -426,13 +472,19 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
         description,
         teamId,
         weight: weight as never,
-        status: "PENDING" as never,
+        status: (stored ? stored.status : "PENDING") as never,
+        completedAt: stored?.status === "COMPLETED" ? new Date() : null,
         approvalStatus: (selfApprove ? "APPROVED" : "PENDING") as never,
         approvedById: selfApprove ? userId : null,
         approvedAt: selfApprove ? new Date() : null,
       },
       select: { id: true },
     });
+    if (entry && (stored || hours !== null || taggedManagerId)) {
+      await tx.taskEntryDetail.create({
+        data: { taskId: t.id, platformId: ctx.platformId, hoursSpent: typeof hours === "number" ? hours : null, taggedManagerId, blocked: stored?.blocked === true, blockedNote: stored?.blocked && body.blockedNote ? String(body.blockedNote).trim().slice(0, 500) : null },
+      });
+    }
     if (selfManaged) await tx.taskSelfDetail.create({ data: { taskId: t.id, platformId: ctx.platformId, userId, dueDate: due } });
     return t;
   });
@@ -485,6 +537,32 @@ export async function updateMyTask(
       if (status === "COMPLETED" && String(task.status) !== "COMPLETED") events.push({ kind: "COMPLETED" });
       if (status !== "COMPLETED" && String(task.status) === "COMPLETED") events.push({ kind: "REOPENED" });
     }
+  }
+
+  // Progress (Completed / In Progress / Blocked), hours spent and the blocked note. Progress is NOT approval: it can change while the
+  // approval is still pending, and never touches the approval. Not for a manager's own self-managed task.
+  let entryPatch: { hoursSpent?: number | null; blocked?: boolean; blockedNote?: string | null } | null = null;
+  if (body.progress !== undefined || body.hoursSpent !== undefined || body.blockedNote !== undefined) {
+    if (selfManaged) throw new Error("SELF_MANAGED_ONLY");
+    if (!(await entryReady())) throw new Error("FEATURES_NOT_READY");
+    if (task.outcome) throw new Error("ALREADY_REVIEWED");
+    entryPatch = {};
+    if (body.progress !== undefined) {
+      const pr = parseProgress(body.progress);
+      if (pr === null || pr === "BAD") throw new Error("BAD_PROGRESS");
+      const st = storeProgress(pr);
+      data.status = st.status as never;
+      if (st.status === "COMPLETED" && String(task.status) !== "COMPLETED") data.completedAt = new Date();
+      if (st.status !== "COMPLETED" && String(task.status) === "COMPLETED") data.completedAt = null;
+      entryPatch.blocked = st.blocked;
+      if (!st.blocked) entryPatch.blockedNote = null;
+    }
+    if (body.hoursSpent !== undefined) {
+      const h = parseHours(body.hoursSpent);
+      if (h === "BAD") throw new Error("BAD_HOURS");
+      entryPatch.hoursSpent = h;
+    }
+    if (body.blockedNote !== undefined) entryPatch.blockedNote = body.blockedNote ? String(body.blockedNote).trim().slice(0, 500) : null;
   }
 
   if (body.dueDate !== undefined) {
@@ -558,18 +636,26 @@ export async function updateMyTask(
     }
   }
 
-  if (Object.keys(data).length === 0 && Object.keys(detailPatch).length === 0 && !workUpdate) throw new Error("NOTHING_TO_UPDATE");
+  if (Object.keys(data).length === 0 && Object.keys(detailPatch).length === 0 && !workUpdate && !entryPatch) throw new Error("NOTHING_TO_UPDATE");
 
-  if (Object.keys(data).length > 0 || Object.keys(detailPatch).length > 0) {
+  if (Object.keys(data).length > 0 || Object.keys(detailPatch).length > 0 || entryPatch) {
     await prisma.$transaction(async (tx) => {
       if (Object.keys(data).length > 0) await tx.dailyTask.update({ where: { id: taskId }, data: data as never });
+      if (entryPatch) {
+        await tx.taskEntryDetail.upsert({
+          where: { taskId },
+          update: entryPatch,
+          create: { taskId, platformId: task.platformId, hoursSpent: entryPatch.hoursSpent ?? null, blocked: entryPatch.blocked === true, blockedNote: entryPatch.blockedNote ?? null },
+        });
+      }
       if (selfManaged && Object.keys(detailPatch).length > 0) await tx.taskSelfDetail.update({ where: { taskId }, data: detailPatch });
     });
   }
   for (const e of events) await recordEvent({ taskId, platformId: task.platformId, actorId: userId, kind: e.kind, note: e.note ?? null });
   emitTaskChange({ taskId, ownerId: userId, action: body.status !== undefined ? "status" : "updated" });
   // A manager's own completed task is not "submitted" to anyone: there is nobody to review it.
-  if (!selfManaged && body.status !== undefined && String(body.status) === "COMPLETED" && String(task.status) !== "COMPLETED") await taskNotice("submitted", taskId, userId);
+  const finishedNow = String(data.status ?? "") === "COMPLETED" && String(task.status) !== "COMPLETED";
+  if (!selfManaged && finishedNow && (body.status !== undefined || String(task.approvalStatus) === "APPROVED")) await taskNotice("submitted", taskId, userId);
 
   return listTasks(userId);
 }
@@ -597,7 +683,8 @@ export async function deleteMyTask(userId: string, taskId: string) {
 // ---------------------------------------------------------------------------
 export async function listForApproval(
   managerId: string,
-  range?: { from?: string; to?: string }
+  range?: { from?: string; to?: string },
+  filters?: HrFilters
 ) {
   const ctx = await userContext(managerId);
   if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
@@ -633,10 +720,19 @@ export async function listForApproval(
             },
           ],
         };
-  const userIds = await manageableUserIds(actor);
+  // Everyone this person may see, and (HR/Admin filters: company, project, reporting manager) the ones who pass the filters. The filters only
+  // narrow the authorised list, never widen it; the people, the task counts and the rows below all come from the same narrowed list.
+  const allIds = await manageableUserIds(actor);
+  let userIds = allIds;
+  if (filters && isFiltering(filters)) {
+    const keep = new Set((await resolvePeople(managerId, filters)).ids);
+    userIds = allIds.filter((id) => keep.has(id));
+  }
+  const scope = { orgTotal: allIds.length, filteredTotal: userIds.length };
   if (userIds.length === 0) {
     return {
       date: dateStr,
+      scope,
       teamSize: 0,
       members: [],
       people: [],
@@ -691,7 +787,7 @@ export async function listForApproval(
       where:
         ctx.role === "MANAGER"
           ? { ...(await managedByWhere(managerId)), isActive: true }
-          : { platformId: ctx.platformId, isActive: true },
+          : { ...scopeWhere(await accessFor(managerId)), isActive: true },
       select: { id: true, name: true, platform: { select: { name: true } } },
       orderBy: { name: "asc" },
     }),
@@ -701,10 +797,15 @@ export async function listForApproval(
   const selfIds = new Set((await detailsFor(rawRows.map((r) => r.id))).keys());
   const rows = rawRows.filter((r) => !selfIds.has(r.id));
 
+  const [entries, acting] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor)]);
   const all = rows.map((t) => {
     const who = `${t.user.firstName} ${t.user.lastName}`.trim();
+    const d = entries.get(t.id);
     return {
       ...shape(t, t.team?.name ?? null),
+      ...entryView(String(t.status), d),
+      // HR and Admin see every task but only the manager it belongs to can act on it.
+      canAct: mayReview({ actorId: managerId, taggedId: d?.taggedManagerId ?? null, taggedActive: d?.taggedManagerActive ?? false, legacyOk: acting.has(t.userId) }),
       userId: t.userId,
       who,
       name: who,
@@ -736,6 +837,7 @@ export async function listForApproval(
 
   return {
     date: dateStr,
+    scope,
     teamSize: roster.length,
     members: roster,
     people: roster,
@@ -836,7 +938,7 @@ export async function approveTask(
 
   const task = await prisma.dailyTask.findUnique({ where: { id: taskId } });
   if (!task) throw new Error("NOT_FOUND");
-  await assertCanReviewTask(actor, task);
+  await assertCanReviewTask(actor, task, true);
   if ((await detailsFor([taskId])).has(taskId)) throw new Error("SELF_MANAGED");
 
   // A double-click can never overwrite a decision.
@@ -857,6 +959,12 @@ export async function approveTask(
         : null,
     },
   });
+  if (approve && note && String(note).trim() && (await entryReady())) {
+    const comment = String(note).trim().slice(0, 1000);
+    await prisma.taskEntryDetail
+      .upsert({ where: { taskId }, update: { approvalNote: comment }, create: { taskId, platformId: task.platformId, approvalNote: comment } })
+      .catch((e) => console.error("[tasks] approval comment not saved:", e));
+  }
   emitTaskChange({ taskId, ownerId: task.userId, action: approve ? "approved" : "rejected" });
   await taskNotice(approve ? "proposalApproved" : "proposalReturned", taskId, managerId, { note: approve ? null : note ? String(note) : null });
 

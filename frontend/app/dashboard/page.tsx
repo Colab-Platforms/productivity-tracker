@@ -1,20 +1,21 @@
 // ===========================================================================
-// DASHBOARD HOME
-//
-// One URL, two screens, chosen by role. HR and Admin land on the HR overview;
-// everyone else keeps their own Today screen (clock, breaks, timer).
-// The role comes from useMe(), which the layout fills from /auth/me, and the
-// backend enforces access to every number the HR screen shows regardless.
+// /dashboard has no screen of its own any more: it sends each person to THEIR home (see lib/roleHome.ts).
+//   Admin -> /dashboard/admin · HR -> /dashboard/hr · Manager -> /dashboard/manager · Employee -> /dashboard/employee
+// The role comes from the live /auth/me (the layout), and the server enforces every number and action regardless of which address is open.
 // ===========================================================================
 
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useMe } from "./layout";
-import TodayView from "./TodayView";
-import HrDashboard from "./HrDashboard";
+import { homeFor } from "@/lib/roleHome";
 
 export default function DashboardPage() {
   const me = useMe();
-  if (me && (me.role === "HR" || me.role === "ADMIN")) return <HrDashboard />;
-  return <TodayView />;
+  const router = useRouter();
+  useEffect(() => {
+    if (me) router.replace(homeFor(me.role));
+  }, [me, router]);
+  return null;
 }

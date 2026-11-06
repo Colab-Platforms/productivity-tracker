@@ -1,6 +1,9 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { dashboardTitle } from "@/lib/roles";
+import { homeFor } from "@/lib/roleHome";
+import { CARRIED } from "./_filters/useHrFilters";
 import { usePathname, useRouter } from "next/navigation";
 import Bell from "./_notifications/Bell";
 import { NotificationsProvider } from "./_notifications/NotificationsContext";
@@ -225,14 +228,19 @@ type NavItem = {
 // Grouped, because eleven flat links is a list to read rather than a menu to
 // scan. "Me" is my own day, "My team" is other people, "Setup" is config
 // that HR touches once a month.
+// The HR pages that understand the shared company / project / manager filters. Moving between two of them keeps the choice.
+const CARRY_PAGES = new Set(["/dashboard/team-attendance", "/dashboard/attendance-calendar", "/dashboard/employees", "/dashboard/reports", "/dashboard/leave", "/dashboard/approvals"]);
+
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Main",
     items: [
-      { href: "/dashboard", label: "Dashboard", ready: true, roles: ["HR", "ADMIN"], icon: I.grid },
-      { href: "/dashboard", label: "Today", ready: true, notRoles: ["HR", "ADMIN"], icon: I.today },
+      { href: "/dashboard/admin", label: "Dashboard", ready: true, roles: ["ADMIN"], icon: I.grid },
+      { href: "/dashboard/hr", label: "Dashboard", ready: true, roles: ["HR"], icon: I.grid },
+      { href: "/dashboard/manager", label: "Today", ready: true, roles: ["MANAGER"], icon: I.today },
+      { href: "/dashboard/employee", label: "Today", ready: true, roles: ["EMPLOYEE"], icon: I.today },
       { href: "/dashboard/attendance-calendar", label: "My Calendar", ready: true, roles: ["EMPLOYEE"], icon: I.holidays },
-      { href: "/dashboard/admin", label: "Employees", ready: true, roles: ["HR", "ADMIN"], icon: I.team },
+      { href: "/dashboard/employees", label: "Employees", ready: true, roles: ["HR", "ADMIN"], icon: I.team },
       { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["HR", "ADMIN"], icon: I.folder },
       { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
       { href: "/dashboard/attendance-calendar", label: "Calendar", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.holidays },
@@ -275,17 +283,11 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/audit-logs", label: "Audit log", ready: true, roles: ["HR", "ADMIN"], icon: I.list },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
       { href: "/dashboard/payroll", label: "Payroll", ready: true, roles: ["HR", "ADMIN"], icon: I.payroll },
-      { href: "/dashboard/admin?tab=Teams", label: "Teams, shifts & rules", ready: true, roles: ["ADMIN", "HR"], icon: I.admin },
+      { href: "/dashboard/employees?tab=Teams", label: "Teams, shifts & rules", ready: true, roles: ["ADMIN"], icon: I.admin },
+      { href: "/dashboard/employees?tab=Teams", label: "Teams", ready: true, roles: ["HR"], icon: I.admin },
     ],
   },
 ];
-
-const ROLE_CHIP: Record<string, string> = {
-  ADMIN: "bg-violet-100 text-violet-700",
-  HR: "bg-sky-100 text-sky-700",
-  MANAGER: "bg-emerald-100 text-emerald-700",
-  EMPLOYEE: "bg-slate-100 text-slate-600",
-};
 
 function initials(name: string) {
   return name
@@ -340,7 +342,8 @@ export default function DashboardLayout({
     const item = GROUPS.flatMap((g) => g.items).find(
       (i) => i.href.split("?")[0] === pathname && (!i.roles || i.roles.includes(role)) && !(i.notRoles ?? []).includes(role)
     );
-    document.title = pathname === "/dashboard/profile" ? "My Profile | Avatar HRMS" : pathname === "/dashboard/attendance-calendar" ? "Attendance Calendar | Avatar HRMS" : item ? `${item.label} | Avatar HRMS` : "Avatar HRMS";
+    const home = pathname === homeFor(role) ? dashboardTitle(role) : null;
+    document.title = home ? `${home} | Avatar HRMS` : pathname === "/dashboard/profile" ? "My Profile | Avatar HRMS" : pathname === "/dashboard/attendance-calendar" ? "Attendance Calendar | Avatar HRMS" : item ? `${item.label} | Avatar HRMS` : "Avatar HRMS";
   }, [pathname, me?.role]);
 
   // Query Desk / Complaint Centre: how many items are waiting for this person (queries to answer, corrections to decide, information asked of them).
@@ -428,15 +431,13 @@ export default function DashboardLayout({
 
   const sidebar = (
     <aside className="flex h-full w-64 shrink-0 flex-col rounded-3xl bg-[var(--nav-bg)] shadow-[var(--shadow-lift)]">
-      {/* Brand. The product is HRMS; the company you are signed into sits
-          underneath, because with ten companies in the group, knowing which
-          one matters. */}
-      <div className="flex items-center gap-2.5 px-5 pb-4 pt-6">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 shadow-md shadow-indigo-600/30">
-          <svg viewBox="0 0 24 24" className="h-[22px] w-[22px]" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M7 5v14M17 5v14M7 12h10" />
-          </svg>
-        </div>
+      {/* The ONE place the signed-in person is shown: their photo (or initials), full name, the My Profile link and the notification bell with its
+          unread count. All of it comes from the authenticated user (/auth/me), for every role. */}
+      <div className="flex shrink-0 items-center gap-2.5 px-5 pb-4 pt-6">
+        {/* a mouse shortcut next to the My Profile link: hidden from screen readers and the tab order so the same link is not announced twice */}
+        <Link href="/dashboard/profile" aria-hidden="true" tabIndex={-1} className="shrink-0 rounded-full">
+          <Avatar userId={me.id} name={fullName} photoAt={me.photoAt} size={40} />
+        </Link>
         <div className="min-w-0">
           <p className="truncate text-[15px] font-bold leading-tight tracking-tight text-slate-900" title={fullName}>{fullName}</p>
           <Link
@@ -450,7 +451,7 @@ export default function DashboardLayout({
         <div className="ml-auto shrink-0"><Bell /></div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto pb-4">
+      <nav className="min-h-0 flex-1 overflow-y-auto pb-4">
         {groups.map((group) => (
           <div key={group.title} className="mb-4">
             <p className="px-6 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
@@ -482,6 +483,16 @@ export default function DashboardLayout({
                   <Link
                     key={item.label}
                     href={item.href}
+                    onClick={(e) => {
+                      // company, project and manager chosen on one filtered HR page follow you to the next one
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || !CARRY_PAGES.has(item.href.split("?")[0]) || !CARRY_PAGES.has(pathname)) return;
+                      const here = new URLSearchParams(window.location.search);
+                      const carry = new URLSearchParams();
+                      for (const k of CARRIED) if (here.get(k)) carry.set(k, here.get(k) as string);
+                      if (!carry.toString()) return;
+                      e.preventDefault();
+                      router.push(`${item.href}${item.href.includes("?") ? "&" : "?"}${carry.toString()}`);
+                    }}
                     className={`group relative mx-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] ${
                       active
                         ? "bg-[var(--nav-active-bg)] font-semibold text-[var(--nav-active)]"
@@ -510,29 +521,8 @@ export default function DashboardLayout({
         ))}
       </nav>
 
-      <div className="border-t border-slate-100 p-3">
-        <div className="flex items-center gap-2.5 px-2 py-2">
-          <Avatar userId={me.id} name={fullName} photoAt={me.photoAt} size={36} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-semibold text-slate-900">
-              {fullName}
-            </p>
-            <div className="mt-0.5 flex items-center gap-1.5">
-              <span
-                className={`rounded px-1.5 py-[1px] text-[10px] font-medium ${
-                  ROLE_CHIP[me.role] ?? ROLE_CHIP.EMPLOYEE
-                }`}
-              >
-                {me.role.charAt(0) + me.role.slice(1).toLowerCase()}
-              </span>
-              {me.employeeCode && (
-                <span className="truncate text-[10px] text-slate-400">
-                  {me.employeeCode}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* Pinned to the bottom: the theme switch and Logout only. */}
+      <div className="shrink-0 border-t border-slate-100 p-3">
         <ThemeRow />
         <button
           onClick={signOut}

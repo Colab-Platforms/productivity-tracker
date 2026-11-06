@@ -1,0 +1,49 @@
+// ===========================================================================
+// ORGANIZATION HIERARCHY + APPROVAL WORKFLOWS (leave projects, leave approval history, task entry details).
+// NEW TABLES ONLY, no relation fields on existing models (foreign keys live in the migration SQL), so the existing models keep their shape.
+// Until migration 20261103100000_org_hierarchy_workflows is applied every reader treats these tables as missing and behaves as before.
+// ===========================================================================
+
+model LeaveRequestProject {
+  id         String   @id @default(uuid()) @db.Uuid
+  platformId String   @db.Uuid
+  requestId  String   @db.Uuid
+  teamId     String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  @@unique([requestId, teamId])
+  @@index([requestId])
+  @@map("leave_request_projects")
+}
+
+model LeaveApprovalEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  platformId String   @db.Uuid
+  requestId  String   @db.Uuid
+  actorId    String?  @db.Uuid
+  actorName  String
+  actorRole  String
+  step       String // REQUEST | MANAGER | ADMIN | HR
+  action     String // SUBMITTED | APPROVED | REJECTED | CANCELLED | AUTO_APPROVED
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  @@index([requestId, createdAt])
+  @@map("leave_approval_events")
+}
+
+model TaskEntryDetail {
+  id              String   @id @default(uuid()) @db.Uuid
+  platformId      String   @db.Uuid
+  taskId          String   @unique @db.Uuid
+  hoursSpent      Float?
+  taggedManagerId String?  @db.Uuid
+  blocked         Boolean  @default(false)
+  blockedNote     String?
+  approvalNote    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([taggedManagerId])
+  @@map("task_entry_details")
+}

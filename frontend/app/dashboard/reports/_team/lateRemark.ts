@@ -3,16 +3,16 @@
 // this only words them. Nothing is invented: when no reason was typed it says "No remark provided".
 import { clockTime } from "./format";
 
-export type ArrivalCode = "ON_TIME" | "LATE" | "HALF_DAY" | "ABSENT" | "LEAVE" | "HOLIDAY" | "WEEK_OFF" | "NOT_TRACKED" | "NOT_CLOCKED_IN";
+export type ArrivalCode = "ON_TIME" | "LATE" | "HALF_DAY" | "ABSENT" | "LEAVE" | "HALF_DAY_LEAVE" | "HOLIDAY" | "WEEK_OFF" | "NOT_TRACKED" | "NOT_CLOCKED_IN";
 
 export const ARRIVAL_LABEL: Record<string, string> = {
   ON_TIME: "On time", LATE: "Late", HALF_DAY: "Half Day", ABSENT: "Absent",
-  LEAVE: "Leave", HOLIDAY: "Holiday", WEEK_OFF: "Week-off", NOT_TRACKED: "Not tracked", NOT_CLOCKED_IN: "Not in yet",
+  LEAVE: "Leave", HALF_DAY_LEAVE: "Half-day leave", HOLIDAY: "Holiday", WEEK_OFF: "Week-off", NOT_TRACKED: "Not tracked", NOT_CLOCKED_IN: "Not in yet",
 };
 
 export const ARRIVAL_CHIP: Record<string, string> = {
   ON_TIME: "bg-emerald-100 text-emerald-800", LATE: "bg-amber-100 text-amber-800", HALF_DAY: "bg-orange-100 text-orange-800", ABSENT: "bg-red-100 text-red-700",
-  LEAVE: "bg-sky-100 text-sky-800", HOLIDAY: "bg-indigo-100 text-indigo-700", WEEK_OFF: "bg-slate-100 text-slate-500", NOT_TRACKED: "bg-slate-100 text-slate-500", NOT_CLOCKED_IN: "bg-slate-100 text-slate-600",
+  LEAVE: "bg-sky-100 text-sky-800", HALF_DAY_LEAVE: "bg-cyan-100 text-cyan-800", HOLIDAY: "bg-indigo-100 text-indigo-700", WEEK_OFF: "bg-slate-100 text-slate-500", NOT_TRACKED: "bg-slate-100 text-slate-500", NOT_CLOCKED_IN: "bg-slate-100 text-slate-600",
 };
 
 export const NO_REMARK = "No remark provided";

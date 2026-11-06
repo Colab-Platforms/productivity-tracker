@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import { roleLabel } from "@/lib/roles";
 import { useRouter, useSearchParams } from "next/navigation";
 import { API_BASE, apiGet, apiPost, getToken } from "@/lib/api";
 import { useMe } from "../layout";
@@ -454,7 +455,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
                 <div className="flex flex-wrap gap-2">
                   <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className={`${input} max-w-[18rem]`} aria-label="Assign to">
                     <option value="">Assign to…</option>
-                    {d.assignees.filter((a) => a.id !== d.assignedTo?.id).map((a) => <option key={a.id} value={a.id}>{a.name} ({a.role.toLowerCase()})</option>)}
+                    {d.assignees.filter((a) => a.id !== d.assignedTo?.id).map((a) => <option key={a.id} value={a.id}>{a.name} ({roleLabel(a.role)})</option>)}
                   </select>
                   <button disabled={busy || !assignee} onClick={() => act(() => apiPost(`/queries/${d.id}/assign`, { assigneeId: assignee }), () => setAssignee(""))} className="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50">Assign</button>
                 </div>

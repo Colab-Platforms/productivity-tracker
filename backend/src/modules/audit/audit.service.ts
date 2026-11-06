@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay, zonedToUtc } from "../../lib/dates.js";
 import { ACTIONS, MODULES, classify } from "../../lib/auditCatalog.js";
 import { scrub } from "../../lib/auditContext.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 
 // Salaries are recorded in the audit trail (what it was, what it became) but only an Admin may read the amounts.
 function hideSalary(value: unknown, role: string): unknown {
@@ -15,7 +16,8 @@ function hideSalary(value: unknown, role: string): unknown {
 // ---------------------------------------------------------------------------
 // AUDIT LOG (read-only)
 //
-// HR and Admin read their OWN company's history. There is no create, update or
+// HR and Admin read the history of every company they act on (own, assigned, or all for top management: the shared
+// company-access rule, so an Admin with the all-company grant reads the whole organisation). There is no create, update or
 // delete here: rows are written only by the audit middleware, and the database
 // itself refuses edits and deletes. The IP address is shown to Admin only.
 // ---------------------------------------------------------------------------
@@ -29,7 +31,8 @@ async function viewer(userId: string) {
   });
   if (!u) throw new Error("USER_NOT_FOUND");
   if (!["HR", "ADMIN"].includes(String(u.role))) throw new Error("NOT_ALLOWED");
-  return { id: u.id, role: String(u.role), platformId: u.platformId, tz: u.platform.timezone };
+  const scope = scopeWhere(await accessFor(userId));
+  return { id: u.id, role: String(u.role), platformId: u.platformId, tz: u.platform.timezone, scope };
 }
 
 const nameOf = (u: { firstName: string; lastName: string } | null | undefined) => (u ? `${u.firstName} ${u.lastName}`.trim() : null);
@@ -56,7 +59,7 @@ function describe(r: Row) {
 export async function filters(viewerId: string) {
   const v = await viewer(viewerId);
   const people = await prisma.user.findMany({
-    where: { platformId: v.platformId },
+    where: { ...v.scope },
     select: { id: true, firstName: true, lastName: true, employeeCode: true },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
     take: 1000,
@@ -94,7 +97,7 @@ export async function listLogs(
   const matchedIds = q
     ? (
         await prisma.user.findMany({
-          where: { platformId: v.platformId, OR: [{ firstName: { contains: q, mode: "insensitive" } }, { lastName: { contains: q, mode: "insensitive" } }, { employeeCode: { contains: q, mode: "insensitive" } }] },
+          where: { ...v.scope, OR: [{ firstName: { contains: q, mode: "insensitive" } }, { lastName: { contains: q, mode: "insensitive" } }, { employeeCode: { contains: q, mode: "insensitive" } }] },
           select: { id: true },
           take: 100,
         })
@@ -102,7 +105,7 @@ export async function listLogs(
     : [];
 
   const where = {
-    platformId: v.platformId,
+    ...v.scope,
     ...(gte || lt ? { createdAt: { ...(gte ? { gte } : {}), ...(lt ? { lt } : {}) } } : {}),
     ...(module ? { module } : {}),
     ...(action ? { action } : {}),
@@ -165,7 +168,7 @@ export async function listLogs(
 
 export async function getLog(viewerId: string, id: string) {
   const v = await viewer(viewerId);
-  const r = (await prisma.auditLog.findFirst({ where: { id, platformId: v.platformId } })) as unknown as Row | null;
+  const r = (await prisma.auditLog.findFirst({ where: { id, ...v.scope } })) as unknown as Row | null;
   if (!r) throw new Error("NOT_FOUND");
   const d = describe(r);
   const ids = [r.actorId, d.targetUserId].filter((x): x is string => !!x && /^[0-9a-f-]{36}$/i.test(x));

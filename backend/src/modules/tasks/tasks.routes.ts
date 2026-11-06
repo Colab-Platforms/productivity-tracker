@@ -6,6 +6,7 @@
 // ===========================================================================
 
 import { Router } from "express";
+import { parseFilters } from "../hr-filters/hrFilters.logic.js";
 import * as tasks from "./tasks.service.js";
 import * as selfTasks from "./tasks.self.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
@@ -22,6 +23,12 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   MANAGER_TASKS_ARE_PERSONAL: { status: 403, message: "A manager's tasks are their own. Tasks can't be assigned to a manager." },
   MISSING_FIELDS: { status: 400, message: "A title is required." },
   BAD_STATUS: { status: 400, message: "That isn't a valid status." },
+  BAD_PROGRESS: { status: 400, message: "Progress must be Completed, In Progress or Blocked." },
+  BAD_HOURS: { status: 400, message: "Hours spent must be a number from 0 to 24." },
+  BAD_TAGGED_MANAGER: { status: 400, message: "Tag one of your reporting managers." },
+  TAGGED_MANAGER_REQUIRED: { status: 400, message: "Choose the reporting manager who should review this task." },
+  PROJECT_REQUIRED: { status: 400, message: "Select the project this task belongs to." },
+  FEATURES_NOT_READY: { status: 503, message: "This feature is not switched on yet." },
   BAD_OUTCOME: { status: 400, message: "Pick completed, partial or failed." },
   NOT_APPROVED: { status: 400, message: "That task hasn't been approved yet." },
   NOT_FINISHED: { status: 400, message: "It hasn't been marked done yet." },
@@ -151,7 +158,7 @@ router.get("/review/queue", async (req, res) => {
     res.json(await tasks.listForApproval(req.user!.userId, {
       from: req.query.from ? String(req.query.from) : undefined,
       to: req.query.to ? String(req.query.to) : undefined,
-    }));
+    }, parseFilters(req.query as Record<string, unknown>)));
   } catch (e) {
     fail(res, e);
   }
@@ -168,7 +175,7 @@ router.post("/review/assign", async (req, res) => {
 router.post("/review/:id/approve", async (req, res) => {
   try {
     const approve = req.body?.approve === true;
-    const note = req.body?.rejectionNote ? String(req.body.rejectionNote) : undefined;
+    const note = req.body?.rejectionNote ? String(req.body.rejectionNote) : req.body?.comment ? String(req.body.comment) : undefined;
     res.json(await tasks.approveTask(req.user!.userId, id(req.params.id), approve, note));
   } catch (e) {
     fail(res, e);

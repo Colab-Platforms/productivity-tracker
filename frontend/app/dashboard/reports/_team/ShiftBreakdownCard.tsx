@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { filterQuery, type Filters as HrFilterState } from "../../_filters/useHrFilters";
 import { apiGet } from "@/lib/api";
 import { clockTime, downloadCsv, hm } from "./format";
 
@@ -14,12 +15,14 @@ type ShiftRow = {
   teaSeconds: number | null; lunchSeconds: number | null; bioSeconds: number | null; huddleSeconds: number | null; otherSeconds: number | null;
   breakSeconds: number | null; breakBudgetSeconds: number; productiveSeconds: number | null; productiveTargetSeconds: number;
 };
-type Shift = { generatedAt: string; timezone: string; date: string; isToday: boolean; rows: ShiftRow[] };
+type Shift = { generatedAt: string; timezone: string; date: string; isToday: boolean; scope?: { orgTotal: number; filteredTotal: number }; rows: ShiftRow[] };
 
 const th = "px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-slate-500";
 const STATE_TEXT: Record<string, string> = { ON_LEAVE: "On leave", NOT_CLOCKED_IN: "Not clocked in", NO_RECORD: "No record" };
 
-export default function ShiftBreakdownCard() {
+export default function ShiftBreakdownCard({ filters, ready = true, onScope }: { filters?: HrFilterState; ready?: boolean; onScope?: (s: { orgTotal: number; filteredTotal: number } | null) => void }) {
+  // company, project, reporting manager and name/ID search come from the shared bar on the Reports page
+  const hrQuery = filters ? filterQuery(filters) : "";
   const [date, setDate] = useState("");
   const [maxDate, setMaxDate] = useState("");
   const [shift, setShift] = useState<Shift | null>(null);
@@ -28,8 +31,10 @@ export default function ShiftBreakdownCard() {
 
   const load = useCallback(async (d: string) => {
     try {
-      const data = await apiGet<Shift>(`/team-attendance/shift-breakdown${d ? `?date=${d}` : ""}`);
+      const parts = [d ? `date=${d}` : "", hrQuery].filter(Boolean).join("&");
+      const data = await apiGet<Shift>(`/team-attendance/shift-breakdown${parts ? `?${parts}` : ""}`);
       setShift(data);
+      onScope?.(data.scope ?? null);
       setError("");
       if (!d) {
         setDate(data.date);
@@ -40,16 +45,17 @@ export default function ShiftBreakdownCard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [hrQuery, onScope]);
 
   useEffect(() => {
+    if (!ready) return;
     const first = setTimeout(() => void load(date), 0);
     const poll = setInterval(() => void load(date), 60000);
     return () => {
       clearTimeout(first);
       clearInterval(poll);
     };
-  }, [date, load]);
+  }, [date, load, ready]);
 
   const tz = shift?.timezone ?? "Asia/Kolkata";
 

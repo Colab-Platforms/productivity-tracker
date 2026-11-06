@@ -31,7 +31,7 @@ export function StepNote({ step }: { step: ManagerStep }) {
 }
 
 /** The manager's Approve / Reject controls for one request. A rejection needs a reason of at least 3 characters. */
-export function ManagerDecisionBox({ busy, onDecide, approveLabel = "Approve" }: { busy: boolean; onDecide: (decision: "APPROVE" | "REJECT", note: string) => void; approveLabel?: string }) {
+export function ManagerDecisionBox({ busy, onDecide, approveLabel = "Approve", hint = "After you approve, HR makes the final decision. A rejection is final." }: { busy: boolean; onDecide: (decision: "APPROVE" | "REJECT", note: string) => void; approveLabel?: string; hint?: string }) {
   const [rejecting, setRejecting] = useState(false);
   const [note, setNote] = useState("");
   return (
@@ -39,7 +39,7 @@ export function ManagerDecisionBox({ busy, onDecide, approveLabel = "Approve" }:
       <div className="flex flex-wrap items-center gap-2">
         <button disabled={busy} onClick={() => onDecide("APPROVE", note)} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">{approveLabel}</button>
         <button disabled={busy} onClick={() => setRejecting((v) => !v)} className="rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">Reject</button>
-        <span className="text-xs text-slate-400">After you approve, HR makes the final decision. A rejection is final.</span>
+        <span className="text-xs text-slate-400">{hint}</span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder={rejecting ? "Reason for rejecting (required)" : "Comment (optional)"} className="min-w-[16rem] flex-1 rounded-xl border border-indigo-100 px-3 py-2 text-sm" />

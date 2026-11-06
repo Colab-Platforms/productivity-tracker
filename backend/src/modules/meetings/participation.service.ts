@@ -5,6 +5,7 @@ import { computeBreakdown } from "../tracker/productiveBreakdown.js";
 import { awayRows, splitAwayTime } from "../tracker/activityClass.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { notifyUsers } from "../../lib/notify.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { emitMeetingChange } from "../../lib/realtime.js";
 import * as L from "./participation.logic.js";
 
@@ -316,6 +317,37 @@ export async function leave(userId: string, meetingId: string) {
   return { ok: true, leftAt: now, durationSeconds: L.durationSeconds(p.joinedAt, now) };
 }
 
+/** True when someone is still marked "in the meeting" (false before the participation tables exist). */
+export async function hasOpen(meetingId: string): Promise<boolean> {
+  if (!(await participationReady())) return false;
+  return (await prisma.meetingParticipation.count({ where: { meetingId, leftAt: null } })) > 0;
+}
+
+/** Tell these people's screens to refresh this meeting (no content, only a signal). */
+export function signalMeeting(userIds: string[], meetingId: string) {
+  emitMeetingChange([...new Set(userIds)], meetingId);
+}
+
+/**
+ * The organizer ends the meeting for everyone: every person still marked "in the meeting" is closed at the same server time and
+ * marked as ended by the MANAGER. People who never joined get nothing (not joined is never presumed present); people who already
+ * ended keep their own time. Safe to repeat. Before the participation tables exist it does nothing.
+ */
+export async function endAllOpen(meetingId: string, organizerId: string, at: Date): Promise<string[]> {
+  if (!(await participationReady())) return [];
+  const open = await prisma.meetingParticipation.findMany({ where: { meetingId, leftAt: null }, select: { id: true, userId: true, joinedAt: true } });
+  const closed: string[] = [];
+  for (const p of open) {
+    // claim each one only while it is still open, so a person pressing End at the same moment is recorded once
+    const res = await prisma.meetingParticipation.updateMany({
+      where: { id: p.id, leftAt: null },
+      data: { leftAt: at, durationSeconds: L.durationSeconds(p.joinedAt, at), endedBy: "MANAGER" },
+    });
+    if (res.count === 1) closed.push(p.userId);
+  }
+  return closed;
+}
+
 // The organizer ended the meeting for everyone: every person still marked "in the meeting" is stopped at that same moment.
 // Their time runs from their own join to the end moment (never beyond), they are told by the live signal, and the audit log gets one line.
 // "MANAGER" is the true description (the manager ended it); a person who already pressed End keeps their own time untouched.
@@ -341,12 +373,15 @@ export async function closeOpenAtMeetingEnd(meetingId: string, organizerId: stri
 
 // --- the organizing manager: live list and report ---------------------------------------------------------
 
+// The organizing manager sees and corrects the list. An ADMIN can read the same list (names, join and leave times) for the companies they act
+// on, read-only: they cannot correct anyone's record. HR keeps counts only.
 export async function list(userId: string, meetingId: string) {
   await requireReady();
   const v = await who(userId);
+  const adminScope = v.role === "ADMIN" ? scopeWhere(await accessFor(userId)) : null;
   const m = await prisma.meeting.findFirst({
-    where: { id: meetingId, platformId: v.platformId, organizerId: userId },
-    select: { id: true, title: true, startsAt: true, endsAt: true, status: true, attendees: { select: { user: { select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true } } } } },
+    where: { id: meetingId, OR: [{ platformId: v.platformId, organizerId: userId }, ...(adminScope ? [adminScope] : [])] },
+    select: { id: true, organizerId: true, organizer: { select: { firstName: true, lastName: true } }, title: true, startsAt: true, endsAt: true, status: true, attendees: { select: { user: { select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true } } } } },
   });
   if (!m) throw new Error("NOT_FOUND");
   const t = await prisma.meetingTracking.findUnique({ where: { meetingId } });
@@ -391,12 +426,14 @@ export async function list(userId: string, meetingId: string) {
   const joined = rows.filter((r) => r.state !== "NOT_JOINED");
   const ended = rows.filter((r) => r.state === "ENDED");
   const span = L.actualSpan(parts, now);
-  const own = pBy.get(userId) ?? null; // the organizer's own record (he can mark himself in and out too); never counted below
+  const readOnly = m.organizerId !== userId; // an Admin looking at someone else's meeting
+  const own = pBy.get(m.organizerId) ?? null; // the organizer's own record (he can mark himself in and out too); never counted below
   const ownLate = own ? L.isLate(own.joinedAt, m.startsAt, t.lateAfterMinutes) : false;
   return {
+    readOnly,
     organizer: {
-      userId,
-      name: v.name,
+      userId: m.organizerId,
+      name: readOnly ? `${m.organizer.firstName} ${m.organizer.lastName}`.trim() : v.name,
       state: L.stateOf(own),
       joinedAt: own?.joinedAt ?? null,
       leftAt: own?.leftAt ?? null,
@@ -527,9 +564,12 @@ export async function history(userId: string, personId?: string) {
   if (personId && !/^[0-9a-f-]{36}$/i.test(personId)) throw new Error("NOT_FOUND");
   const person = personId && personId !== userId ? personId : userId;
   if (person !== userId && !CREATORS.includes(v.role)) throw new Error("NOT_ALLOWED");
+  // A manager reads the history of the meetings THEY organized; an Admin reads the person's history in every company they act on.
+  const adminView = person !== userId && v.role === "ADMIN";
+  const meetingScope = adminView ? scopeWhere(await accessFor(userId)) : { platformId: v.platformId };
 
   const invitesRaw = await prisma.meetingAttendee.findMany({
-    where: { userId: person, meeting: { platformId: v.platformId, status: "SCHEDULED", ...(person !== userId ? { organizerId: userId } : {}) } },
+    where: { userId: person, meeting: { ...meetingScope, status: "SCHEDULED", ...(person !== userId && !adminView ? { organizerId: userId } : {}) } },
     select: { meeting: { select: { id: true, title: true, startsAt: true, endsAt: true } } },
     orderBy: { meeting: { startsAt: "desc" } },
     take: 200,

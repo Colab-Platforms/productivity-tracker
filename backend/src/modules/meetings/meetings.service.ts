@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { parseIsoDay, zonedToUtc, localDayOf } from "../../lib/dates.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { sendMail } from "../../lib/mailer.js";
@@ -233,8 +234,10 @@ export async function oversight(userId: string, f: { scope?: unknown }) {
   if (!OVERSIGHT.includes(v.role)) throw new Error("NOT_ALLOWED");
   const now = new Date();
   const scope = (["upcoming", "past", "cancelled"] as const).find((s) => s === f.scope) ?? "upcoming";
+  // HR/Admin see the meetings of every company they act on (company access), still only title, organizer, time and head-count.
+  const companyScope = scopeWhere(await accessFor(userId));
   const rows = await prisma.meeting.findMany({
-    where: { platformId: v.platformId, ...(scope === "upcoming" ? { status: "SCHEDULED", endsAt: { gte: now } } : scope === "past" ? { status: "SCHEDULED", endsAt: { lt: now } } : { status: "CANCELLED" }) },
+    where: { ...companyScope, ...(scope === "upcoming" ? { status: "SCHEDULED", endsAt: { gte: now } } : scope === "past" ? { status: "SCHEDULED", endsAt: { lt: now } } : { status: "CANCELLED" }) },
     select: { id: true, title: true, startsAt: true, endsAt: true, status: true, organizer: { select: { firstName: true, lastName: true } }, _count: { select: { attendees: true } } },
     orderBy: { startsAt: scope === "upcoming" ? "asc" : "desc" },
     take: 200,
@@ -380,33 +383,41 @@ export async function update(userId: string, id: string, body: Fields) {
   return { ok: true };
 }
 
-// The organizer closes a meeting that is happening now: its end time becomes "now", so it moves to Past.
-// (Cancel is for a meeting that has not started.) Nothing is deleted and attendance is not touched.
+// The organizer closes a meeting that is happening now: its end time becomes "now", so it moves to Past, and everyone still marked
+// "in the meeting" is ended at the same moment (marked as ended by the manager). Cancel is for a meeting that has not started.
+// Nothing is deleted. A meeting already past its scheduled end can still be ended here while people are left open, so no one stays stuck.
 export async function end(userId: string, id: string) {
   const v = await who(userId);
-  const m = await prisma.meeting.findFirst({ where: { id, platformId: v.platformId, organizerId: userId } });
+  const m = await prisma.meeting.findFirst({ where: { id, platformId: v.platformId, organizerId: userId }, include: { attendees: { select: { userId: true } } } });
   if (!m) throw new Error("NOT_FOUND");
   if (String(m.status) === "CANCELLED") throw new Error("MEETING_CANCELLED");
   const now = new Date();
-  if (m.endsAt.getTime() < now.getTime()) throw new Error("MEETING_OVER");
   if (m.startsAt.getTime() > now.getTime()) throw new Error("NOT_STARTED");
 
-  const res = await prisma.meeting.updateMany({ where: { id, status: "SCHEDULED", endsAt: { gte: now } }, data: { endsAt: now } });
-  if (res.count === 0) throw new Error("MEETING_OVER");
-  auditNote({ recordType: "Meeting", recordId: id, before: { endsAt: m.endsAt.toISOString() }, after: { endsAt: now.toISOString() }, summary: `Ended "${m.title}" early` });
-  // Everyone still marked in the meeting is stopped at this same moment. A failure here must not undo the end itself.
-  try {
-    const closed = await part.closeOpenAtMeetingEnd(id, userId, m.title, now);
-    if (closed > 0) auditNote({ after: { endsAt: now.toISOString(), openRecordsClosed: closed }, summary: `Ended "${m.title}" early for everyone; ${closed} open attendance record${closed === 1 ? "" : "s"} closed at the end time` });
-  } catch (e) {
-    console.error("[meetings] could not close open attendance at meeting end:", e);
+  const wasRunning = m.endsAt.getTime() >= now.getTime();
+  if (wasRunning) {
+    const res = await prisma.meeting.updateMany({ where: { id, status: "SCHEDULED", endsAt: { gte: now } }, data: { endsAt: now } });
+    if (res.count === 0 && !(await part.hasOpen(id))) throw new Error("MEETING_OVER");
   }
-  return { ok: true };
+  const closed = await part.endAllOpen(id, userId, now);
+  if (!wasRunning && closed.length === 0) throw new Error("MEETING_OVER");
+
+  auditNote({
+    recordType: "Meeting",
+    recordId: id,
+    before: { endsAt: m.endsAt.toISOString() },
+    after: { endsAt: wasRunning ? now.toISOString() : m.endsAt.toISOString(), participationEnded: closed.length },
+    summary: `Ended "${m.title}" for everyone (${closed.length} still in the meeting ended)`,
+  });
+  // every invitee's screen refreshes (their Join / End buttons and status)
+  part.signalMeeting([userId, ...m.attendees.map((a) => a.userId)], id);
+  return { ok: true, endedParticipants: closed.length };
 }
 
 export async function cancel(userId: string, id: string, reason: unknown) {
   const v = await who(userId);
-  const m = await prisma.meeting.findFirst({ where: { id, platformId: v.platformId }, include: { attendees: { select: { user: { select: { id: true, firstName: true, email: true } } } } } });
+  // HR/Admin may cancel a meeting of any company they act on (the same reach as the overview that lists it); everyone else stays in their own company.
+  const m = await prisma.meeting.findFirst({ where: { id, ...(OVERSIGHT.includes(v.role) ? scopeWhere(await accessFor(userId)) : { platformId: v.platformId }) }, include: { attendees: { select: { user: { select: { id: true, firstName: true, email: true } } } } } });
   if (!m) throw new Error("NOT_FOUND");
   // The organizer, or HR/Admin of the company (oversight).
   if (m.organizerId !== userId && !OVERSIGHT.includes(v.role)) throw new Error("NOT_FOUND");

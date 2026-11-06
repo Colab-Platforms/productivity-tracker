@@ -12,6 +12,8 @@
 // Who is on screen is the same list as everywhere else in the manager views (visibleUserIds).
 
 import { prisma } from "../../lib/prisma.js";
+import { narrowIds } from "../hr-filters/hrFilters.service.js";
+import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { selfManagedTaskIdsOf } from "../tasks/tasks.self.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { localDayOf, parseIsoDay, platformToday, zonedToUtc } from "../../lib/dates.js";
@@ -76,9 +78,14 @@ const COUNTED = {
   OR: [{ outcome: null }, { outcome: "COMPLETED" as const }],
 };
 
-async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { userId?: string; teamId?: string }) {
-  const allowed = await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId });
-  if (allowed.length === 0) return [];
+type ScopedPerson = { id: string; name: string; code: string | null; platformId: string; teamId: string | null; teamName: string | null };
+
+async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { userId?: string; teamId?: string; filters?: HrFilters }): Promise<{ people: ScopedPerson[]; scope: { orgTotal: number; filteredTotal: number } }> {
+  // The HR filters narrow what the viewer may already see; scope reports how many are left next to how many the viewer may see.
+  const narrowed = await narrowIds(await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId }), q.filters);
+  const allowed = narrowed.ids;
+  const scope = narrowed.scope;
+  if (allowed.length === 0) return { people: [], scope };
   const people = await prisma.user.findMany({
     where: { id: { in: allowed }, status: { notIn: ["SUSPENDED", "EXITED"] } },
     select: {
@@ -88,15 +95,16 @@ async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { 
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
   // Filters can only narrow what the viewer may already see.
-  return people
+  const list = people
     .map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}`.trim(), code: p.employeeCode, platformId: p.platformId, teamId: p.teamMemberships[0]?.team.id ?? null, teamName: p.teamMemberships[0]?.team.name ?? null }))
     .filter((p) => (!q.userId || p.id === q.userId) && (!q.teamId || p.teamId === q.teamId));
+  return { people: list, scope };
 }
 
 // ---------------------------------------------------------------------------------------------
 // PRODUCTIVITY OVER A RANGE (per person, per day)
 // ---------------------------------------------------------------------------------------------
-export async function getProductivity(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string }) {
+export async function getProductivity(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters }) {
   const viewer = await getViewer(viewerId);
   const tz = viewer.platform.timezone;
   const today = platformToday(tz).toISOString().slice(0, 10);
@@ -108,10 +116,10 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   const toIso = toIsoRaw > today ? today : toIsoRaw; // no future days
   const base = { generatedAt: new Date().toISOString(), timezone: tz, today, from: fromIso, to: toIso };
 
-  const people = await scopedPeople(viewer, q);
+  const { people, scope } = await scopedPeople(viewer, q);
   const platformIds = Array.from(new Set(people.map((p) => p.platformId)));
   const targets = people.length ? await loadTargets(platformIds) : { ready: true, rows: [] as TargetRow[] };
-  if (people.length === 0 || toIso < fromIso) return { ...base, targetsReady: targets.ready, people: [] as unknown[] };
+  if (people.length === 0 || toIso < fromIso) return { ...base, scope, targetsReady: targets.ready, people: [] as unknown[] };
 
   const ids = people.map((p) => p.id);
   const startUtc = zonedToUtc(fromIso, "00:00", tz);
@@ -173,22 +181,22 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
     };
   });
 
-  return { ...base, targetsReady: targets.ready, people: out };
+  return { ...base, scope, targetsReady: targets.ready, people: out };
 }
 
 // ---------------------------------------------------------------------------------------------
 // HOURLY TASKS FOR ONE DAY
 // Counts only: how many tasks each person finished in each clock hour. There is no hourly target.
 // ---------------------------------------------------------------------------------------------
-export async function getHourly(viewerId: string, q: { date?: string; userId?: string; teamId?: string }) {
+export async function getHourly(viewerId: string, q: { date?: string; userId?: string; teamId?: string; filters?: HrFilters }) {
   const viewer = await getViewer(viewerId);
   const tz = viewer.platform.timezone;
   const today = platformToday(tz).toISOString().slice(0, 10);
   const day = q.date ? parseIsoDay(q.date).toISOString().slice(0, 10) : today;
   const base = { generatedAt: new Date().toISOString(), timezone: tz, today, date: day };
 
-  const people = await scopedPeople(viewer, q);
-  if (people.length === 0) return { ...base, people: [] as unknown[] };
+  const { people, scope } = await scopedPeople(viewer, q);
+  if (people.length === 0) return { ...base, scope, people: [] as unknown[] };
   const ids = people.map((p) => p.id);
   const selfIds = await selfManagedTaskIdsOf(ids); // a manager's own tasks are not team productivity
   const tasks = await prisma.dailyTask.findMany({
@@ -207,6 +215,7 @@ export async function getHourly(viewerId: string, q: { date?: string; userId?: s
   }
   return {
     ...base,
+    scope,
     people: people.map((p) => {
       const hours = grid.get(p.id) ?? new Array(24).fill(0);
       return { userId: p.id, name: p.name, employeeCode: p.code, teamName: p.teamName, hours, total: hours.reduce((a, b) => a + b, 0) };

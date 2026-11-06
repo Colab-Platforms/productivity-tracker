@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { roleLabel } from "@/lib/roles";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import { MyDocuments } from "../_documents/MyDocuments";
@@ -40,12 +41,6 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-const ROLE_LABEL: Record<string, string> = {
-  ADMIN: "Admin",
-  HR: "HR",
-  MANAGER: "Manager",
-  EMPLOYEE: "Employee",
-};
 
 function initials(name: string) {
   return name
@@ -167,7 +162,7 @@ export default function ProfilePage() {
                 {me.platform.name}
               </span>
               <span className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-medium text-white">
-                {ROLE_LABEL[me.role] ?? me.role}
+                {roleLabel(me.role)}
               </span>
               {me.employeeCode && (
                 <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white">
@@ -234,7 +229,7 @@ export default function ProfilePage() {
           <Fields
             rows={[
               ["Designation", me.designation],
-              ["System role", ROLE_LABEL[me.role] ?? me.role],
+              ["System role", roleLabel(me.role)],
               ["Department / team", details?.departments.join(", ")],
               ["Reporting manager", details?.reportsTo ? `${details.reportsTo.name}${details.reportsTo.designation ? ` (${details.reportsTo.designation})` : ""}` : null],
               ["Date of joining", showDay(details?.dateOfJoining ?? null)],
