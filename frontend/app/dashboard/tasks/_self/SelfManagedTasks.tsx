@@ -19,7 +19,7 @@ export type SelfPayload = { tasks: SelfTask[] };
 type TaskEvent = { id: string; kind: string; note: string | null; createdAt: string };
 
 const WEIGHTS = [["LOW", "Low"], ["MEDIUM", "Medium"], ["HIGH", "High"], ["CRITICAL", "Critical"]] as const;
-const WEIGHT_CHIP: Record<string, string> = { LOW: "bg-[#EEF0FD] text-slate-600", MEDIUM: "bg-sky-50 text-sky-700", HIGH: "bg-amber-50 text-amber-700", CRITICAL: "bg-rose-50 text-rose-700" };
+const WEIGHT_CHIP: Record<string, string> = { LOW: "bg-[#E7F6F1] text-slate-600", MEDIUM: "bg-sky-50 text-sky-700", HIGH: "bg-amber-50 text-amber-700", CRITICAL: "bg-rose-50 text-rose-700" };
 const STATUS_LABEL = { PENDING: "Not started", IN_PROGRESS: "In progress", COMPLETED: "Completed", CANCELLED: "Cancelled" } as const;
 const STATUS_CHIP = { PENDING: "bg-slate-100 text-slate-600", IN_PROGRESS: "bg-sky-50 text-sky-700", COMPLETED: "bg-emerald-50 text-emerald-700", CANCELLED: "bg-slate-100 text-slate-500" } as const;
 const KIND_LABEL: Record<string, string> = { CREATED: "Task created", STARTED: "Started", COMPLETED: "Marked completed", REOPENED: "Reopened", EDITED: "Edited", UPDATE: "Work update" };
@@ -175,7 +175,7 @@ function Detail({ task, busy, run, onDelete }: { task: SelfTask; busy: boolean; 
   };
 
   return (
-    <div className="mt-3 grid gap-4 rounded-xl bg-[#F6F7FE] p-4 md:grid-cols-2">
+    <div className="mt-3 grid gap-4 rounded-xl bg-[#F3F7F6] p-4 md:grid-cols-2">
       <div className="space-y-3">
         <label className="block text-xs text-slate-500">Details<textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} maxLength={2000} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-900" /></label>
         <div className="flex flex-wrap gap-3">

@@ -2,24 +2,25 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
 import { useNotifications } from "../_notifications/NotificationsContext";
 import { ago, labelOf, stamp, type Item } from "../_notifications/types";
 
 // ---------------------------------------------------------------------------
 // NOTIFICATION CENTRE
-// Everything that has been sent to you, newest first: all of it, or only what you have not read yet.
+// Everything that has been sent to you, newest first: all of it, only what you have not read yet, or only what you have read.
+// Reading something never deletes it: it leaves the bell and the Unread list and stays here under All and Read.
 // Notifications are stored, so anything that arrived while you were away is here. Clicking one marks it read
 // and opens the related screen. It updates by itself when something new arrives.
 // ---------------------------------------------------------------------------
 
 type Page = { unread: number; total: number; items: Item[]; hasMore: boolean; next: string | null };
-type Filter = "all" | "unread";
+type Filter = "all" | "unread" | "read";
 
 export default function NotificationCentre() {
   const router = useRouter();
-  const { reload: reloadBell } = useNotifications();
+  const { markRead: readInBell, markAllRead: readAllInBell } = useNotifications();
   const [filter, setFilter] = useState<Filter>("all");
   const [items, setItems] = useState<Item[]>([]);
   const [meta, setMeta] = useState<{ unread: number; total: number; hasMore: boolean; next: string | null } | null>(null);
@@ -60,22 +61,31 @@ export default function NotificationCentre() {
     }
   }
 
+  // Applied on screen immediately, then saved (the shared inbox also updates the bell and badge at once).
+  // Unread list: the item leaves it. All list: it stays and loses its dot. Read list: unchanged (it was not there).
+  function showRead(ids: string[] | "all") {
+    const now = new Date().toISOString();
+    const hit = (n: Item) => !n.readAt && (ids === "all" || ids.includes(n.id));
+    setMeta((m) => (m ? { ...m, unread: ids === "all" ? 0 : Math.max(0, m.unread - items.filter(hit).length) } : m));
+    setItems((cur) => (filter === "unread" ? cur.filter((n) => !hit(n)) : cur.map((n) => (hit(n) ? { ...n, readAt: now } : n))));
+  }
+
   async function open(n: Item) {
     if (!n.readAt) {
-      await apiPost(`/notifications/${n.id}/read`).catch(() => undefined);
-      reloadBell();
+      showRead([n.id]);
+      await readInBell(n.id);
     }
     if (n.link) router.push(n.link);
     else void load();
   }
   async function markOne(n: Item) {
-    await apiPost(`/notifications/${n.id}/read`).catch(() => undefined);
-    reloadBell();
+    showRead([n.id]);
+    await readInBell(n.id);
     void load();
   }
   async function markAll() {
-    await apiPost("/notifications/read-all").catch(() => undefined);
-    reloadBell();
+    showRead("all");
+    await readAllInBell();
     void load();
   }
 
@@ -92,8 +102,8 @@ export default function NotificationCentre() {
       </div>
 
       <div role="tablist" className="inline-flex rounded-xl bg-white p-1 shadow-[var(--shadow-card)]">
-        {([["all", "All"], ["unread", "Unread"]] as [Filter, string][]).map(([key, label]) => (
-          <button key={key} role="tab" aria-selected={filter === key} onClick={() => { setLoading(true); setFilter(key); }} className={"rounded-lg px-4 py-2 text-sm font-medium " + (filter === key ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50")}>
+        {([["all", "All notifications"], ["unread", "Unread"], ["read", "Read"]] as [Filter, string][]).map(([key, label]) => (
+          <button key={key} role="tab" aria-selected={filter === key} onClick={() => { if (key === filter) return; setLoading(true); setFilter(key); }} className={"rounded-lg px-4 py-2 text-sm font-medium " + (filter === key ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50")}>
             {label}
             {key === "unread" && meta && meta.unread > 0 && <span className={"ml-2 rounded-full px-1.5 py-0.5 text-[11px] " + (filter === key ? "bg-white/20" : "bg-rose-50 text-rose-600")}>{meta.unread}</span>}
           </button>
@@ -106,7 +116,7 @@ export default function NotificationCentre() {
         {loading ? (
           <div className="space-y-2 p-6" aria-busy="true">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-14" />)}</div>
         ) : items.length === 0 ? (
-          <p className="px-6 py-14 text-center text-sm text-slate-500">{filter === "unread" ? "No unread notifications. You're all caught up." : "No notifications yet."}</p>
+          <p className="px-6 py-14 text-center text-sm text-slate-500">{filter === "unread" ? "No unread notifications. You're all caught up." : filter === "read" ? "No read notifications yet." : "No notifications yet."}</p>
         ) : (
           <ul className="divide-y divide-indigo-50">
             {items.map((n) => (
@@ -135,7 +145,7 @@ export default function NotificationCentre() {
           </div>
         )}
       </section>
-      {meta && <p className="text-xs text-slate-400">{meta.total} in total · {meta.unread} unread</p>}
+      {meta && <p className="text-xs text-slate-400">{meta.total} in total · {meta.unread} unread · {meta.total - meta.unread} read</p>}
     </div>
   );
 }

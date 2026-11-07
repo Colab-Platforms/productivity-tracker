@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { filterQuery, type Filters as HrFilterState } from "../../_filters/useHrFilters";
 import { apiGet } from "@/lib/api";
-import { clockTime, downloadCsv, hm } from "./format";
+import { clockTime, dayLabel, downloadCsv, hm } from "./format";
+import { downloadReportXlsx, secondsOfDay, type Col } from "./reportXlsx";
+import { describeFilters } from "./exportMeta";
+import ExportButtons from "./ExportButtons";
+import { useMe } from "../../layout";
 
 // Shift breakdown: how each person spent one day. Used on Reports & Analytics and on Team Attendance.
 // Data: GET /team-attendance/shift-breakdown?date=YYYY-MM-DD (the manager's own people only).
@@ -12,6 +16,7 @@ type ShiftRow = {
   userId: string; name: string; employeeCode: string | null; teamName: string | null;
   hasSession: boolean; dayState: "WORKING" | "CLOCKED_OUT" | "NOT_CLOCKED_IN" | "ON_LEAVE" | "NO_RECORD";
   loginAt: string | null; logoutAt: string | null; working?: boolean; shiftSeconds: number | null;
+  projects?: string[]; reportingManager?: string | null; // added for the Excel export
   teaSeconds: number | null; lunchSeconds: number | null; bioSeconds: number | null; huddleSeconds: number | null; otherSeconds: number | null;
   breakSeconds: number | null; breakBudgetSeconds: number; productiveSeconds: number | null; productiveTargetSeconds: number;
 };
@@ -23,6 +28,7 @@ const STATE_TEXT: Record<string, string> = { ON_LEAVE: "On leave", NOT_CLOCKED_I
 export default function ShiftBreakdownCard({ filters, ready = true, onScope }: { filters?: HrFilterState; ready?: boolean; onScope?: (s: { orgTotal: number; filteredTotal: number } | null) => void }) {
   // company, project, reporting manager and name/ID search come from the shared bar on the Reports page
   const hrQuery = filters ? filterQuery(filters) : "";
+  const me = useMe();
   const [date, setDate] = useState("");
   const [maxDate, setMaxDate] = useState("");
   const [shift, setShift] = useState<Shift | null>(null);
@@ -72,6 +78,38 @@ export default function ShiftBreakdownCard({ filters, ready = true, onScope }: {
     );
   }
 
+  // Excel: every row of the filtered day (not just what is on screen), real time and duration cells, project(s) and reporting manager.
+  async function exportXlsx() {
+    if (!shift) return;
+    const cols: Col[] = [
+      { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Team", width: 20 }, { header: "Project(s)", width: 28 }, { header: "Reporting manager", width: 22 },
+      { header: "Date", kind: "date", width: 13 }, { header: "Day status", width: 16 },
+      { header: "Login", kind: "time", width: 11 }, { header: "Logout", kind: "time", width: 11 },
+      { header: "Shift duration", kind: "duration", width: 13, note: "Login to logout (or to now, while still working)." },
+      { header: "Tea break", kind: "duration", width: 11 }, { header: "Lunch break", kind: "duration", width: 11 },
+      { header: "Washroom", kind: "duration", width: 11, note: "Washroom time is not a break: it is not in Total break and does not use the allowance." },
+      { header: "Huddle", kind: "duration", width: 11, note: "Team Huddle and approved meeting time (part of productive time, not extra)." },
+      { header: "Other break", kind: "duration", width: 11, note: "Personal and other approved breaks." },
+      { header: "Total break", kind: "duration", width: 12 }, { header: "Break allowance", kind: "duration", width: 14 }, { header: "Break over allowance", kind: "duration", width: 14 },
+      { header: "Productive time", kind: "duration", width: 14 }, { header: "Productive target", kind: "duration", width: 14 },
+    ];
+    const DAY_TEXT: Record<string, string> = { WORKING: "Working", CLOCKED_OUT: "Clocked out", NOT_CLOCKED_IN: "Not clocked in", ON_LEAVE: "On leave", NO_RECORD: "No record" };
+    const data = shift.rows.map((r) => {
+      const head = [r.employeeCode, r.name, r.teamName, (r.projects ?? []).join(", ") || null, r.reportingManager ?? null, shift.date, DAY_TEXT[r.dayState] ?? r.dayState];
+      if (!r.hasSession) return [...head, null, null, null, null, null, null, null, null, null, null, null, null, null];
+      const over = r.breakSeconds !== null && r.breakSeconds > r.breakBudgetSeconds ? r.breakSeconds - r.breakBudgetSeconds : null;
+      return [...head, secondsOfDay(r.loginAt, tz), r.working ? "Working" : secondsOfDay(r.logoutAt, tz), r.shiftSeconds, r.teaSeconds, r.lunchSeconds, r.bioSeconds, r.huddleSeconds, r.otherSeconds, r.breakSeconds, r.breakBudgetSeconds, over, r.productiveSeconds, r.productiveTargetSeconds];
+    });
+    const withSession = shift.rows.filter((r) => r.hasSession);
+    await downloadReportXlsx(`shift-breakdown-${shift.date}.xlsx`, [{ name: "Shift Breakdown", cols, rows: data }], {
+      report: "Shift Breakdown",
+      period: dayLabel(shift.date),
+      filters: await describeFilters(filters),
+      exportedAt: new Date(), exportedBy: me ? `${me.firstName} ${me.lastName}`.trim() : null, timezone: tz,
+      totals: [["Employees", shift.rows.length], ["Employees with a session", withSession.length], ["Employees over their break allowance", withSession.filter((r) => r.breakSeconds !== null && r.breakSeconds > r.breakBudgetSeconds).length]],
+    });
+  }
+
   return (
     <section className="rounded-2xl bg-white shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-center justify-between gap-3 px-6 pt-6">
@@ -92,9 +130,7 @@ export default function ShiftBreakdownCard({ filters, ready = true, onScope }: {
             className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-700"
             aria-label="Day"
           />
-          <button onClick={exportCsv} disabled={!shift || shift.rows.length === 0} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-            Export CSV
-          </button>
+          <ExportButtons onCsv={exportCsv} onExcel={exportXlsx} disabled={!shift || shift.rows.length === 0} />
         </div>
       </div>
 

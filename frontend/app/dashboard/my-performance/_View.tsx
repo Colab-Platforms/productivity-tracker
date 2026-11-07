@@ -102,7 +102,7 @@ export default function PerformanceView({ person, history, standups, selfTasks, 
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {([["Assigned to myself", selfTasks.totals.total, ""], ["Not started", selfTasks.totals.notStarted, ""], ["In progress", selfTasks.totals.inProgress, ""], ["Completed", selfTasks.totals.completed, ""], ["Overdue", selfTasks.totals.overdue, selfTasks.totals.overdue > 0 ? "text-red-600" : ""], ["Completion", selfTasks.totals.completionRate === null ? "—" : pct(selfTasks.totals.completionRate), ""]] as [string, number | string, string][]).map(([label, v, cls]) => (
-              <div key={label} className="rounded-xl bg-[#F6F7FE] px-3 py-2.5">
+              <div key={label} className="rounded-xl bg-[#F3F7F6] px-3 py-2.5">
                 <p className="text-[11px] text-slate-500">{label}</p>
                 <p className={`text-xl font-semibold tabular-nums ${cls || "text-slate-900"}`}>{v}</p>
               </div>
@@ -167,7 +167,7 @@ export default function PerformanceView({ person, history, standups, selfTasks, 
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="bg-[#F6F7FE] text-xs font-medium uppercase tracking-wide text-slate-500">
+              <thead className="bg-[#F3F7F6] text-xs font-medium uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-5 py-2.5">Date</th>
                   <th className="px-3 py-2.5">In / out</th>

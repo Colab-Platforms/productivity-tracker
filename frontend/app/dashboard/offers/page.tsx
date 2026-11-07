@@ -348,7 +348,7 @@ export default function OffersPage() {
                         ? "bg-emerald-50 text-emerald-700"
                         : preview.status === "SENT"
                         ? "bg-sky-50 text-sky-700"
-                        : "bg-[#EEF0FD] text-slate-600"
+                        : "bg-[#E7F6F1] text-slate-600"
                     }`}
                   >
                     {preview.status.toLowerCase()}
@@ -400,7 +400,7 @@ export default function OffersPage() {
             </button>
           </div>
 
-          <div className="mb-4 rounded-xl bg-[#F6F7FE] px-4 py-3">
+          <div className="mb-4 rounded-xl bg-[#F3F7F6] px-4 py-3">
             <p className="mb-2 text-xs font-medium text-slate-700">
               Drop any of these into the letter and they fill themselves in:
             </p>

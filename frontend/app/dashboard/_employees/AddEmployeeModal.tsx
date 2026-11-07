@@ -511,7 +511,7 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
 
           <Section title="Working schedule" sub="Used for shift-based attendance. Leave it as “No shift” to set it later.">
             <div className="sm:col-span-2">
-              <div className="inline-flex flex-wrap gap-1 rounded-xl bg-[#F1F2FC] p-1 text-sm">
+              <div className="inline-flex flex-wrap gap-1 rounded-xl bg-[#EDF3F1] p-1 text-sm">
                 {([["none", "No shift"], ["existing", "Existing shift"], ["custom", "Custom hours"]] as const).map(([v, t]) => (
                   <button key={v} type="button" onClick={() => set("shiftMode", v)} className={`rounded-lg px-3.5 py-1.5 font-medium transition ${form.shiftMode === v ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
                     {t}
@@ -543,7 +543,7 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
                     {DAYS.map((d) => {
                       const on = form.days.includes(d.n);
                       return (
-                        <button key={d.n} type="button" aria-pressed={on} onClick={() => set("days", on ? form.days.filter((x) => x !== d.n) : [...form.days, d.n])} className={`w-12 rounded-xl py-2 text-sm font-medium transition ${on ? "bg-indigo-600 text-white shadow-sm" : "bg-[#F1F2FC] text-slate-600 hover:bg-indigo-100"}`}>
+                        <button key={d.n} type="button" aria-pressed={on} onClick={() => set("days", on ? form.days.filter((x) => x !== d.n) : [...form.days, d.n])} className={`w-12 rounded-xl py-2 text-sm font-medium transition ${on ? "bg-indigo-600 text-white shadow-sm" : "bg-[#EDF3F1] text-slate-600 hover:bg-indigo-100"}`}>
                           {d.short}
                         </button>
                       );
@@ -558,7 +558,7 @@ export default function AddEmployeeModal({ onClose, onDone }: { onClose: () => v
               </>
             )}
 
-            <div className="rounded-xl bg-[#F6F7FE] px-4 py-3 text-xs leading-relaxed text-slate-600 sm:col-span-2">
+            <div className="rounded-xl bg-[#F3F7F6] px-4 py-3 text-xs leading-relaxed text-slate-600 sm:col-span-2">
               {company ? (
                 company.holidaysThisYear > 0 ? (
                   <>{company.name} has <b>{company.holidaysThisYear}</b> company holiday{company.holidaysThisYear === 1 ? "" : "s"} set up for {lookups.year}. They apply automatically to everyone in the company.</>

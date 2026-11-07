@@ -131,7 +131,7 @@ const WEIGHTS = [
 ];
 
 const WEIGHT_CHIP: Record<string, string> = {
-  LOW: "bg-[#EEF0FD] text-slate-600",
+  LOW: "bg-[#E7F6F1] text-slate-600",
   MEDIUM: "bg-sky-50 text-sky-700",
   HIGH: "bg-amber-50 text-amber-700",
   CRITICAL: "bg-rose-50 text-rose-700",
@@ -364,7 +364,7 @@ export default function ApprovalsPage() {
                   className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${
                     tab === o.key
                       ? "bg-indigo-100 text-indigo-700"
-                      : "bg-[#EEF0FD] text-slate-500"
+                      : "bg-[#E7F6F1] text-slate-500"
                   }`}
                 >
                   {o.n}

@@ -4,6 +4,10 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { filterQuery, type Filters as HrFilterState } from "../../_filters/useHrFilters";
 import { apiGet } from "@/lib/api";
 import { dayLabel, downloadCsv } from "./format";
+import { dayOf, downloadReportXlsx, secondsOfDay, type Col } from "./reportXlsx";
+import { describeFilters, titleCase } from "./exportMeta";
+import ExportButtons from "./ExportButtons";
+import { useMe } from "../../layout";
 import { PRESETS, rangeFor, type Preset } from "./ranges";
 import TargetsPanel from "./TargetsPanel";
 
@@ -15,10 +19,16 @@ import TargetsPanel from "./TargetsPanel";
 type Day = { date: string; completed: number | null; percent: number | null; state: "DATA" | "NO_TASK_DATA" };
 type Person = {
   userId: string; name: string; employeeCode: string | null; teamName: string | null;
+  projects?: string[]; reportingManager?: string | null; // added for the Excel export
   targetPerDay: number | null; targetSource: "PERSON" | "TEAM" | "COMPANY" | null;
   daysWithData: number; completedTotal: number | null; targetTotal: number | null; overallPercent: number | null; days: Day[];
 };
 type Productivity = { generatedAt: string; timezone: string; today: string; from: string; to: string; targetsReady: boolean; scope?: { orgTotal: number; filteredTotal: number }; people: Person[] };
+// The tasks behind the report (GET /team-attendance/productivity/tasks), fetched when Excel is exported.
+type TaskRow = {
+  id: string; userId: string; employee: string; employeeCode: string | null; project: string | null; reportingManager: string | null; taggedManager: string | null;
+  title: string; description: string | null; date: string; priority: string; hoursSpent: number | null; progress: string; approvalStatus: string; completedAt: string | null; counted: boolean;
+};
 type Hourly = { date: string; people: { userId: string; name: string; employeeCode: string | null; teamName: string | null; hours: number[]; total: number }[] };
 
 const SOURCE: Record<string, string> = { PERSON: "personal", TEAM: "team", COMPANY: "company" };
@@ -42,6 +52,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
   // company, project, reporting manager and name/ID search come from the shared bar on the Reports page (the table, the KPIs and the CSV all use that list)
   const hrQuery = filters ? filterQuery(filters) : "";
   // Always opens on Today (nothing is restored from a previous visit). With no dates the server answers for today in the company timezone.
+  const me = useMe();
   const [preset, setPreset] = useState<Preset>("today");
   const [single, setSingle] = useState("");
   const [custom, setCustom] = useState<{ from: string; to: string }>({ from: "", to: "" });
@@ -125,6 +136,59 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
     );
   }
 
+  // Excel: three sheets. "Productivity" = the report (one row per person, the same figures as the CSV and the screen). "Daily" = each person's
+  // day by day figures. "Tasks" = every task behind the report for the same people, dates and filters (fetched now, so the complete filtered
+  // data is exported, not what is on screen). "Counted in productivity" uses the report's own rule, so the number of Yes rows equals the
+  // "Tasks completed" total.
+  async function exportXlsx() {
+    if (!data) return;
+    const tz = data.timezone;
+    const qs = new URLSearchParams({ from: data.from, to: data.to });
+    const tasks = await apiGet<{ tasks: TaskRow[] }>(`/team-attendance/productivity/tasks?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
+
+    const people: Col[] = [
+      { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Team", width: 20 }, { header: "Project(s)", width: 28 }, { header: "Reporting manager", width: 22 },
+      { header: "Daily target", kind: "int", width: 12 }, { header: "Target level", width: 13 }, { header: "Days with data", kind: "int", width: 13 },
+      { header: "Tasks completed", kind: "int", width: 14 }, { header: "Productivity %", kind: "percent", width: 14, note: "Tasks completed divided by the daily target on the days with task data. Text means there is nothing to calculate (target not set, or no task data); it is never shown as 0%." },
+    ];
+    const peopleRows = data.people.map((p) => [
+      p.employeeCode, p.name, p.teamName, (p.projects ?? []).join(", ") || null, p.reportingManager ?? null,
+      p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : null, p.daysWithData,
+      p.completedTotal ?? "No task data available", p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : "No task data available"),
+    ]);
+
+    const daily: Col[] = [
+      { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Date", kind: "date", width: 13 },
+      { header: "Tasks completed", kind: "int", width: 14 }, { header: "Productivity %", kind: "percent", width: 14 }, { header: "Data", width: 18 },
+    ];
+    const dailyRows = data.people.flatMap((p) => p.days.map((d) => [p.employeeCode, p.name, d.date, d.completed, d.percent, d.state === "DATA" ? "Task data" : "No task data available"]));
+
+    const taskCols: Col[] = [
+      { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Project", width: 24 }, { header: "Reporting manager", width: 22 },
+      { header: "Tagged manager (approver)", width: 24, note: "The manager this task was sent to for approval." },
+      { header: "Task", width: 40, wrap: true }, { header: "Details", width: 40, wrap: true }, { header: "Task date", kind: "date", width: 13 },
+      { header: "Priority", width: 11 }, { header: "Hours spent", kind: "decimal", width: 12 }, { header: "Progress", width: 13 }, { header: "Approval status", width: 14 },
+      { header: "Completed on", kind: "date", width: 13 }, { header: "Completed at", kind: "time", width: 12 },
+      { header: "Counted in productivity", width: 14, note: "Yes = the report counts it: completed, approved, finished inside these dates and not rated below the completed threshold." },
+    ];
+    const taskRows = tasks.tasks.map((t) => [
+      t.employeeCode, t.employee, t.project, t.reportingManager, t.taggedManager, t.title, t.description, t.date,
+      titleCase(t.priority), t.hoursSpent, titleCase(t.progress), titleCase(t.approvalStatus), dayOf(t.completedAt, tz), secondsOfDay(t.completedAt, tz), t.counted ? "Yes" : "No",
+    ]);
+
+    await downloadReportXlsx(`task-productivity-${data.from}_to_${data.to}.xlsx`, [
+      { name: "Productivity", cols: people, rows: peopleRows },
+      { name: "Daily", cols: daily, rows: dailyRows },
+      { name: "Tasks", cols: taskCols, rows: taskRows },
+    ], {
+      report: "Task Productivity",
+      period: data.from === data.to ? dayLabel(data.from) : `${dayLabel(data.from)} to ${dayLabel(data.to)}`,
+      filters: await describeFilters(filters),
+      exportedAt: new Date(), exportedBy: me ? `${me.firstName} ${me.lastName}`.trim() : null, timezone: tz,
+      totals: [["People", k.people], ["Tasks completed (report total)", k.completed], ["Overall productivity %", k.percent === null ? "n/a" : k.percent], ["Task rows exported", taskRows.length], ["Task rows counted in productivity", tasks.tasks.filter((t) => t.counted).length]],
+    });
+  }
+
   return (
     <div className="space-y-5">
       {data && !data.targetsReady && (
@@ -145,7 +209,9 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
             <input type="date" value={custom.to} max={today || undefined} onChange={(e) => { setLoading(true); setCustom((c) => ({ ...c, to: e.target.value })); }} className={select} aria-label="To" />
           </>
         )}
-        <button onClick={exportCsv} disabled={!data || data.people.length === 0} className="ml-auto rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Export CSV</button>
+        <div className="ml-auto">
+          <ExportButtons onCsv={exportCsv} onExcel={exportXlsx} disabled={!data || data.people.length === 0} />
+        </div>
       </div>
 
       {error && (

@@ -104,7 +104,7 @@ const WEIGHTS = [
 ];
 
 const WEIGHT_CHIP: Record<string, string> = {
-  LOW: "bg-[#EEF0FD] text-slate-600",
+  LOW: "bg-[#E7F6F1] text-slate-600",
   MEDIUM: "bg-sky-50 text-sky-700",
   HIGH: "bg-amber-50 text-amber-700",
   CRITICAL: "bg-rose-50 text-rose-700",

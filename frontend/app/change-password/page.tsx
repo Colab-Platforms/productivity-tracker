@@ -65,7 +65,7 @@ export default function ChangePasswordPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#F6F7FE] px-4">
+    <main className="flex min-h-screen items-center justify-center bg-[#F3F7F6] px-4">
       <div className="w-full max-w-sm">
         <div className="mb-7">
           {!forced && (

@@ -23,15 +23,14 @@
 "use client";
 
 import Link from "next/link";
-import { dashboardTitle } from "@/lib/roles";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
+import { useRealtime } from "@/lib/realtime";
 import { useMe } from "./layout";
-import Avatar from "./_photos/Avatar";
 import EmployeeActions from "./_employees/EmployeeActions";
 import { AttendanceChart, ProductivityChart, type ChartRow } from "./_hr/Charts";
 import OrgOverview from "./_approvals/OrgOverview";
-import { ThemeIconButton } from "./_theme/ThemeToggle";
+import { AnniversaryList, EmployeeStatusTable, EventsList, KpiCard, Muted, Panel, panelLink, upcomingAnniversaries, type EventItem, type StatusRow } from "./_dashboard/widgets";
 import {
   ActivityList,
   type ActivityItem,
@@ -39,11 +38,9 @@ import {
   Card,
   EmptyNote,
   ErrorNote,
-  EventsList,
   PerformanceTable,
   SectionTitle,
   Skeleton,
-  StatTile,
   WeekStrip,
 } from "./_hr/Panels";
 import {
@@ -51,7 +48,6 @@ import {
   bucketLabel,
   daysBetween,
   greeting,
-  initials,
   monthStart,
   pct,
   previousMonth,
@@ -153,11 +149,16 @@ const Ico = {
       <path d="M8.3 16.2a1.8 1.8 0 0 0 3.4 0" strokeLinecap="round" />
     </svg>
   ),
-  // A gear (settings). It used to be a circle with rays, which looks exactly like the theme "sun" and sent people to Employees when they meant to change the theme.
-  cog: (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  leave: (
+    <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="3.5" y="4.5" width="13" height="12" rx="2" />
+      <path d="M3.5 8.5h13M7 3v3M13 3v3" strokeLinecap="round" />
+    </svg>
+  ),
+  clock: (
+    <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <circle cx="10" cy="10" r="7.2" />
+      <path d="M10 6v4.2l2.8 1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   chevron: (
@@ -222,6 +223,10 @@ export default function HrDashboard() {
   const candidates = useApi<{ candidates: Candidate[] }>("/onboarding/candidates", reload);
   const queue = useApi<Queue>("/tasks/review/queue", reload);
   const corrApi = useApi<{ pending: number }>("/attendance-corrections/pending-count", reload);
+  // Today's and upcoming meetings: the same list the Team Huddle page reads (the signed-in person's own meetings).
+  const meetingsRes = useApi<{ timezone: string; meetings: { id: string; title: string; startsAt: string; state: string }[] }>("/meetings?scope=upcoming", reload);
+  // The ONE shared Socket.IO connection: when a task, an inbox item or a meeting changes the server sends a signal and the numbers are re-read.
+  useRealtime(["tasks:changed", "notifications:changed", "meetings:changed"], () => setReload((n) => n + 1));
 
   // --- derived numbers ----------------------------------------------------------
   // The page describes ONE company: the one you are signed into. An owner's
@@ -328,10 +333,6 @@ export default function HrDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live.data, alerts.data, users.data, myCompany, employeeId, q]);
 
-  const upcoming = (holidaysRes.data?.holidays ?? [])
-    .filter((h) => today && h.date >= today)
-    .slice(0, 4);
-
   // --- actions -------------------------------------------------------------------------
   function applyPreset(name: (typeof PRESETS)[number]) {
     if (!today) return;
@@ -365,25 +366,85 @@ export default function HrDashboard() {
   const rangeTag = from && to ? rangeLabel(from, to) : "…";
   const dim = report.loading && report.data ? "opacity-60 transition-opacity" : "transition-opacity";
 
-  return (
-    <div className="page-fluid grid gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:grid-rows-[auto_1fr]">
-      {/* profile row: first on small screens, top of the right column on wide ones */}
-      <div className="flex items-center justify-end gap-3 xl:col-start-2 xl:row-start-1">
-        <ThemeIconButton className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-[var(--shadow-card)] hover:text-indigo-600" />
-        <Link
-          href="/dashboard/employees?tab=Teams"
-          aria-label="Teams, shifts and rules"
-          title="Teams, shifts and rules"
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-[var(--shadow-card)] hover:text-indigo-600"
-        >
-          {Ico.cog}
-        </Link>
+  // --- widgets built from the data above (display only; nothing is invented) ----------------------------------------------------------------------
+  const tz = meetingsRes.data?.timezone ?? me?.platform.timezone ?? "Asia/Kolkata";
+  const dayIn = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+  const timeIn = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+  const events: EventItem[] = today
+    ? [
+        ...(holidaysRes.data?.holidays ?? [])
+          .filter((h) => h.date >= today)
+          .map((h): EventItem => ({ id: `h-${h.id}`, date: h.date, title: h.name, kind: "Holiday", href: "/dashboard/holidays", today: h.date === today })),
+        ...(meetingsRes.data?.meetings ?? [])
+          .filter((m) => m.state === "upcoming" || m.state === "ongoing")
+          .map((m): EventItem => ({ id: `m-${m.id}`, date: dayIn(m.startsAt), time: timeIn(m.startsAt), title: m.title, kind: "Meeting", href: `/dashboard/meetings?id=${m.id}`, today: dayIn(m.startsAt) === today }))
+          .filter((e) => e.date >= today),
+      ]
+        .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? ""))
+        .slice(0, 6)
+    : [];
+  const todayById = new Map((todayReport.data?.people ?? []).map((p) => [p.userId, p]));
+  const attendanceOf = (id: string) => {
+    const p = todayById.get(id);
+    if (!p) return "—";
+    return p.daysPresent > 0 ? "Present" : p.daysOnLeave > 0 ? "On leave" : p.daysAbsent > 0 ? "Absent" : "—";
+  };
+  const statusRows: StatusRow[] = staff
+    .filter((u) => (!employeeId || u.id === employeeId) && (!q || u.name.toLowerCase().includes(q) || (u.employeeCode ?? "").toLowerCase().includes(q) || (u.designation ?? "").toLowerCase().includes(q)))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((u) => ({ id: u.id, name: u.name, code: u.employeeCode, photoAt: u.photoAt, designation: u.designation, department: (u.teams ?? []).map((t) => t.name).join(", "), status: u.status, attendance: attendanceOf(u.id) }));
+  const anniversaries = today ? upcomingAnniversaries(staff, today) : [];
 
+  return (
+    <div className="page-fluid space-y-4 p-4 sm:p-6">
+      {/* greeting strip + actions: one compact row instead of an oversized banner */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1 basis-72">
+          <p className="truncate text-[15px] font-semibold text-slate-900">{greeting()} {firstName}</p>
+          <p className="truncate text-[12px] text-[var(--text-secondary)]">
+            {!attentionReady
+              ? "Checking what needs your attention…"
+              : attention.length === 0
+                ? "Nothing is waiting for you right now. Everything is up to date."
+                : `Waiting for you: ${attention.join(", ")}.`}
+            {attentionReady && attention.length > 0 && (
+              <Link href={reviewHref} className="ml-2 font-medium text-indigo-600 hover:underline">Review it</Link>
+            )}
+          </p>
+        </div>
+
+        {/* HR and Admin only: this whole screen is. The backend checks the role too. */}
+        <EmployeeActions onDone={() => setReload((n) => n + 1)} />
+
+        <div ref={addRef} className="relative">
+          <button
+            onClick={() => setAddOpen((v) => !v)}
+            className="flex h-10 items-center gap-1.5 rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            Add New {Ico.chevron}
+          </button>
+          {addOpen && (
+            <div className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-xl bg-[var(--card)] py-1.5 text-sm shadow-[var(--shadow-lift)]">
+              {[
+                ["/dashboard/employees", "Add an employee"],
+                ["/dashboard/offers", "Send an offer letter"],
+                ["/dashboard/holidays", "Add a holiday"],
+                ["/dashboard/queries", "Query Desk"],
+              ].map(([href, label]) => (
+                <Link key={href} href={href} className="block px-4 py-2 text-slate-700 hover:bg-[var(--nav-hover)] hover:text-indigo-700">
+                  {label}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* "Needs attention": pending approvals and today's alerts (not the notification inbox, which is the bell in the header) */}
         <div ref={bellRef} className="relative">
           <button
             onClick={() => setBellOpen((v) => !v)}
             aria-label="Notifications"
-            className="relative flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-[var(--shadow-card)] hover:text-indigo-600"
+            className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--card)] text-slate-500 shadow-[var(--shadow-card)] hover:text-indigo-600"
           >
             {Ico.bell}
             {pendingTotal + visibleAlerts.length > 0 && (
@@ -393,7 +454,7 @@ export default function HrDashboard() {
             )}
           </button>
           {bellOpen && (
-            <div className="absolute right-0 z-20 mt-2 w-72 space-y-2 rounded-xl bg-white p-3 shadow-[var(--shadow-lift)] ring-1 ring-indigo-100">
+            <div className="absolute right-0 z-20 mt-2 w-72 space-y-2 rounded-xl bg-[var(--card)] p-3 shadow-[var(--shadow-lift)]">
               <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Needs attention</p>
               {pendingTotal + visibleAlerts.length === 0 ? (
                 <p className="px-1 py-2 text-xs text-slate-500">You&apos;re all caught up.</p>
@@ -409,407 +470,249 @@ export default function HrDashboard() {
             </div>
           )}
         </div>
-
-        <Link href="/dashboard/profile" className="flex items-center gap-2.5">
-          <span className="text-right leading-tight">
-            <span className="block text-[13px] font-semibold text-slate-900">
-              {me ? `${me.firstName} ${me.lastName}`.trim() : ""}
-            </span>
-            <span className="block text-[11px] text-slate-400">View profile</span>
-          </span>
-          {me && <Avatar userId={me.id} name={`${me.firstName} ${me.lastName}`} photoAt={me.photoAt} size={40} fallbackClass="bg-indigo-600 text-white" className="ring-2 ring-white" />}
-        </Link>
       </div>
 
+      <OrgOverview />
 
-      {/* ===================== centre column ===================== */}
-      <div className="min-w-0 space-y-5 xl:col-start-1 xl:row-span-2 xl:row-start-1">
-        <OrgOverview />
-        {/* search + quick actions */}
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex min-w-[14rem] flex-1 items-center gap-2 rounded-xl bg-white px-4 py-2.5 shadow-[var(--shadow-card)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
-            <span className="text-slate-400">{Ico.search}</span>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search employees by name, ID or role…"
-              aria-label="Search employees"
-              className="min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400"
-            />
+      {/* period, employee and search filters (unchanged behaviour) */}
+      <Card className="p-3.5">
+        <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+          <label className="block min-w-[13rem] flex-1">
+            <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">Search</span>
+            <span className="flex items-center gap-2 rounded-lg bg-[var(--brand-50)] px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-[var(--ring)]">
+              <span className="text-slate-400">{Ico.search}</span>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Name, ID or role…"
+                aria-label="Search employees"
+                className="min-w-0 flex-1 bg-transparent text-xs text-slate-800 outline-none placeholder:text-slate-400"
+              />
+            </span>
+          </label>
+          <div>
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">Period</p>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => applyPreset(p)}
+                  disabled={!today}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    activePreset === p ? "bg-indigo-600 text-white shadow-sm" : "bg-[var(--brand-50)] text-indigo-700 hover:bg-indigo-100"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-end gap-2">
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">From</span>
+              <input
+                type="date"
+                value={from ?? ""}
+                max={today ?? undefined}
+                disabled={!today}
+                onChange={(e) => e.target.value && to && setRange({ from: e.target.value, to })}
+                className="rounded-lg bg-[var(--brand-50)] px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">To</span>
+              <input
+                type="date"
+                value={to ?? ""}
+                max={today ?? undefined}
+                disabled={!today}
+                onChange={(e) => e.target.value && from && setRange({ from, to: e.target.value })}
+                className="rounded-lg bg-[var(--brand-50)] px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              />
+            </label>
+          </div>
+
+          <label className="block min-w-44">
+            <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">Employee</span>
+            <select
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              className="w-full rounded-lg bg-[var(--brand-50)] px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-[var(--ring)]"
+            >
+              <option value="">All employees</option>
+              {employeeOptions.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                  {u.employeeCode ? ` (${u.employeeCode})` : ""}
+                </option>
+              ))}
+            </select>
           </label>
 
-          {/* HR and Admin only: this whole screen is. The backend checks the role too. */}
-          <EmployeeActions onDone={() => setReload((n) => n + 1)} />
-
-          <div ref={addRef} className="relative">
-            <button
-              onClick={() => setAddOpen((v) => !v)}
-              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-md shadow-indigo-600/25 hover:bg-indigo-700"
-            >
-              Add New {Ico.chevron}
-            </button>
-            {addOpen && (
-              <div className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-xl bg-white py-1.5 text-sm shadow-[var(--shadow-lift)] ring-1 ring-indigo-100">
-                {[
-                  ["/dashboard/employees", "Add an employee"],
-                  ["/dashboard/offers", "Send an offer letter"],
-                  ["/dashboard/holidays", "Add a holiday"],
-                  ["/dashboard/projects", "Create a project"],
-                  ["/dashboard/queries", "Query Desk"],
-                ].map(([href, label]) => (
-                  <Link
-                    key={href}
-                    href={href}
-                    className="block px-4 py-2 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700"
-                  >
-                    {label}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* welcome banner */}
-        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 to-indigo-500 p-6 text-white shadow-[var(--shadow-lift)] sm:p-8">
-          <svg
-            aria-hidden
-            viewBox="0 0 320 200"
-            className="pointer-events-none absolute -right-6 -top-2 hidden h-[115%] w-auto text-white/15 sm:block"
-            fill="currentColor"
+          <button
+            onClick={() => setReload((n) => n + 1)}
+            className="ml-auto rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50"
           >
-            <path d="M160 190C70 170 40 90 110 30c10 60 50 80 50 160z" />
-            <path d="M170 190c10-70 50-100 120-110-10 80-50 110-120 110z" opacity=".7" />
-            <circle cx="262" cy="34" r="22" opacity=".5" />
-            <circle cx="40" cy="150" r="10" opacity=".6" />
-          </svg>
-          <div className="relative max-w-md">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-indigo-100">{dashboardTitle(me?.role) ?? "Dashboard"}</p>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-[28px]">
-              {greeting()} {firstName}
-            </h1>
-            <p className="mt-2 text-sm leading-relaxed text-indigo-100">
-              {!attentionReady
-                ? "Checking what needs your attention…"
-                : attention.length === 0
-                  ? "Nothing is waiting for you right now. Everything is up to date."
-                  : `Waiting for you: ${attention.join(", ")}.`}
-            </p>
-            {attentionReady && attention.length > 0 && (
-              <Link
-                href={reviewHref}
-                className="mt-4 inline-block rounded-lg bg-white px-4 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm hover:bg-indigo-50"
-              >
-                Review it
-              </Link>
-            )}
-          </div>
-        </section>
-
-        {/* filters */}
-        <Card className="p-4">
-          <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
-            <div>
-              <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">Period</p>
-              <div className="flex flex-wrap gap-1.5">
-                {PRESETS.map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => applyPreset(p)}
-                    disabled={!today}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                      activePreset === p
-                        ? "bg-indigo-600 text-white shadow-sm"
-                        : "bg-[#EEF0FD] text-indigo-700 hover:bg-indigo-100"
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-end gap-2">
-              <label className="block">
-                <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">From</span>
-                <input
-                  type="date"
-                  value={from ?? ""}
-                  max={today ?? undefined}
-                  disabled={!today}
-                  onChange={(e) => e.target.value && to && setRange({ from: e.target.value, to })}
-                  className="rounded-lg bg-[#EEF0FD] px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">To</span>
-                <input
-                  type="date"
-                  value={to ?? ""}
-                  max={today ?? undefined}
-                  disabled={!today}
-                  onChange={(e) => e.target.value && from && setRange({ from, to: e.target.value })}
-                  className="rounded-lg bg-[#EEF0FD] px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                />
-              </label>
-            </div>
-
-            <label className="block min-w-44">
-              <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">Employee</span>
-              <select
-                value={employeeId}
-                onChange={(e) => setEmployeeId(e.target.value)}
-                className="w-full rounded-lg bg-[#EEF0FD] px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-[var(--ring)]"
-              >
-                <option value="">All employees</option>
-                {employeeOptions.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                    {u.employeeCode ? ` (${u.employeeCode})` : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <button
-              onClick={() => setReload((n) => n + 1)}
-              className="ml-auto rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50"
-            >
-              Refresh
-            </button>
-          </div>
-          {rangeError && <p className="mt-3 text-xs text-rose-600">{rangeError}</p>}
-        </Card>
-
-        {holidaysRes.error && (
-          <ErrorNote
-            message={`Couldn't load the company calendar (${holidaysRes.error}). Using your browser's date instead.`}
-            onRetry={() => setReload((n) => n + 1)}
-          />
-        )}
-        {report.error && !report.data && (
-          <ErrorNote message={`Couldn't load the report: ${report.error}`} onRetry={() => setReload((n) => n + 1)} />
-        )}
-
-        {/* stat tiles */}
-        <div className={`grid grid-cols-2 gap-3 lg:grid-cols-3 ${dim}`}>
-          <StatTile
-            label="Total Employees"
-            value={String(staff.length)}
-            sub={`${staff.length - activeCount} not yet active`}
-            tag="Company"
-            tone="indigo"
-            icon={Ico.people}
-            loading={!users.data}
-          />
-          <StatTile
-            label="Present Today"
-            value={String(todayTotals?.daysPresent ?? 0)}
-            sub={
-              todayTotals && todayTotals.daysExpected === 0 && todayTotals.daysPresent === 0
-                ? "Not a working day"
-                : `of ${todayTotals?.daysExpected ?? 0} expected`
-            }
-            tag="Today"
-            tone="emerald"
-            icon={Ico.check}
-            loading={!todayTotals}
-          />
-          <StatTile
-            label="Absent Today"
-            value={String(todayTotals?.daysAbsent ?? 0)}
-            sub="Expected, not clocked in"
-            tag="Today"
-            tone="rose"
-            icon={Ico.cross}
-            loading={!todayTotals}
-          />
-          <StatTile
-            label="Active Employees"
-            value={String(activeCount)}
-            sub={staff.length ? `${pct(activeCount / staff.length)} of all employees` : undefined}
-            tag="Company"
-            tone="sky"
-            icon={Ico.bolt}
-            loading={!users.data}
-          />
-          <StatTile
-            label="Tasks Completed"
-            value={String(totals?.tasksDone ?? 0)}
-            sub={`of ${totals?.tasksTotal ?? 0} approved tasks`}
-            tag={rangeTag}
-            tone="violet"
-            icon={Ico.tasks}
-            loading={!totals}
-          />
-          <StatTile
-            label="Overall Productivity"
-            value={pct(totals?.attainment ?? 0)}
-            sub="productive ÷ expected time"
-            tag={rangeTag}
-            tone="amber"
-            icon={Ico.trend}
-            loading={!totals}
-          />
+            Refresh
+          </button>
         </div>
+        {rangeError && <p className="mt-3 text-xs text-rose-600">{rangeError}</p>}
+      </Card>
 
-        {/* charts */}
-        <div className={`grid gap-5 lg:grid-cols-2 ${dim}`}>
-          <Card className="p-5">
-            <SectionTitle
-              title="Attendance"
-              sub={`Present vs absent per ${groupBy === "day" ? "working day" : "week"} · ${rangeTag}`}
-            />
-            {!report.data ? (
-              <Skeleton className="h-60" />
-            ) : chartRows.length === 0 ? (
-              <EmptyNote>No working days with attendance expected in this range.</EmptyNote>
-            ) : (
-              <AttendanceChart rows={chartRows} />
-            )}
-          </Card>
-          <Card className="p-5">
-            <SectionTitle
-              title="Productivity"
-              sub={`Productive time against expected · ${rangeTag}`}
-            />
-            {!report.data ? (
-              <Skeleton className="h-60" />
-            ) : chartRows.length === 0 ? (
-              <EmptyNote>No productivity recorded in this range.</EmptyNote>
-            ) : (
-              <ProductivityChart rows={chartRows} />
-            )}
-          </Card>
-        </div>
+      {holidaysRes.error && (
+        <ErrorNote
+          message={`Couldn't load the company calendar (${holidaysRes.error}). Using your browser's date instead.`}
+          onRetry={() => setReload((n) => n + 1)}
+        />
+      )}
+      {report.error && !report.data && (
+        <ErrorNote message={`Couldn't load the report: ${report.error}`} onRetry={() => setReload((n) => n + 1)} />
+      )}
 
-        {/* performance table */}
-        <Card className={`p-5 ${dim}`}>
-          <SectionTitle
-            title="Employee Performance"
-            sub={`${people.length} ${people.length === 1 ? "person" : "people"} · ${rangeTag}`}
-            action={
-              <Link
-                href="/dashboard/reports"
-                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
-              >
-                View All
-              </Link>
-            }
-          />
-          {!report.data ? (
-            <div className="space-y-2">
-              {[0, 1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-11" />
-              ))}
-            </div>
-          ) : people.length === 0 ? (
-            <EmptyNote>{q ? "No employee matches your search." : "No employees in this report."}</EmptyNote>
-          ) : (
-            <PerformanceTable people={people} />
-          )}
-        </Card>
+      {/* compact KPI strip */}
+      <div className={`grid grid-cols-2 gap-3 md:grid-cols-4 ${dim}`}>
+        <KpiCard label="Total Employees" value={String(staff.length)} sub={`${staff.length - activeCount} not yet active`} tone="green" icon={Ico.people} loading={!users.data} href="/dashboard/employees" />
+        <KpiCard
+          label="Present Today"
+          value={String(todayTotals?.daysPresent ?? 0)}
+          sub={todayTotals && todayTotals.daysExpected === 0 && todayTotals.daysPresent === 0 ? "Not a working day" : `of ${todayTotals?.daysExpected ?? 0} expected`}
+          tone="green" icon={Ico.check} loading={!todayTotals} href="/dashboard/team-attendance"
+        />
+        <KpiCard label="Absent Today" value={String(todayTotals?.daysAbsent ?? 0)} sub="Expected, not clocked in" tone="rose" icon={Ico.cross} loading={!todayTotals} href="/dashboard/team-attendance" />
+        <KpiCard label="On Leave Today" value={String(todayTotals?.daysOnLeave ?? 0)} sub="Approved leave" tone="sky" icon={Ico.leave} loading={!todayTotals} href="/dashboard/leave" />
+        <KpiCard label="Pending Approvals" value={String(pendingTotal)} sub={pendingTotal === 0 ? "All clear" : "Waiting for a decision"} tone="amber" icon={Ico.clock} loading={!attentionReady && pendingTotal === 0} href="#approvals" />
+        <KpiCard label="Active Employees" value={String(activeCount)} sub={staff.length ? `${pct(activeCount / staff.length)} of all employees` : undefined} tone="slate" icon={Ico.bolt} loading={!users.data} />
+        <KpiCard label="Tasks Completed" value={String(totals?.tasksDone ?? 0)} sub={`of ${totals?.tasksTotal ?? 0} approved · ${rangeTag}`} tone="violet" icon={Ico.tasks} loading={!totals} />
+        <KpiCard label="Overall Productivity" value={pct(totals?.attainment ?? 0)} sub={`productive ÷ expected · ${rangeTag}`} tone="amber" icon={Ico.trend} loading={!totals} />
       </div>
 
-      {/* ===================== right panel ===================== */}
-      <aside className="min-w-0 space-y-5 xl:col-start-2 xl:row-start-2">
-        {/* schedule calendar + upcoming events */}
-        <Card className="p-5">
-          <SectionTitle
-            title="Schedule Calendar"
-            sub={today ? "Tap a day to view just that day" : undefined}
-            action={
-              <Link href="/dashboard/holidays" className="rounded-lg bg-[#EEF0FD] px-2.5 py-1 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100">
-                Holidays
-              </Link>
-            }
-          />
-          {!today ? (
-            <Skeleton className="h-20" />
-          ) : (
-            <WeekStrip
-              today={today}
-              selected={from === to ? from : null}
-              holidays={holidaysRes.data?.holidays ?? []}
-              onPick={(d) => setRange({ from: d, to: d })}
-            />
-          )}
-          <p className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Upcoming events</p>
-          {!holidaysRes.data ? (
-            holidaysRes.error ? (
-              <EmptyNote>Events unavailable right now.</EmptyNote>
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+        {/* ===================== main column ===================== */}
+        <div className="min-w-0 space-y-4">
+          <div className={`grid gap-4 lg:grid-cols-2 ${dim}`}>
+            <Panel title="Team Performance" sub={`Productive time against expected · ${rangeTag}`}>
+              {!report.data ? (
+                <Skeleton className="h-60" />
+              ) : chartRows.length === 0 ? (
+                <EmptyNote>No productivity recorded in this range.</EmptyNote>
+              ) : (
+                <ProductivityChart rows={chartRows} />
+              )}
+            </Panel>
+            <Panel title="Attendance" sub={`Present vs absent per ${groupBy === "day" ? "working day" : "week"} · ${rangeTag}`}>
+              {!report.data ? (
+                <Skeleton className="h-60" />
+              ) : chartRows.length === 0 ? (
+                <EmptyNote>No working days with attendance expected in this range.</EmptyNote>
+              ) : (
+                <AttendanceChart rows={chartRows} />
+              )}
+            </Panel>
+          </div>
+
+          {/* employee status */}
+          <Panel
+            title="Employee Status"
+            sub={`${statusRows.length} ${statusRows.length === 1 ? "person" : "people"}${statusRows.length > 8 ? " · showing the first 8" : ""}`}
+            action={<Link href="/dashboard/employees" className={panelLink}>View all</Link>}
+          >
+            {!users.data ? (
+              <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-10" />)}</div>
+            ) : statusRows.length === 0 ? (
+              <EmptyNote>{q || employeeId ? "No employee matches." : "No employees yet."}</EmptyNote>
             ) : (
-              <Skeleton className="h-14" />
-            )
-          ) : upcoming.length === 0 ? (
-            <EmptyNote>No upcoming holidays or events.</EmptyNote>
-          ) : (
-            <EventsList holidays={upcoming} today={today!} />
-          )}
-        </Card>
+              <EmployeeStatusTable rows={statusRows.slice(0, 8)} />
+            )}
+          </Panel>
 
-        {/* pending approvals */}
-        <Card className="p-5">
-          <SectionTitle title="Pending HR Approvals" sub="Waiting for a decision" />
-          {queue.error && candidates.error && tickets.error ? (
-            <ErrorNote message="Couldn't load approvals." onRetry={() => setReload((n) => n + 1)} />
-          ) : !attentionReady && pendingTotal === 0 ? (
-            <div className="space-y-2">
-              <Skeleton className="h-14" />
-              <Skeleton className="h-14" />
-            </div>
-          ) : pendingTotal === 0 ? (
-            <EmptyNote>Nothing is waiting for approval.</EmptyNote>
-          ) : (
-            <div className="space-y-2">
-              {proposals > 0 && (
-                <ApprovalRow href="/dashboard/approvals" label="Task proposals" detail="Employees' proposed work for today" count={proposals} tone="violet" />
-              )}
-              {docsToReview > 0 && (
-                <ApprovalRow href="/dashboard/candidates" label="Joiner documents" detail="Submitted, waiting for HR review" count={docsToReview} tone="sky" />
-              )}
-              {corrections > 0 && (
-                <ApprovalRow href="/dashboard/queries?category=ATTENDANCE_CORRECTION" label="Attendance corrections" detail="Employees asking HR to correct attendance" count={corrections} tone="indigo" />
-              )}
-              {pendingTickets.length > 0 && (
-                <ApprovalRow
-                  href="/dashboard/queries"
-                  label="Open queries"
-                  detail={overdueTickets > 0 ? `${overdueTickets} past due` : "All within their due time"}
-                  count={pendingTickets.length}
-                  tone="amber"
-                />
-              )}
-            </div>
-          )}
-        </Card>
+          {/* performance table (unchanged) */}
+          <Card className={`p-4 ${dim}`}>
+            <SectionTitle
+              title="Employee Performance"
+              sub={`${people.length} ${people.length === 1 ? "person" : "people"} · ${rangeTag}`}
+              action={
+                <Link href="/dashboard/reports" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">
+                  View All
+                </Link>
+              }
+            />
+            {!report.data ? (
+              <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-11" />)}</div>
+            ) : people.length === 0 ? (
+              <EmptyNote>{q ? "No employee matches your search." : "No employees in this report."}</EmptyNote>
+            ) : (
+              <PerformanceTable people={people} />
+            )}
+          </Card>
+        </div>
 
-        {/* recent activity */}
-        <Card className="p-5">
-          <SectionTitle
+        {/* ===================== side column ===================== */}
+        <aside className="min-w-0 space-y-4">
+          <Panel
+            title="Events and Meetings"
+            sub={today ? "Tap a day to view just that day" : undefined}
+            action={<Link href="/dashboard/attendance-calendar" className={panelLink}>Calendar</Link>}
+          >
+            {!today ? (
+              <Skeleton className="h-20" />
+            ) : (
+              <WeekStrip today={today} selected={from === to ? from : null} holidays={holidaysRes.data?.holidays ?? []} onPick={(d) => setRange({ from: d, to: d })} />
+            )}
+            <p className="mb-1 mt-4 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Upcoming</p>
+            {!holidaysRes.data && !meetingsRes.data ? (
+              holidaysRes.error && meetingsRes.error ? <EmptyNote>Events unavailable right now.</EmptyNote> : <Skeleton className="h-14" />
+            ) : events.length === 0 ? (
+              <EmptyNote>No upcoming holidays or meetings.</EmptyNote>
+            ) : (
+              <EventsList items={events} />
+            )}
+          </Panel>
+
+          <Panel id="approvals" title="Pending HR Approvals" sub="Waiting for a decision">
+            {queue.error && candidates.error && tickets.error ? (
+              <ErrorNote message="Couldn't load approvals." onRetry={() => setReload((n) => n + 1)} />
+            ) : !attentionReady && pendingTotal === 0 ? (
+              <div className="space-y-2"><Skeleton className="h-14" /><Skeleton className="h-14" /></div>
+            ) : pendingTotal === 0 ? (
+              <EmptyNote>Nothing is waiting for approval.</EmptyNote>
+            ) : (
+              <div className="space-y-2">
+                {proposals > 0 && <ApprovalRow href="/dashboard/approvals" label="Task proposals" detail="Employees' proposed work for today" count={proposals} tone="violet" />}
+                {docsToReview > 0 && <ApprovalRow href="/dashboard/candidates" label="Joiner documents" detail="Submitted, waiting for HR review" count={docsToReview} tone="sky" />}
+                {corrections > 0 && <ApprovalRow href="/dashboard/queries?category=ATTENDANCE_CORRECTION" label="Attendance corrections" detail="Employees asking HR to correct attendance" count={corrections} tone="indigo" />}
+                {pendingTickets.length > 0 && (
+                  <ApprovalRow href="/dashboard/queries" label="Open queries" detail={overdueTickets > 0 ? `${overdueTickets} past due` : "All within their due time"} count={pendingTickets.length} tone="amber" />
+                )}
+              </div>
+            )}
+          </Panel>
+
+          <Panel title="Work Anniversaries" sub="Next 30 days, from each person's date of joining">
+            {!users.data ? <Skeleton className="h-14" /> : anniversaries.length === 0 ? <Muted>No work anniversaries in the next 30 days.</Muted> : <AnniversaryList items={anniversaries.slice(0, 5)} />}
+          </Panel>
+
+          <Panel title="Birthdays" sub="This month">
+            <Muted>No birthday data yet. Date of birth is not collected in the HRMS, so none can be shown.</Muted>
+          </Panel>
+
+          <Panel
             title="Recent Employee Activity"
             sub="Today"
-            action={
-              <Link href="/dashboard/team-attendance" className="rounded-lg bg-[#EEF0FD] px-2.5 py-1 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100">
-                Live team
-              </Link>
-            }
-          />
-          {live.error && alerts.error ? (
-            <ErrorNote message="Couldn't load activity." onRetry={() => setReload((n) => n + 1)} />
-          ) : !live.data && !alerts.data ? (
-            <div className="space-y-3">
-              {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-10" />
-              ))}
-            </div>
-          ) : activity.length === 0 ? (
-            <EmptyNote>No activity yet today.</EmptyNote>
-          ) : (
-            <ActivityList items={activity} />
-          )}
-        </Card>
-      </aside>
+            action={<Link href="/dashboard/team-attendance" className={panelLink}>Live team</Link>}
+          >
+            {live.error && alerts.error ? (
+              <ErrorNote message="Couldn't load activity." onRetry={() => setReload((n) => n + 1)} />
+            ) : !live.data && !alerts.data ? (
+              <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10" />)}</div>
+            ) : activity.length === 0 ? (
+              <EmptyNote>No activity yet today.</EmptyNote>
+            ) : (
+              <ActivityList items={activity} />
+            )}
+          </Panel>
+        </aside>
+      </div>
     </div>
   );
 }

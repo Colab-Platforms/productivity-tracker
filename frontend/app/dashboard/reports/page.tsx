@@ -161,7 +161,7 @@ function days(value: number): string {
 // Attainment colour band. Green at or above target, amber from 80%, red below.
 function bandClass(value: number): string {
   if (value >= 1) return "text-emerald-700 bg-emerald-50 ring-emerald-200";
-  if (value >= 0.8) return "text-slate-700 bg-[#F6F7FE] ring-slate-200";
+  if (value >= 0.8) return "text-slate-700 bg-[#F3F7F6] ring-slate-200";
   if (value >= 0.6) return "text-amber-700 bg-amber-50 ring-amber-200";
   return "text-rose-700 bg-rose-50 ring-rose-200";
 }
@@ -171,7 +171,11 @@ function bandClass(value: number): string {
 // Managers, HR and Admin get the team reports (history). An employee only ever sees their own figures.
 export default function ReportsPage() {
   const me = useMe();
-  const [tab, setTab] = useState<Exclude<Tab, "summary">>("attendance");
+  const [tab, setTab] = useState<Exclude<Tab, "summary">>(() => {
+    if (typeof window === "undefined") return "attendance";
+    const t = new URLSearchParams(window.location.search).get("tab");
+    return t === "productivity" || t === "shift" ? t : "attendance";
+  });
   const canSeeTeam = !!me && ["MANAGER", "HR", "ADMIN"].includes(me.role);
   // Company, project, reporting manager and name/ID search narrow all three reports to the SAME people (the server builds the tables, KPIs and charts from
   // that one list, so the exports match). HR and Admin: every company they act on; a manager: their own people.
@@ -411,7 +415,7 @@ function SummaryReport() {
             <span className="block text-xs font-medium uppercase tracking-wide text-slate-500">
               Group by
             </span>
-            <div className="mt-1 inline-flex rounded-xl border border-indigo-100 bg-[#F6F7FE] p-0.5">
+            <div className="mt-1 inline-flex rounded-xl border border-indigo-100 bg-[#F3F7F6] p-0.5">
               {GROUPS.map((g) => (
                 <button
                   key={g.value}
@@ -447,7 +451,7 @@ function SummaryReport() {
       )}
 
       {report && !report.holidaysConfigured && (
-        <div className="rounded-xl border border-indigo-100 bg-[#F6F7FE] px-4 py-3 text-sm text-slate-600">
+        <div className="rounded-xl border border-indigo-100 bg-[#F3F7F6] px-4 py-3 text-sm text-slate-600">
           No holidays are set up for this period, so public holidays are being counted
           as expected working days. Add them before treating attainment as final.
         </div>
@@ -515,7 +519,7 @@ function SummaryReport() {
           {report.alertBreakdown.map((a) => (
             <span
               key={a.alertType}
-              className="rounded-full bg-[#EEF0FD] px-3 py-1 text-xs font-medium text-slate-700"
+              className="rounded-full bg-[#E7F6F1] px-3 py-1 text-xs font-medium text-slate-700"
             >
               {ALERT_LABELS[a.alertType] ?? a.alertType.toLowerCase().replace(/_/g, " ")}
               <span className="ml-1.5 text-slate-500">{a.count}</span>
@@ -529,7 +533,7 @@ function SummaryReport() {
         <div className="overflow-x-auto">
           {groupBy === "person" ? (
             <table className="min-w-full text-sm">
-              <thead className="bg-[#F6F7FE] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+              <thead className="bg-[#F3F7F6] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Person</th>
                   <th className="px-4 py-3 text-right">Expected</th>
@@ -624,7 +628,7 @@ function SummaryReport() {
             </table>
           ) : (
             <table className="min-w-full text-sm">
-              <thead className="bg-[#F6F7FE] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+              <thead className="bg-[#F3F7F6] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Period</th>
                   <th className="px-4 py-3 text-right">People</th>

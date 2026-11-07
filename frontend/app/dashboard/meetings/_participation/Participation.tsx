@@ -292,7 +292,7 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {tiles.map(([label, value, cls]) => (
-          <div key={label} className="rounded-xl bg-[#F6F7FE] px-3 py-2">
+          <div key={label} className="rounded-xl bg-[#F3F7F6] px-3 py-2">
             <p className="text-[11px] text-slate-500">{label}</p>
             <p className={`text-lg font-semibold tabular-nums ${cls ?? "text-slate-900"}`}>{value}</p>
           </div>
@@ -307,7 +307,7 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
 
       <div className="overflow-x-auto rounded-2xl border border-indigo-100">
         <table className="w-full min-w-[640px] text-left text-sm">
-          <thead className="bg-[#F6F7FE] text-xs text-slate-500">
+          <thead className="bg-[#F3F7F6] text-xs text-slate-500">
             <tr>
               <th className="px-3 py-2 font-medium">Employee</th>
               <th className="px-3 py-2 font-medium">Status</th>
@@ -319,7 +319,7 @@ export function ParticipationPanel({ meetingId }: { meetingId: string }) {
           </thead>
           <tbody className="divide-y divide-indigo-50">
             {data.organizer && (
-              <tr className="bg-[#F6F7FE]/70">
+              <tr className="bg-[#F3F7F6]/70">
                 <td className="px-3 py-2.5">
                   <p className="font-medium text-slate-900">{data.organizer.name} <span className="ml-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{data.readOnly ? "organizer" : "you · organizer"}</span></p>
                   <p className="text-xs text-slate-400">Not counted among the invited people</p>

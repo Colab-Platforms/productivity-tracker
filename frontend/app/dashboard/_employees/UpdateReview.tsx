@@ -13,7 +13,7 @@ const STATUS: Record<UpdateStatus, { label: string; cls: string }> = {
 };
 
 export const UPDATE_FILTERS: { key: UpdateStatus | "ALL"; label: string; tone: string }[] = [
-  { key: "ALL", label: "All", tone: "bg-[#F1F2FC] text-slate-700" },
+  { key: "ALL", label: "All", tone: "bg-[#EDF3F1] text-slate-700" },
   { key: "UPDATE", label: "Will update", tone: "bg-emerald-50 text-emerald-700" },
   { key: "NO_CHANGE", label: "No change", tone: "bg-indigo-50 text-indigo-700" },
   { key: "INVALID", label: "Needs fixing", tone: "bg-rose-50 text-rose-700" },
@@ -38,7 +38,7 @@ export function UpdateTable({
 }) {
   return (
     <table className="w-full min-w-[640px] text-left text-[13px]">
-      <thead className="bg-[#F6F7FE] text-[11px] uppercase tracking-wide text-slate-500">
+      <thead className="bg-[#F3F7F6] text-[11px] uppercase tracking-wide text-slate-500">
         <tr>
           <th className="px-3 py-2.5">Row</th>
           <th className="px-3 py-2.5">Status</th>
@@ -167,19 +167,19 @@ export function UpdateResult({ result }: { result: UpdateCommitResult }) {
           ["Conflicts left alone", s.conflictsLeftAlone, "text-amber-600"],
           ["Not applied (errors)", s.invalid, "text-rose-600"],
         ] as const).map(([label, n, tone]) => (
-          <div key={label} className="rounded-2xl bg-[#F6F7FE] p-4">
+          <div key={label} className="rounded-2xl bg-[#F3F7F6] p-4">
             <p className="text-xs font-medium text-slate-500">{label}</p>
             <p className={`mt-1 text-2xl font-bold tabular-nums ${tone}`}>{n}</p>
           </div>
         ))}
       </div>
       {result.shiftsCreated.length > 0 && (
-        <p className="mt-4 rounded-2xl bg-[#F6F7FE] px-4 py-3 text-sm text-slate-600">New shifts created: {result.shiftsCreated.map((x) => `${x.name} (${x.company})`).join(", ")}.</p>
+        <p className="mt-4 rounded-2xl bg-[#F3F7F6] px-4 py-3 text-sm text-slate-600">New shifts created: {result.shiftsCreated.map((x) => `${x.name} (${x.company})`).join(", ")}.</p>
       )}
       <p className="mt-3 text-sm text-slate-500">A before-and-after record of every change was saved to the audit log.</p>
       <div className="mt-4 max-h-80 overflow-y-auto rounded-2xl border border-indigo-100">
         <table className="min-w-full text-left text-[13px]">
-          <thead className="sticky top-0 bg-[#F6F7FE] text-[11px] uppercase tracking-wide text-slate-500">
+          <thead className="sticky top-0 bg-[#F3F7F6] text-[11px] uppercase tracking-wide text-slate-500">
             <tr><th className="px-4 py-2.5">Employee</th><th className="px-4 py-2.5">Changed</th></tr>
           </thead>
           <tbody className="divide-y divide-indigo-50">

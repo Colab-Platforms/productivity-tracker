@@ -381,7 +381,7 @@ function EditModal({ meeting, tz, onClose, onDone }: { meeting: Meeting | null; 
       footer={<div className="flex justify-end gap-2"><button onClick={onClose} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Close</button><button disabled={busy || invalid} onClick={save} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">{busy ? "Saving…" : meeting ? "Save changes" : "Schedule"}</button></div>}>
       <div className="space-y-4">
         {!meeting?.tracked && (
-          <div className="rounded-xl bg-[#F6F7FE] p-3">
+          <div className="rounded-xl bg-[#F3F7F6] p-3">
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <input type="checkbox" checked={inPerson} onChange={(e) => setInPerson(e.target.checked)} /> In-person stand-up (track who joins)
             </label>
@@ -396,7 +396,7 @@ function EditModal({ meeting, tz, onClose, onDone }: { meeting: Meeting | null; 
             <p className="mt-2 text-xs text-slate-500">Self-reported: people declare when they join and leave. It doesn&apos;t prove presence and it is separate from attendance and working hours.{meeting ? " Turning this on removes the link, tells the invited people, and can't be switched off again." : ""}</p>
           </div>
         )}
-        {meeting?.tracked && <p className="rounded-xl bg-[#F6F7FE] px-3 py-2 text-xs text-slate-600">In-person stand-up. Participation is tracked; this can&apos;t be switched off after scheduling.</p>}
+        {meeting?.tracked && <p className="rounded-xl bg-[#F3F7F6] px-3 py-2 text-xs text-slate-600">In-person stand-up. Participation is tracked; this can&apos;t be switched off after scheduling.</p>}
         <label className="block text-sm text-slate-600">Title<input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} className={input} /></label>
         <label className="block text-sm text-slate-600">{inPersonOn ? "Agenda (optional)" : "Description (optional)"}<textarea value={description} maxLength={1000} rows={2} onChange={(e) => setDescription(e.target.value)} className={input} /></label>
         <div className="grid grid-cols-3 gap-3">
