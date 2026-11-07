@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { isOwnerAdmin } from "../../lib/owner.js";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../lib/prisma.js";
 import { photoStamps } from "../photos/photos.service.js";
@@ -103,7 +104,8 @@ export async function getMe(userId: string) {
 
   if (!user) return null;
   const photoAt = (await photoStamps([user.id])).get(user.id) ?? null;
-  return { ...publicUser(user), photoAt };
+  const documentsExempt = await isOwnerAdmin(user.id).catch(() => false);
+  return { ...publicUser(user), photoAt, documentsExempt };
 }
 
 function publicUser(user: any) {

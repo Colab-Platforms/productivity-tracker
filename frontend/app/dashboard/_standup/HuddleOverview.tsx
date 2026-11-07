@@ -101,7 +101,7 @@ export default function HuddleOverview({ compact = false }: { compact?: boolean 
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Productive time today, by employee</p>
             <div className="overflow-x-auto rounded-2xl border border-indigo-100">
               <table className="w-full min-w-[720px] text-left text-sm">
-                <thead className="bg-[#F6F7FE] text-xs text-slate-500"><tr><th className="px-3 py-2 font-medium">Employee</th><th className="px-3 py-2 text-right font-medium">Regular work</th><th className="px-3 py-2 text-right font-medium">Team Huddle</th><th className="px-3 py-2 text-right font-medium">Other eligible</th><th className="px-3 py-2 text-right font-medium">Total productive</th><th className="px-3 py-2 text-right font-medium">Break</th><th className="px-3 py-2 text-right font-medium">Washroom</th><th className="px-3 py-2 text-right font-medium">Time on site</th></tr></thead>
+                <thead className="bg-[#F3F7F6] text-xs text-slate-500"><tr><th className="px-3 py-2 font-medium">Employee</th><th className="px-3 py-2 text-right font-medium">Regular work</th><th className="px-3 py-2 text-right font-medium">Team Huddle</th><th className="px-3 py-2 text-right font-medium">Other eligible</th><th className="px-3 py-2 text-right font-medium">Total productive</th><th className="px-3 py-2 text-right font-medium">Break</th><th className="px-3 py-2 text-right font-medium">Washroom</th><th className="px-3 py-2 text-right font-medium">Time on site</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.people.map((p) => (
                     <tr key={p.userId}>

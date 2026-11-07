@@ -15,6 +15,7 @@
 
 import * as mailerModule from "../../lib/mailer.js";
 import { prisma } from "../../lib/prisma.js";
+import { ownerAdminIds } from "../../lib/owner.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 
 // Never mail more than this in one tick. The 53 imported employees all
@@ -96,10 +97,12 @@ export async function sendOnboardingReminders(
   const send = resolveSender();
   const now = Date.now();
 
+  const owners = await ownerAdminIds(); // company owners are never sent document reminders
   const candidates = await prisma.user.findMany({
     where: {
       onboardingStatus: { in: [...PENDING_STAGES] },
      documentsSubmittedAt: null,
+      ...(owners.length ? { id: { notIn: owners } } : {}),
     },
     select: {
       id: true,

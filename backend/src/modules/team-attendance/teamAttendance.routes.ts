@@ -74,6 +74,21 @@ router.get("/productivity", async (req, res) => {
   }
 });
 
+// The tasks behind the productivity report (for the Excel export). Same people, same range, same filters as /productivity.
+router.get("/productivity/tasks", async (req, res) => {
+  try {
+    const userId = text(req.query.userId, 40);
+    const teamId = text(req.query.teamId, 40);
+    if (!goodIds(userId, teamId)) {
+      res.status(400).json({ error: "One of the values sent is not valid." });
+      return;
+    }
+    res.json(await productivity.getProductivityTasks(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), userId, teamId, filters: parseFilters(req.query as Record<string, unknown>) }));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 router.get("/productivity/hourly", async (req, res) => {
   try {
     const userId = text(req.query.userId, 40);

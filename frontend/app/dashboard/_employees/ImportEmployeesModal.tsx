@@ -256,7 +256,7 @@ export default function ImportEmployeesModal({
     <ol className="mb-5 flex flex-wrap items-center gap-2 text-xs">
       {STEPS.map((s, i) => (
         <li key={s.key} className="flex items-center gap-2">
-          <span className={`flex h-6 w-6 items-center justify-center rounded-full font-semibold ${i < stepIndex ? "bg-emerald-100 text-emerald-700" : i === stepIndex ? "bg-indigo-600 text-white" : "bg-[#F1F2FC] text-slate-400"}`}>
+          <span className={`flex h-6 w-6 items-center justify-center rounded-full font-semibold ${i < stepIndex ? "bg-emerald-100 text-emerald-700" : i === stepIndex ? "bg-indigo-600 text-white" : "bg-[#EDF3F1] text-slate-400"}`}>
             {i < stepIndex ? "✓" : i + 1}
           </span>
           <span className={i === stepIndex ? "font-semibold text-slate-900" : "text-slate-400"}>{s.label}</span>
@@ -311,7 +311,7 @@ export default function ImportEmployeesModal({
             ["Failed", s.failed, "text-rose-600"],
             ["Skipped rows", s.skippedRows, "text-slate-500"],
           ].map(([label, n, tone]) => (
-            <div key={String(label)} className="rounded-2xl bg-[#F6F7FE] p-4">
+            <div key={String(label)} className="rounded-2xl bg-[#F3F7F6] p-4">
               <p className="text-xs font-medium text-slate-500">{label}</p>
               <p className={`mt-1 text-2xl font-bold tabular-nums ${tone}`}>{n}</p>
             </div>
@@ -319,7 +319,7 @@ export default function ImportEmployeesModal({
         </div>
 
         {result.shiftsCreated.length > 0 && (
-          <p className="mt-4 rounded-2xl bg-[#F6F7FE] px-4 py-3 text-sm text-slate-600">
+          <p className="mt-4 rounded-2xl bg-[#F3F7F6] px-4 py-3 text-sm text-slate-600">
             New shifts created: {result.shiftsCreated.map((x) => `${x.name} (${x.company})`).join(", ")}.
           </p>
         )}
@@ -346,7 +346,7 @@ export default function ImportEmployeesModal({
 
         <div className="mt-5 overflow-x-auto rounded-2xl border border-indigo-100">
           <table className="min-w-full text-left text-sm">
-            <thead className="bg-[#F6F7FE] text-xs uppercase tracking-wide text-slate-500">
+            <thead className="bg-[#F3F7F6] text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-2.5">Employee ID</th>
                 <th className="px-4 py-2.5">Name</th>
@@ -394,7 +394,7 @@ export default function ImportEmployeesModal({
           onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => { e.preventDefault(); setDragging(false); void onFile(e.dataTransfer.files[0]); }}
-          className={`flex flex-col items-center rounded-3xl border-2 border-dashed px-6 py-12 text-center transition ${dragging ? "border-indigo-500 bg-indigo-50" : "border-indigo-200 bg-[#F6F7FE]"}`}
+          className={`flex flex-col items-center rounded-3xl border-2 border-dashed px-6 py-12 text-center transition ${dragging ? "border-indigo-500 bg-indigo-50" : "border-indigo-200 bg-[#F3F7F6]"}`}
         >
           <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm">
             <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -452,9 +452,9 @@ export default function ImportEmployeesModal({
         {stepper}
         {errorBox}
         <div className="mb-4 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl bg-[#F6F7FE] p-3.5 text-sm"><p className="text-xs text-slate-500">People found</p><p className="text-xl font-bold text-slate-900">{importable}</p></div>
-          <div className="rounded-2xl bg-[#F6F7FE] p-3.5 text-sm"><p className="text-xs text-slate-500">Rows skipped</p><p className="text-xl font-bold text-slate-900">{skipped}</p><p className="text-[11px] text-slate-400">example, empty or note rows</p></div>
-          <div className="rounded-2xl bg-[#F6F7FE] p-3.5 text-sm"><p className="text-xs text-slate-500">Instruction rows above the headings</p><p className="text-xl font-bold text-slate-900">{parsed.ignoredAboveHeader}</p><p className="text-[11px] text-slate-400">ignored</p></div>
+          <div className="rounded-2xl bg-[#F3F7F6] p-3.5 text-sm"><p className="text-xs text-slate-500">People found</p><p className="text-xl font-bold text-slate-900">{importable}</p></div>
+          <div className="rounded-2xl bg-[#F3F7F6] p-3.5 text-sm"><p className="text-xs text-slate-500">Rows skipped</p><p className="text-xl font-bold text-slate-900">{skipped}</p><p className="text-[11px] text-slate-400">example, empty or note rows</p></div>
+          <div className="rounded-2xl bg-[#F3F7F6] p-3.5 text-sm"><p className="text-xs text-slate-500">Instruction rows above the headings</p><p className="text-xl font-bold text-slate-900">{parsed.ignoredAboveHeader}</p><p className="text-[11px] text-slate-400">ignored</p></div>
         </div>
 
         {parsed.sheets.length > 1 && (
@@ -468,7 +468,7 @@ export default function ImportEmployeesModal({
 
         <div className="overflow-hidden rounded-2xl border border-indigo-100">
           <table className="min-w-full text-left text-sm">
-            <thead className="bg-[#F6F7FE] text-xs uppercase tracking-wide text-slate-500">
+            <thead className="bg-[#F3F7F6] text-xs uppercase tracking-wide text-slate-500">
               <tr><th className="px-4 py-2.5">System field</th><th className="px-4 py-2.5">Column in your file</th><th className="hidden px-4 py-2.5 sm:table-cell">First value</th></tr>
             </thead>
             <tbody className="divide-y divide-indigo-50">
@@ -581,7 +581,7 @@ export default function ImportEmployeesModal({
               <li>• <b>{us.noChange}</b> already match; <b>{us.invalid}</b> row{us.invalid === 1 ? "" : "s"} with problems will <b>not</b> be applied.</li>
               {options.createMissingShifts && (updPreview?.shiftsToCreate.length ?? 0) > 0 && <li>• {updPreview!.shiftsToCreate.length} new shift{updPreview!.shiftsToCreate.length === 1 ? "" : "s"} will be created.</li>}
             </ul>
-            <p className="mt-4 rounded-2xl bg-[#F6F7FE] px-4 py-3 text-xs leading-relaxed text-slate-600">
+            <p className="mt-4 rounded-2xl bg-[#F3F7F6] px-4 py-3 text-xs leading-relaxed text-slate-600">
               Names and employee IDs are never changed. Everything saves together or not at all, and the old value of every change is kept in the audit log.
             </p>
           </Modal>
@@ -680,7 +680,7 @@ export default function ImportEmployeesModal({
               )}
               <div className="mb-4 flex flex-wrap gap-2">
                 {([
-                  ["ALL", "All", preview.summary.total, "bg-[#F1F2FC] text-slate-700"],
+                  ["ALL", "All", preview.summary.total, "bg-[#EDF3F1] text-slate-700"],
                   ["VALID", "Ready", preview.summary.valid, "bg-emerald-50 text-emerald-700"],
                   ["ALREADY_EXISTS", "Already in system", preview.summary.alreadyExists, "bg-indigo-50 text-indigo-700"],
                   ["INVALID", "Needs fixing", preview.summary.invalid, "bg-rose-50 text-rose-700"],
@@ -695,7 +695,7 @@ export default function ImportEmployeesModal({
 
               <div className="overflow-x-auto rounded-2xl border border-indigo-100">
                 <table className="min-w-[640px] w-full text-left text-[13px]">
-                  <thead className="bg-[#F6F7FE] text-[11px] uppercase tracking-wide text-slate-500">
+                  <thead className="bg-[#F3F7F6] text-[11px] uppercase tracking-wide text-slate-500">
                     <tr><th className="px-3 py-2.5">Row</th><th className="px-3 py-2.5">Status</th><th className="px-3 py-2.5">Employee</th><th className="px-3 py-2.5">Details</th></tr>
                   </thead>
                   <tbody className="divide-y divide-indigo-50">
@@ -754,7 +754,7 @@ export default function ImportEmployeesModal({
             {options.createMissingShifts && (preview?.shiftsToCreate.length ?? 0) > 0 && <li>• {preview!.shiftsToCreate.length} new shift{preview!.shiftsToCreate.length === 1 ? "" : "s"} will be created.</li>}
             <li>• {options.onboarding === "EXISTING" ? "Existing employees: the tracker opens once each person sets their own password." : "New joiners: document onboarding comes first."}</li>
           </ul>
-          <p className="mt-4 rounded-2xl bg-[#F6F7FE] px-4 py-3 text-xs leading-relaxed text-slate-600">
+          <p className="mt-4 rounded-2xl bg-[#F3F7F6] px-4 py-3 text-xs leading-relaxed text-slate-600">
             Each person gets a different random temporary password, shown to you once after the import. All of it saves
             together or not at all: if anything goes wrong, nothing is created.
           </p>

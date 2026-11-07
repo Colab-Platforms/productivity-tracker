@@ -12,6 +12,7 @@
 // ===========================================================================
 
 import { prisma } from "../../lib/prisma.js";
+import { ownerAdminIds } from "../../lib/owner.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { platformToday } from "../../lib/dates.js";
 import { sendOnboardingReminders } from "./onboarding.reminders.js";
@@ -35,9 +36,11 @@ export async function generateOnboardingAlerts(): Promise<number> {
     const slaHours = config?.onboardingSlaHours ?? DEFAULT_SLA_HOURS;
     const cutoff = new Date(Date.now() - slaHours * 3600_000);
 
+    const owners = await ownerAdminIds();
     const overdue = await prisma.user.findMany({
       where: {
         platformId: platform.id,
+        ...(owners.length ? { id: { notIn: owners } } : {}),
         onboardingStatus: { in: ["DOCUMENTS_SUBMITTED", "AWAITING_RESUME"] },
         documentsSubmittedAt: { not: null, lt: cutoff },
       },

@@ -38,10 +38,15 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [inbox, setInbox] = useState<Inbox>({ unread: 0, items: [] });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const known = useRef<Set<string> | null>(null); // ids already seen: null until the first load, so old ones never pop up
+  // Bumped whenever the person reads something. A fetch that started BEFORE that must not overwrite the screen, or the item
+  // they just read would flash back into the list until the next refresh.
+  const seq = useRef(0);
 
   const load = useCallback(() => {
+    const mine = seq.current;
     apiGet<Inbox>("/notifications")
       .then((next) => {
+        if (mine !== seq.current) return;
         if (known.current === null) {
           known.current = new Set(next.items.map((i) => i.id)); // the first load is the baseline, not news
         } else {
@@ -80,14 +85,23 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     };
   }, [load]);
 
+  // Reading is applied on screen at once (the item leaves the bell, the badge goes down) and saved to the database in the background.
+  // If the save fails, the next fetch shows the truth again instead of pretending it worked.
   const markRead = useCallback(
     async (id: string) => {
+      seq.current += 1;
+      setInbox((cur) => {
+        const was = cur.items.find((i) => i.id === id);
+        return { unread: was && !was.readAt ? Math.max(0, cur.unread - 1) : cur.unread, items: cur.items.filter((i) => i.id !== id) };
+      });
       await apiPost(`/notifications/${id}/read`).catch(() => undefined);
       load();
     },
     [load]
   );
   const markAllRead = useCallback(async () => {
+    seq.current += 1;
+    setInbox({ unread: 0, items: [] });
     await apiPost("/notifications/read-all").catch(() => undefined);
     load();
   }, [load]);

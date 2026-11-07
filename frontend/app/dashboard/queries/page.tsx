@@ -186,9 +186,9 @@ function QueriesInner() {
 
       <section className="space-y-3 rounded-2xl bg-white p-4 shadow-[var(--shadow-card)] sm:p-5">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Category">
-          <button onClick={() => setCategory("")} className={`rounded-full px-3 py-1 text-xs font-medium ${!category ? "bg-indigo-600 text-white" : "bg-[#F6F7FE] text-slate-600 hover:bg-indigo-50"}`}>All categories</button>
+          <button onClick={() => setCategory("")} className={`rounded-full px-3 py-1 text-xs font-medium ${!category ? "bg-indigo-600 text-white" : "bg-[#F3F7F6] text-slate-600 hover:bg-indigo-50"}`}>All categories</button>
           {cats.data?.categories.map((c) => (
-            <button key={c.key} onClick={() => setCategory(category === c.key ? "" : c.key)} className={`rounded-full px-3 py-1 text-xs font-medium ${category === c.key ? "bg-indigo-600 text-white" : "bg-[#F6F7FE] text-slate-600 hover:bg-indigo-50"}`}>{c.label}</button>
+            <button key={c.key} onClick={() => setCategory(category === c.key ? "" : c.key)} className={`rounded-full px-3 py-1 text-xs font-medium ${category === c.key ? "bg-indigo-600 text-white" : "bg-[#F3F7F6] text-slate-600 hover:bg-indigo-50"}`}>{c.label}</button>
           ))}
         </div>
         <div className="flex flex-wrap items-end gap-3">
@@ -220,7 +220,7 @@ function QueriesInner() {
               <button onClick={() => openItem(i)} className="flex w-full flex-wrap items-start justify-between gap-3 px-4 py-4 text-left hover:bg-indigo-50/40 sm:px-6">
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span className="rounded-full bg-[#F6F7FE] px-2 py-0.5 font-medium text-slate-600">{i.categoryLabel}</span>
+                    <span className="rounded-full bg-[#F3F7F6] px-2 py-0.5 font-medium text-slate-600">{i.categoryLabel}</span>
                     {i.reference && <span className="tabular-nums">{i.reference}</span>}
                     {i.isOverdue && <span className="rounded-full bg-red-50 px-2 py-0.5 font-medium text-red-600">Overdue</span>}
                     {i.needsYou && <span className="rounded-full bg-rose-500 px-2 py-0.5 font-medium text-white">Needs you</span>}
@@ -376,7 +376,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
           {d.legacyCorrection && <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">This is an older attendance-correction request made as a ticket. New corrections are made from “Attendance correction” in the Raise menu so they get the full approval.</p>}
           {d.awaitingInfoSince && <p className="rounded-xl bg-violet-50 px-4 py-3 text-sm text-violet-800">More information was requested on {when(d.awaitingInfoSince)}. Reply below to answer.</p>}
 
-          <div className="rounded-2xl bg-[#F6F7FE] p-4">
+          <div className="rounded-2xl bg-[#F3F7F6] p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">What was raised</p>
             <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{d.description}</p>
           </div>
@@ -386,7 +386,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
             <div className="mt-2 space-y-3">
               {d.messages.length === 0 && <p className="text-sm text-slate-500">No replies yet.</p>}
               {d.messages.map((m) => (
-                <div key={m.id} className={`rounded-2xl border p-3 text-sm ${m.isInternal ? "border-amber-200 bg-amber-50" : m.authorIsStaff ? "border-indigo-100 bg-white" : "border-indigo-50 bg-[#F6F7FE]"}`}>
+                <div key={m.id} className={`rounded-2xl border p-3 text-sm ${m.isInternal ? "border-amber-200 bg-amber-50" : m.authorIsStaff ? "border-indigo-100 bg-white" : "border-indigo-50 bg-[#F3F7F6]"}`}>
                   <p className="text-xs text-slate-500">
                     <b className="text-slate-700">{m.author}</b> · {when(m.createdAt)}{m.isInternal && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">Internal note (staff only)</span>}
                   </p>

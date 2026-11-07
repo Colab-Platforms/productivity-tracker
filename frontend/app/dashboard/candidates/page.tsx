@@ -60,7 +60,7 @@ const STAGES = [
 ];
 
 const STAGE_CHIP: Record<string, string> = {
-  OFFER_SENT: "bg-[#EEF0FD] text-slate-600",
+  OFFER_SENT: "bg-[#E7F6F1] text-slate-600",
   OFFER_ACCEPTED: "bg-sky-50 text-sky-700",
   DOCUMENTS_PENDING: "bg-amber-50 text-amber-700",
   DOCUMENTS_SUBMITTED: "bg-indigo-50 text-indigo-700",
@@ -69,7 +69,7 @@ const STAGE_CHIP: Record<string, string> = {
 };
 
 const DOC_CHIP: Record<string, string> = {
-  REQUESTED: "bg-[#EEF0FD] text-slate-500",
+  REQUESTED: "bg-[#E7F6F1] text-slate-500",
   SUBMITTED: "bg-amber-50 text-amber-700",
   APPROVED: "bg-emerald-50 text-emerald-700",
   REJECTED: "bg-red-50 text-red-700",

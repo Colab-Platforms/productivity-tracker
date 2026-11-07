@@ -30,7 +30,7 @@ async function viewer(userId: string) {
     select: { id: true, role: true, platformId: true, platform: { select: { timezone: true } } },
   });
   if (!u) throw new Error("USER_NOT_FOUND");
-  if (!["HR", "ADMIN"].includes(String(u.role))) throw new Error("NOT_ALLOWED");
+  if (String(u.role) !== "ADMIN") throw new Error("NOT_ALLOWED"); // the audit log is an Admin (owner) screen
   const scope = scopeWhere(await accessFor(userId));
   return { id: u.id, role: String(u.role), platformId: u.platformId, tz: u.platform.timezone, scope };
 }

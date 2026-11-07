@@ -5,7 +5,10 @@ import { filterQuery, type Filters as HrFilterState } from "../../_filters/useHr
 import { apiGet } from "@/lib/api";
 import { clockTime, dayLabel, dayShort, downloadCsv, hmFromHours, hmFromMinutes } from "./format";
 import { PRESETS, rangeFor, type Preset } from "./ranges";
-import { downloadAttendanceXlsx, type Cell } from "./xlsx";
+import { downloadReportXlsx, secondsOfDay, type Col } from "./reportXlsx";
+import { describeFilters } from "./exportMeta";
+import ExportButtons from "./ExportButtons";
+import { useMe } from "../../layout";
 import { ARRIVAL_CHIP, ARRIVAL_LABEL, lateDetail, lateRemarkText } from "./lateRemark";
 
 // Attendance report: one row per person per day for a date range.
@@ -22,6 +25,7 @@ type Row = {
   lateMinutes: number | null; earlyDepartureMinutes: number | null; tasksCompleted: number;
   tasksPlanned: number | null; tasksApproved: number | null; // null = no tasks that day (exported blank)
   // Late Remark: the first check-in against the 09:45 / 10:15 arrival rule, the late duration, and the reason the person gave
+  projects: string[]; reportingManager: string | null; huddleHours: number | null; // added for the Excel export
   arrival?: string; arrivalMinutes?: number | null; arrivalLimit?: string; lateReason?: string | null; correctedBy?: string | null;
 };
 type Report = {
@@ -43,6 +47,7 @@ const STATUS_STYLE: Record<string, string> = {
   WEEK_OFF: "bg-slate-100 text-slate-600", NOT_TRACKED: "bg-slate-100 text-slate-500",
 };
 
+type Cell = string | number | null;
 const titleCase = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 const select = "w-full rounded-xl border border-indigo-100 bg-white px-3 py-2.5 text-sm text-slate-700";
 const th = "px-4 py-3 text-left text-xs font-medium text-slate-500 whitespace-nowrap";
@@ -91,7 +96,7 @@ export default function AttendanceReport({ filters, ready = true, onScope }: { f
   const [custom, setCustom] = useState<{ from: string; to: string }>({ from: "", to: "" });
   const [draft, setDraft] = useState<Filters>(NO_FILTERS); // what the dropdowns show
   const [applied, setApplied] = useState<Filters>(NO_FILTERS); // what the report is using (changes on "Apply Filters")
-  const [menu, setMenu] = useState(false);
+  const me = useMe();
 
   const [today, setToday] = useState("");
   const [report, setReport] = useState<Report | null>(null);
@@ -175,14 +180,58 @@ export default function AttendanceReport({ filters, ready = true, onScope }: { f
     ]);
   }
   function exportCsv() {
-    setMenu(false);
     if (!report) return;
     downloadCsv(`attendance-${report.from}_to_${report.to}.csv`, EXPORT_HEADER, exportRows());
   }
-  function exportXlsx() {
-    setMenu(false);
+  // Excel: the SAME rows as the screen and the CSV (every row of the filtered report, not just what is scrolled into view), with real date,
+  // time and duration cells, the project(s) and reporting manager, and the Team Huddle time. Pending Tasks stays a live formula.
+  async function exportXlsx() {
     if (!report) return;
-    void downloadAttendanceXlsx(`attendance-${report.from}_to_${report.to}.xlsx`, "Attendance", EXPORT_HEADER, exportRows());
+    const secs = (h: number | null | undefined) => (h === null || h === undefined ? null : Math.round(h * 3600));
+    const planNote = "Tasks planned for that person that day: approved, or waiting for approval. Cancelled and rejected tasks are not counted. Blank = no tasks.";
+    const cols: Col[] = [
+      { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Team", width: 20 }, { header: "Project(s)", width: 28 }, { header: "Reporting manager", width: 22 },
+      { header: "Date", kind: "date", width: 13 }, { header: "Shift", width: 24, wrap: true },
+      { header: "Check-in", kind: "time", width: 11 }, { header: "Check-out", kind: "time", width: 11 },
+      { header: "Working", kind: "duration", width: 11 }, { header: "Productive", kind: "duration", width: 11 }, { header: "Break", kind: "duration", width: 10 }, { header: "Washroom", kind: "duration", width: 11 },
+      { header: "Break over allowance", kind: "duration", width: 14 }, { header: "Team Huddle", kind: "duration", width: 12, note: "Time actually declared in a Team Huddle that day (join to leave). It is part of productive time, not extra." },
+      { header: "Status", width: 18 }, { header: "Late arrival", kind: "duration", width: 12 }, { header: "Early departure", kind: "duration", width: 14 }, { header: "Late Remark", width: 46, wrap: true },
+      { header: "Total Tasks Planned Today", kind: "int", width: 15, accent: true, note: planNote },
+      { header: "Tasks Approved Today", kind: "int", width: 15, accent: true, note: "Tasks a team lead or manager approved for that day. Blank = no tasks." },
+      {
+        header: "Pending Tasks", kind: "int", width: 12, accent: true, note: "Formula: Total Tasks Planned Today - Tasks completed. Blank when nothing was planned.",
+        formula: ({ row, letter, value }) => {
+          const planned = value("Total Tasks Planned Today");
+          const done = Number(value("Tasks completed") ?? 0);
+          return { formula: `IF(${letter("Total Tasks Planned Today")}${row}="","",${letter("Total Tasks Planned Today")}${row}-${letter("Tasks completed")}${row})`, result: planned === null || planned === "" ? "" : Number(planned) - done };
+        },
+      },
+      { header: "Tasks completed", kind: "int", width: 12 }, { header: "Remarks", width: 44, wrap: true },
+    ];
+    const data = rows.map((r) => [
+      r.employeeCode, r.name, r.teamName, r.projects.join(", ") || null, r.reportingManager,
+      r.date, r.shiftName ? `${r.shiftName}${r.shiftStart && r.shiftEnd ? ` (${r.shiftStart}-${r.shiftEnd})` : ""}` : "Not assigned",
+      secondsOfDay(r.loginAt, tz), r.stillWorking ? "Working" : secondsOfDay(r.logoutAt, tz),
+      secs(r.workedHours), secs(r.productiveHours), secs(r.breakHours), secs(r.washroomHours ?? null),
+      r.breakHours !== null && r.breakHours * 3600 > r.breakBudgetSeconds ? Math.round(r.breakHours * 3600 - r.breakBudgetSeconds) : null,
+      secs(r.huddleHours),
+      r.statusLabel, r.lateMinutes && r.lateMinutes > 0 ? r.lateMinutes * 60 : null, r.earlyDepartureMinutes && r.earlyDepartureMinutes > 0 ? r.earlyDepartureMinutes * 60 : null, lateRemarkText(r, tz),
+      r.tasksPlanned, r.tasksApproved, null, r.tasksCompleted, remarks(r),
+    ]);
+    const kp = report.kpis;
+    await downloadReportXlsx(`attendance-${report.from}_to_${report.to}.xlsx`, [{ name: "Attendance", cols, rows: data }], {
+      report: "Attendance Report",
+      period: report.from === report.to ? dayLabel(report.from) : `${dayLabel(report.from)} to ${dayLabel(report.to)}`,
+      filters: [
+        ...(await describeFilters(filters)),
+        ["Employee", applied.userId ? report.options.people.find((p) => p.id === applied.userId)?.name ?? "1 selected" : "All"],
+        ["Team", applied.teamId ? report.options.teams.find((t) => t.id === applied.teamId)?.name ?? "1 selected" : "All"],
+        ["Shift", applied.shift || "All"], ["Status", applied.status ? STATUSES.find(([v]) => v === applied.status)?.[1] ?? applied.status : "All"],
+        ["Late remark", applied.arrival ? ARRIVAL_FILTERS.find(([v]) => v === applied.arrival)?.[1] ?? applied.arrival : "All"],
+      ],
+      exportedAt: new Date(), exportedBy: me ? `${me.firstName} ${me.lastName}`.trim() : null, timezone: tz,
+      totals: [["Employees", kp.employees], ["Present days", kp.present], ["Half days", kp.halfDay], ["Absent days", kp.absent], ["Attendance %", kp.attendancePct === null ? "n/a" : kp.attendancePct], ["Total worked hours", kp.totalWorkedHours]],
+    });
   }
 
   return (
@@ -259,29 +308,8 @@ export default function AttendanceReport({ filters, ready = true, onScope }: { f
           </button>
           <button onClick={reset} className="rounded-xl border border-indigo-100 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Reset</button>
 
-          <div className="relative ml-auto">
-            <button
-              onClick={() => setMenu((o) => !o)}
-              onBlur={() => setTimeout(() => setMenu(false), 150)}
-              disabled={!report || rows.length === 0}
-              aria-haspopup="menu"
-              aria-expanded={menu}
-              className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              <Icon><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></Icon>
-              Export
-              <Icon><path d="M6 9l6 6 6-6" /></Icon>
-            </button>
-            {menu && (
-              <div role="menu" className="absolute right-0 z-10 mt-1 w-56 rounded-xl border border-indigo-100 bg-white p-1 shadow-lg">
-                <button role="menuitem" onMouseDown={exportXlsx} className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                  Download Excel (.xlsx) <span className="block text-xs text-slate-400">formatted, with the Pending Tasks formula</span>
-                </button>
-                <button role="menuitem" onMouseDown={exportCsv} className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                  Download CSV <span className="block text-xs text-slate-400">opens in Excel</span>
-                </button>
-              </div>
-            )}
+          <div className="ml-auto">
+            <ExportButtons onCsv={exportCsv} onExcel={exportXlsx} disabled={!report || rows.length === 0} />
           </div>
         </div>
 

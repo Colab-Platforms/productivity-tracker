@@ -243,8 +243,8 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       const role = ROLE_MAP[roleText.toLowerCase().replace(/[^a-z]/g, "")];
       if (!role) err("role", "BAD_ROLE", `"${roleText}" is not a role. Use Employee, Manager, HR or Admin.`);
       else if (role !== String(user.role)) {
-        if ((role === "HR" || role === "ADMIN" || user.role === "HR" || user.role === "ADMIN") && viewer.role !== "ADMIN") {
-          err("role", "ROLE_NOT_ALLOWED", "Only an Admin can give or change the HR and Admin roles.");
+        if (viewer.role !== "ADMIN") {
+          err("role", "ROLE_NOT_ALLOWED", "Only an Admin can change a person's system role.");
         } else {
           apply.role = role;
           // Everyone starts as Employee, so Employee counts as "not set yet".
@@ -257,7 +257,8 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     const teamIn = (name: string) => teams.find((t) => t.platformId === user.platformId && normName(t.name) === normName(name));
     const primary = user.teamMemberships.find((m) => m.isPrimary);
     const teamText = text(get(r, "team")).trim();
-    if (teamText) {
+    if (teamText && viewer.role !== "ADMIN") err("team", "ADMIN_ONLY_FIELD", "Only an Admin can change team / project assignments.");
+    else if (teamText) {
       const t = teamIn(teamText);
       if (!t) err("team", "UNKNOWN_TEAM", `"${teamText}" is not a team in ${user.platform.name}. Create it in Admin → Teams first.`);
       else if (!primary || primary.teamId !== t.id) {
@@ -267,7 +268,8 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       }
     }
     const projectText = text(get(r, "projects")).trim();
-    if (projectText) {
+    if (projectText && viewer.role !== "ADMIN") err("projects", "ADMIN_ONLY_FIELD", "Only an Admin can change team / project assignments.");
+    else if (projectText) {
       const add: string[] = [];
       const names: string[] = [];
       for (const n of projectText.split(/[;,|]/).map((x) => x.trim()).filter(Boolean)) {
@@ -287,7 +289,8 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     // --- reports to --------------------------------------------------------------------
     const mName = text(get(r, "reportsToName")).trim();
     const mId = text(get(r, "reportsToId")).trim();
-    if (mName || mId) {
+    if ((mName || mId) && viewer.role !== "ADMIN") err("reportsToId", "ADMIN_ONLY_FIELD", "Only an Admin can change who a person reports to.");
+    else if (mName || mId) {
       const none = (s: string) => s.toUpperCase() === "NONE";
       let target: string | null | undefined;
       if (none(mName) || none(mId)) target = null;

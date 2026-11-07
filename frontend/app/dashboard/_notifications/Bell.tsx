@@ -30,15 +30,15 @@ export default function Bell() {
     setOpen((o) => !o);
   }
 
-  async function openItem(i: Item) {
+  function openItem(i: Item) {
     setOpen(false);
-    if (!i.readAt) await markRead(i.id);
+    if (!i.readAt) void markRead(i.id); // leaves the bell at once; saved in the background
     if (i.link) router.push(i.link);
   }
 
   return (
     <>
-      <button ref={button} onClick={toggle} aria-label={`Notifications${inbox.unread ? `, ${inbox.unread} unread` : ""}`} className="relative rounded-lg p-2 text-slate-500 hover:bg-indigo-50 hover:text-indigo-700">
+      <button ref={button} data-testid="bell" onClick={toggle} aria-label={`Notifications${inbox.unread ? `, ${inbox.unread} unread` : ""}`} className="relative rounded-lg p-2 text-slate-500 hover:bg-indigo-50 hover:text-indigo-700">
         <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
           <path d="M10 2.8a4.7 4.7 0 0 0-4.7 4.7c0 4.4-1.8 5.6-1.8 5.6h13s-1.8-1.2-1.8-5.6A4.7 4.7 0 0 0 10 2.8Z" />
           <path d="M8.3 15.8a1.8 1.8 0 0 0 3.4 0" />
@@ -70,20 +70,31 @@ export default function Bell() {
               </div>
               <div className="max-h-[52vh] overflow-y-auto">
                 {inbox.items.length === 0 ? (
-                  <p className="px-4 py-8 text-center text-sm text-slate-500">You&apos;re all caught up.</p>
+                  <p className="px-4 py-8 text-center text-sm text-slate-500">You&apos;re all caught up. Read notifications are in View all.</p>
                 ) : (
                   inbox.items.map((i) => (
-                    <button key={i.id} onClick={() => openItem(i)} className={`block w-full border-b border-indigo-50 px-4 py-3 text-left hover:bg-indigo-50/50 ${i.readAt ? "" : "bg-indigo-50/30"}`}>
-                      <div className="flex items-start gap-2">
-                        {!i.readAt && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-600" />}
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-medium uppercase tracking-wide text-indigo-600">{labelOf(i.type)}</p>
-                          <p className="text-sm font-medium text-slate-900">{i.title}</p>
-                          <p className="mt-0.5 line-clamp-3 text-xs text-slate-500">{i.body}</p>
-                          <p className="mt-1 text-[11px] text-slate-400">{ago(i.createdAt)}</p>
+                    <div key={i.id} data-testid="bell-item" className="flex items-start gap-1 border-b border-indigo-50 bg-indigo-50/30 pr-2 hover:bg-indigo-50/50">
+                      <button onClick={() => openItem(i)} className="block min-w-0 flex-1 px-4 py-3 text-left">
+                        <div className="flex items-start gap-2">
+                          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-600" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-medium uppercase tracking-wide text-indigo-600">{labelOf(i.type)}</p>
+                            <p className="text-sm font-medium text-slate-900">{i.title}</p>
+                            <p className="mt-0.5 line-clamp-3 text-xs text-slate-500">{i.body}</p>
+                            <p className="mt-1 text-[11px] text-slate-400">{ago(i.createdAt)}</p>
+                          </div>
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void markRead(i.id)}
+                        aria-label={`Mark "${i.title}" as read`}
+                        title="Mark as read"
+                        className="mt-2.5 shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-500 hover:bg-white hover:text-indigo-700"
+                      >
+                        Mark read
+                      </button>
+                    </div>
                   ))
                 )}
               </div>

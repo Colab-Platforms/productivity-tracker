@@ -78,7 +78,7 @@ export function Modal({
           )}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">{children}</div>
-        {footer && <div className="border-t border-indigo-100 bg-[#F6F7FE] px-5 py-4 sm:px-7">{footer}</div>}
+        {footer && <div className="border-t border-indigo-100 bg-[#F3F7F6] px-5 py-4 sm:px-7">{footer}</div>}
       </div>
     </div>,
     document.body

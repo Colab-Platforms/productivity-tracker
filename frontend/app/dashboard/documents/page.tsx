@@ -29,11 +29,13 @@ const CATEGORIES: [string, string][] = [["IDENTITY", "Identity"], ["EDUCATION", 
 function DocumentsInner() {
   const me = useMe();
   const isHr = me?.role === "HR" || me?.role === "ADMIN";
+  const exempt = me?.documentsExempt === true; // company owner: no personal documents, only the organisation-wide tabs
   const [tab, setTab] = useState<"mine" | "tracking" | "requirements">("mine");
   const [reload, setReload] = useState(0);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const tabs: ["mine" | "tracking" | "requirements", string][] = isHr ? [["mine", "My documents"], ["tracking", "Employee tracking"], ["requirements", "Requirements"]] : [["mine", "My documents"]];
+  const tabs: ["mine" | "tracking" | "requirements", string][] = isHr ? [...(exempt ? [] : [["mine", "My documents"] as ["mine", string]]), ["tracking", "Employee tracking"], ["requirements", "Requirements"]] : [["mine", "My documents"]];
+  const shownTab = exempt && tab === "mine" ? "tracking" : tab;
 
   return (
     <div className="page-fluid space-y-6 p-8">
@@ -45,7 +47,7 @@ function DocumentsInner() {
       {tabs.length > 1 && (
         <div className="flex flex-wrap gap-2">
           {tabs.map(([k, label]) => (
-            <button key={k} onClick={() => { setTab(k); setNotice(""); setError(""); }} className={`rounded-xl px-4 py-2 text-sm font-medium ${tab === k ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-indigo-50"}`}>{label}</button>
+            <button key={k} onClick={() => { setTab(k); setNotice(""); setError(""); }} className={`rounded-xl px-4 py-2 text-sm font-medium ${shownTab === k ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-indigo-50"}`}>{label}</button>
           ))}
         </div>
       )}
@@ -53,10 +55,10 @@ function DocumentsInner() {
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
 
-      {tab === "mine" && <MyDocuments />}
+      {shownTab === "mine" && <MyDocuments />}
 
-      {tab === "tracking" && isHr && <TrackingTab reload={reload} bump={() => setReload((n) => n + 1)} />}
-      {tab === "requirements" && isHr && <RequirementsTab reload={reload} bump={() => setReload((n) => n + 1)} setNotice={setNotice} />}
+      {shownTab === "tracking" && isHr && <TrackingTab reload={reload} bump={() => setReload((n) => n + 1)} />}
+      {shownTab === "requirements" && isHr && <RequirementsTab reload={reload} bump={() => setReload((n) => n + 1)} setNotice={setNotice} />}
     </div>
   );
 }

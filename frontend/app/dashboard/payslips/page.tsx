@@ -109,7 +109,7 @@ export default function PayslipsPage() {
         </div>
 
         {data && data.years.length > 1 && (
-          <div className="inline-flex rounded-xl border border-indigo-100 bg-[#F6F7FE] p-0.5">
+          <div className="inline-flex rounded-xl border border-indigo-100 bg-[#F3F7F6] p-0.5">
             {data.years.map((y) => (
               <button
                 key={y}

@@ -6,6 +6,7 @@ import { homeFor } from "@/lib/roleHome";
 import { CARRIED } from "./_filters/useHrFilters";
 import { usePathname, useRouter } from "next/navigation";
 import Bell from "./_notifications/Bell";
+import TopBar from "./_shell/TopBar";
 import { NotificationsProvider } from "./_notifications/NotificationsContext";
 import { ThemeProvider } from "./_theme/ThemeContext";
 import { ThemeIconButton, ThemeRow } from "./_theme/ThemeToggle";
@@ -25,6 +26,8 @@ export type Me = {
   designation: string | null;
   photoAt?: string | null;
   trackerAccessEnabled: boolean;
+  /** Company owner (Admin with the all-companies grant): owes no personal documents. Decided by the server. */
+  documentsExempt?: boolean;
     mustChangePassword?: boolean;
   platform: { id: string; name: string; slug: string; timezone?: string };
 };
@@ -235,31 +238,53 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Main",
     items: [
-      { href: "/dashboard/admin", label: "Dashboard", ready: true, roles: ["ADMIN"], icon: I.grid },
-      { href: "/dashboard/hr", label: "Dashboard", ready: true, roles: ["HR"], icon: I.grid },
+      // ---- ADMIN: the owner control panel (owner-level modules first; the pages are the existing ones, nothing is duplicated) ----
+      { href: "/dashboard/admin", label: "Owner Dashboard", ready: true, roles: ["ADMIN"], icon: I.grid },
+      { href: "/dashboard/employees", label: "User Management", ready: true, roles: ["ADMIN"], icon: I.team },
+      { href: "/dashboard/employees?tab=People", label: "Organization Hierarchy", ready: true, roles: ["ADMIN"], icon: I.team },
+      { href: "/dashboard/companies", label: "Company Management", ready: true, roles: ["ADMIN"], icon: I.building },
+      { href: "/dashboard/projects", label: "Project Management", ready: true, roles: ["ADMIN"], icon: I.tasks },
+      { href: "/dashboard/employees?status=ACTIVE", label: "Employee Overview", ready: true, roles: ["ADMIN"], icon: I.list },
+      { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["ADMIN"], icon: I.pulse },
+      { href: "/dashboard/leave", label: "Leave Oversight", ready: true, roles: ["ADMIN"], icon: I.holidays },
+      { href: "/dashboard/approvals", label: "Task Monitoring", ready: true, roles: ["ADMIN"], icon: I.approvals },
+      { href: "/dashboard/meetings", label: "Meetings", ready: true, roles: ["ADMIN"], icon: I.huddle },
+      { href: "/dashboard/reports?tab=productivity", label: "Productivity", ready: true, roles: ["ADMIN"], icon: I.trend },
+      { href: "/dashboard/payroll", label: "Payroll Oversight", ready: true, roles: ["ADMIN"], icon: I.payroll },
+      { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["ADMIN"], icon: I.folder },
+      { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, roles: ["ADMIN"], icon: I.reports },
+      { href: "/dashboard/leave?tab=review", label: "Approval Centre", ready: true, roles: ["ADMIN"], icon: I.approvals },
+      // ---- HR: daily HR operations ----
+      { href: "/dashboard/hr", label: "HR Dashboard", ready: true, roles: ["HR"], icon: I.grid },
+      { href: "/dashboard/employees", label: "Employees", ready: true, roles: ["HR"], icon: I.team },
+      { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["HR"], icon: I.folder },
+      { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["HR"], icon: I.pulse },
+      { href: "/dashboard/attendance-calendar", label: "Calendar", ready: true, roles: ["HR"], icon: I.holidays },
+      { href: "/dashboard/leave", label: "Leave Management", ready: true, roles: ["HR"], icon: I.holidays },
+      { href: "/dashboard/payroll", label: "Payroll", ready: true, roles: ["HR"], icon: I.payroll },
+      // ---- Manager and Employee ----
       { href: "/dashboard/manager", label: "Today", ready: true, roles: ["MANAGER"], icon: I.today },
       { href: "/dashboard/employee", label: "Today", ready: true, roles: ["EMPLOYEE"], icon: I.today },
       { href: "/dashboard/attendance-calendar", label: "My Calendar", ready: true, roles: ["EMPLOYEE"], icon: I.holidays },
-      { href: "/dashboard/employees", label: "Employees", ready: true, roles: ["HR", "ADMIN"], icon: I.team },
-      { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["HR", "ADMIN"], icon: I.folder },
-      { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.pulse },
-      { href: "/dashboard/attendance-calendar", label: "Calendar", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.holidays },
-      { href: "/dashboard/queries", label: "Query Desk", ready: true, roles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
-      { href: "/dashboard/today", label: "Productivity Tracker", ready: true, roles: ["HR", "ADMIN"], icon: I.today },
-      { href: "/dashboard/approvals", label: "Tasks & Performance", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.approvals },
-      { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, roles: ["MANAGER", "HR", "ADMIN"], icon: I.reports },
+      { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["MANAGER"], icon: I.pulse },
+      { href: "/dashboard/attendance-calendar", label: "Calendar", ready: true, roles: ["MANAGER"], icon: I.holidays },
+      { href: "/dashboard/approvals", label: "Tasks & Performance", ready: true, roles: ["MANAGER"], icon: I.approvals },
+      // HR and Manager
+      { href: "/dashboard/queries", label: "Query Desk", ready: true, roles: ["MANAGER", "HR"], badge: "queries", icon: I.ticket },
+      { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, roles: ["MANAGER", "HR"], icon: I.reports },
     ],
   },
   {
     title: "Me",
     items: [
+      { href: "/dashboard/today", label: "Productivity Tracker", ready: true, roles: ["HR", "ADMIN"], icon: I.today },
       { href: "/dashboard/tasks", label: "Daily Tasks", ready: true, icon: I.tasks },
       { href: "/dashboard/history", label: "My History", ready: true, icon: I.history },
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },
-      { href: "/dashboard/leave", label: "Leave", ready: true, icon: I.holidays },
-      { href: "/dashboard/meetings", label: "Team Huddle", ready: true, icon: I.huddle },
-      { href: "/dashboard/policies", label: "Policies", ready: true, icon: I.shield },
+      { href: "/dashboard/leave", label: "Leave", ready: true, notRoles: ["HR", "ADMIN"], icon: I.holidays },
+      { href: "/dashboard/meetings", label: "Team Huddle", ready: true, notRoles: ["ADMIN"], icon: I.huddle },
+      { href: "/dashboard/policies", label: "Policies", ready: true, notRoles: ["ADMIN"], icon: I.shield },
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, icon: I.receipt },
       { href: "/dashboard/queries", label: "Complaint Centre", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/talk-to-management", label: "Talk to Management", ready: true, roles: ["EMPLOYEE", "MANAGER", "HR"], icon: I.lock },
@@ -268,25 +293,20 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
-    // Hiring is its own section, not part of Settings and not part of
-    // Approvals. Approvals means a manager clearing someone's daily tasks;
-    // this is HR clearing documents. Same word, different job.
+    // Hiring is HR's work: joiners and offer letters. Admin reaches them by address if ever needed; they are not in the owner menu.
     title: "Hiring",
     items: [
-      { href: "/dashboard/candidates", label: "Joiners", ready: true, roles: ["HR", "ADMIN"], icon: I.userplus },
-      { href: "/dashboard/offers", label: "Offer letters", ready: true, roles: ["HR", "ADMIN"], icon: I.mail },
+      { href: "/dashboard/candidates", label: "Recruitment / Joiners", ready: true, roles: ["HR"], icon: I.userplus },
+      { href: "/dashboard/offers", label: "Offer Letters", ready: true, roles: ["HR"], icon: I.mail },
     ],
   },
   {
     title: "Settings",
     items: [
-      { href: "/dashboard/projects", label: "Projects", ready: true, roles: ["HR", "ADMIN"], icon: I.tasks },
-      { href: "/dashboard/companies", label: "Companies", ready: true, roles: ["HR", "ADMIN"], icon: I.building },
-      { href: "/dashboard/audit-logs", label: "Audit log", ready: true, roles: ["HR", "ADMIN"], icon: I.list },
+      // Admin only: organisation-wide controls. HR has none of these.
+      { href: "/dashboard/audit-logs", label: "Audit Logs", ready: true, roles: ["ADMIN"], icon: I.list },
+      { href: "/dashboard/employees?tab=Teams", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
-      { href: "/dashboard/payroll", label: "Payroll", ready: true, roles: ["HR", "ADMIN"], icon: I.payroll },
-      { href: "/dashboard/employees?tab=Teams", label: "Teams, shifts & rules", ready: true, roles: ["ADMIN"], icon: I.admin },
-      { href: "/dashboard/employees?tab=Teams", label: "Teams", ready: true, roles: ["HR"], icon: I.admin },
     ],
   },
 ];
@@ -422,6 +442,9 @@ export default function DashboardLayout({
   }
 
   const fullName = `${me.firstName} ${me.lastName}`.trim();
+  // The page title for the header: the sidebar label of the current page, the dashboard name on the person's own home.
+  const navItem = GROUPS.flatMap((g) => g.items).find((i) => i.href.split("?")[0] === pathname && (!i.roles || i.roles.includes(me.role)) && !(i.notRoles ?? []).includes(me.role));
+  const headerTitle = pathname === homeFor(me.role) ? (dashboardTitle(me.role) ?? "Today") : pathname === "/dashboard/profile" ? "My Profile" : (navItem?.label ?? "Dashboard");
   const groups = GROUPS.map((g) => ({
     ...g,
     items: g.items.filter(
@@ -432,10 +455,18 @@ export default function DashboardLayout({
   })).filter((g) => g.items.length > 0);
 
   const sidebar = (
-    <aside className="flex h-full w-64 shrink-0 flex-col rounded-3xl bg-[var(--nav-bg)] shadow-[var(--shadow-lift)]">
+    <aside className="flex h-full w-64 shrink-0 flex-col rounded-2xl bg-[var(--nav-bg)] shadow-[var(--shadow-card)]">
+      {/* Compact brand and company identity */}
+      <div className="flex shrink-0 items-center gap-2.5 px-5 pb-1 pt-5">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-[13px] font-bold text-white">H</div>
+        <div className="min-w-0">
+          <p className="truncate text-[14px] font-bold leading-tight tracking-tight text-slate-900">Avatar HRMS</p>
+          <p className="truncate text-[11px] leading-tight text-[var(--text-secondary)]" title={me.platform.name}>{me.platform.name}</p>
+        </div>
+      </div>
       {/* The ONE place the signed-in person is shown: their photo (or initials), full name, the My Profile link and the notification bell with its
           unread count. All of it comes from the authenticated user (/auth/me), for every role. */}
-      <div className="flex shrink-0 items-center gap-2.5 px-5 pb-4 pt-6">
+      <div className="flex shrink-0 items-center gap-2.5 px-5 pb-3 pt-4">
         {/* a mouse shortcut next to the My Profile link: hidden from screen readers and the tab order so the same link is not announced twice */}
         <Link href="/dashboard/profile" aria-hidden="true" tabIndex={-1} className="shrink-0 rounded-full">
           <Avatar userId={me.id} name={fullName} photoAt={me.photoAt} size={40} />
@@ -450,12 +481,12 @@ export default function DashboardLayout({
             My Profile
           </Link>
         </div>
-        <div className="ml-auto shrink-0"><Bell /></div>
+        <div className="ml-auto shrink-0 lg:hidden"><Bell /></div>
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto pb-4">
         {groups.map((group) => (
-          <div key={group.title} className="mb-4">
+          <div key={group.title} className="mb-3">
             <p className="px-6 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
               {group.title}
             </p>
@@ -495,7 +526,7 @@ export default function DashboardLayout({
                       e.preventDefault();
                       router.push(`${item.href}${item.href.includes("?") ? "&" : "?"}${carry.toString()}`);
                     }}
-                    className={`group relative mx-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] ${
+                    className={`group relative mx-3 flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] ${
                       active
                         ? "bg-[var(--nav-active-bg)] font-semibold text-[var(--nav-active)]"
                         : "text-[var(--nav-text)] hover:bg-[var(--nav-hover)] hover:text-slate-900"
@@ -513,7 +544,7 @@ export default function DashboardLayout({
                     {/* The reference marks the current page with a bar on the
                         card's outer edge, readable from across a desk. */}
                     {active && (
-                      <span className="absolute -right-3 top-1/2 h-8 w-1 -translate-y-1/2 rounded-l bg-[var(--nav-active)]" />
+                      <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r bg-[var(--nav-active)]" />
                     )}
                   </Link>
                 );
@@ -524,7 +555,7 @@ export default function DashboardLayout({
       </nav>
 
       {/* Pinned to the bottom: the theme switch and Logout only. */}
-      <div className="shrink-0 border-t border-slate-100 p-3">
+      <div className="shrink-0 border-t border-[var(--border)] p-3">
         <ThemeRow />
         <button
           onClick={signOut}
@@ -579,6 +610,8 @@ export default function DashboardLayout({
             </p>
             <div className="ml-auto flex shrink-0 items-center gap-0.5"><ThemeIconButton /><Bell /></div>
           </header>
+
+          <TopBar me={me} title={headerTitle} onSignOut={signOut} />
 
           <main className="animate-in">{children}</main>
         </div>

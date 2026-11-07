@@ -103,6 +103,7 @@ export async function updateEmployee(viewerId: string, userId: string, data: Edi
 
   const role = USER_ROLES.find((r) => r === data.role);
   if (role && PRIVILEGED.includes(role) && viewerRole !== "ADMIN") throw new Error("ROLE_NOT_ALLOWED");
+  if (role && role !== String(current.role) && viewerRole !== "ADMIN") throw new Error("ROLE_NOT_ALLOWED"); // changing a system role is Admin-only
   const status = USER_STATUSES.find((s) => s === data.status);
   if (viewerRole !== "ADMIN" && userId === viewer.id && (role || data.status !== undefined || data.trackerAccessEnabled !== undefined)) throw new Error("ROLE_NOT_ALLOWED");
   const onboardingStatus = ONBOARDING_STATUSES.find((s) => s === data.onboardingStatus);
@@ -156,6 +157,7 @@ export async function updateEmployee(viewerId: string, userId: string, data: Edi
   if (data.reportsToId !== undefined) {
     const next = data.reportsToId || null;
     if (next !== (current.reportsToId ?? null)) {
+      if (viewerRole !== "ADMIN") throw new Error("HIERARCHY_ADMIN_ONLY"); // the reporting hierarchy is configured by Admin only
       if (next) {
         if (next === userId) throw new Error("BAD_MANAGER");
         const m = await prisma.user.findUnique({ where: { id: next }, select: { id: true, platformId: true, role: true, status: true } });
@@ -310,7 +312,7 @@ export async function editModel(viewerId: string, userId: string) {
       // The salary is sent only to people who may change it.
       monthlySalary: mayEditSalary ? (u.monthlySalary === null ? null : Number(u.monthlySalary)) : undefined,
     },
-    permissions: { canEditPhoto: access.role === "HR" || access.role === "ADMIN", canEditSalary: mayEditSalary, canChangeRoles: access.role === "ADMIN" || (access.role === "HR" && !PRIVILEGED.includes(String(u.role)) && u.id !== viewerId), employeeCodeLocked: true, companyLocked: true },
+    permissions: { canEditPhoto: access.role === "HR" || access.role === "ADMIN", canEditSalary: mayEditSalary, canChangeRoles: access.role === "ADMIN", canEditHierarchy: access.role === "ADMIN", employeeCodeLocked: true, companyLocked: true },
     dropdowns: await dropdownsFor(viewerId, u.platformId),
   };
 }

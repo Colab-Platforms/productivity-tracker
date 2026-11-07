@@ -21,7 +21,7 @@
 
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma.js";
-import { viewerIsOwner } from "../../lib/owner.js";
+import { viewerIsOwner, ownerAdminIds } from "../../lib/owner.js";
 import { saveUpload, readStored, deleteStored, contentTypeFor } from "../../lib/storage.js";
 import { parseIsoDay } from "../../lib/dates.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
@@ -380,10 +380,12 @@ export async function listCandidates(viewerId: string) {
   // An owner hires into every company, so their Joiners list must span them.
   const owner = await viewerIsOwner(viewerId);
 
+  const owners = await ownerAdminIds(); // owners are not joiners and not part of document compliance
   const [candidates, requirements, config] = await Promise.all([
     prisma.user.findMany({
       where: {
         ...(owner ? {} : { platformId: viewer.platformId }),
+        ...(owners.length ? { id: { notIn: owners } } : {}),
         onboardingStatus: { not: "ACTIVE" },
       },
       select: {

@@ -2,7 +2,7 @@
 // it changes (shifts and thresholds are Admin-only writes), so hiding a tab is never the only protection.
 //
 //   Admin: People, Teams, Shifts, Thresholds, Leave   (the whole page)
-//   HR:    People, Teams, Leave                       (employee records, teams and leave; no organization-wide rules)
+//   HR:    People, Leave                              (employee records and leave records; teams/projects, shifts and rules are Admin-only)
 //   others: none (the page is not theirs; the server refuses them too)
 
 export const ALL_TABS = ["People", "Teams", "Shifts", "Thresholds", "Leave"] as const;
@@ -10,7 +10,7 @@ export type Tab = (typeof ALL_TABS)[number];
 
 export function tabsFor(role: string | null | undefined): Tab[] {
   if (role === "ADMIN") return [...ALL_TABS];
-  if (role === "HR") return ["People", "Teams", "Leave"];
+  if (role === "HR") return ["People", "Leave"];
   return [];
 }
 

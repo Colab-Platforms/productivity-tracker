@@ -73,7 +73,7 @@ export default function OfferPage() {
 
   if (!offer) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#F6F7FE] px-4">
+      <main className="flex min-h-screen items-center justify-center bg-[#F3F7F6] px-4">
         <div className="max-w-sm text-center">
           <p className="text-sm text-slate-600">
             There&apos;s no offer waiting for you.

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { plural } from "@/lib/plural";
 import { useMe } from "../layout";
+import { useRoleGate } from "../_routing/useRoleGate";
 
 // ---------------------------------------------------------------------------
 // PROJECTS
@@ -71,6 +72,12 @@ const say = (err: unknown) => {
 };
 
 export default function ProjectsPage() {
+  const { me, allowed } = useRoleGate(["ADMIN"]); // Project management is Admin-only; anyone else is sent to their own home
+  if (!me || !allowed) return <div className="p-8"><p className="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-[var(--shadow-card)]">Project management is only available to Admin.</p></div>;
+  return <ProjectsInner />;
+}
+
+function ProjectsInner() {
   const me = useMe();
 
   const [data, setData] = useState<Data | null>(null);
@@ -304,7 +311,7 @@ export default function ProjectsPage() {
                               : "No manager — nobody approves this work"}
                           </p>
                         </div>
-                        <span className="shrink-0 rounded-full bg-[#EEF0FD] px-2.5 py-1 text-xs font-medium text-slate-600">
+                        <span className="shrink-0 rounded-full bg-[#E7F6F1] px-2.5 py-1 text-xs font-medium text-slate-600">
                           {p.members.length}{" "}
                           {p.members.length === 1 ? "person" : "people"}
                           {p.directReports.length > 0 ? ` + ${p.directReports.length} report directly` : ""}
@@ -413,7 +420,7 @@ export default function ProjectsPage() {
                                 {p.coManagers.map((c) => (
                                   <span
                                     key={c.id}
-                                    className="inline-flex items-center gap-1.5 rounded-full bg-[#EEF0FD] px-2.5 py-1 text-xs text-slate-700"
+                                    className="inline-flex items-center gap-1.5 rounded-full bg-[#E7F6F1] px-2.5 py-1 text-xs text-slate-700"
                                   >
                                     {c.name}
                                     {canManage && (

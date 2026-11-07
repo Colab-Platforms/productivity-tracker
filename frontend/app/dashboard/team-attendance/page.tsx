@@ -297,7 +297,7 @@ export default function AttendancePage() {
       )}
 
       {selected.length === 0 && live && nobodyCanBeInvited && rows.length > 0 && (
-        <p className="rounded-xl bg-[#F6F7FE] px-4 py-3 text-sm text-slate-600">
+        <p className="rounded-xl bg-[#F3F7F6] px-4 py-3 text-sm text-slate-600">
           Nobody is clocked in right now. You can invite people to a live meeting once they clock in; to meet someone who isn&apos;t clocked in,{" "}
           <Link href="/dashboard/meetings" className="font-medium text-indigo-700 underline underline-offset-2">schedule a meeting</Link>.
         </p>
@@ -362,7 +362,7 @@ export default function AttendancePage() {
               <tbody>
                 {groups.map(([group, members]) => (
                   <Fragment key={group}>
-                    <tr className="border-t border-indigo-100 bg-[#F6F7FE]">
+                    <tr className="border-t border-indigo-100 bg-[#F3F7F6]">
                       <td colSpan={15} className="px-4 py-2">
                         <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{group}</span>
                         <span className="ml-2 text-xs text-slate-400">{members.length} {members.length === 1 ? "person" : "people"}</span>

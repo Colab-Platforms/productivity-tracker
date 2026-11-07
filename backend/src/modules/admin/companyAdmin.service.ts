@@ -90,7 +90,8 @@ type Grants = { all: boolean; companyIds: string[] };
 async function grantor(viewerId: string) {
   const [a, me] = await Promise.all([accessFor(viewerId), prisma.user.findUnique({ where: { id: viewerId }, select: { role: true } })]);
   const top = a.all;
-  if (!top && me?.role !== "ADMIN") throw new Error("ACCESS_NOT_ALLOWED");
+  // Company access is handed out by Admin only. An HR account never does, even one that itself holds the all-companies grant.
+  if (me?.role !== "ADMIN") throw new Error("ACCESS_NOT_ALLOWED");
   return { top };
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import { useMe } from "../layout";
+import { useRoleGate } from "../_routing/useRoleGate";
 import { Modal } from "../_employees/Modal";
 
 // ---------------------------------------------------------------------------
@@ -45,7 +46,8 @@ function useData(reload: number, enabled: boolean) {
 
 export default function CompaniesPage() {
   const me = useMe();
-  const allowed = me?.role === "HR" || me?.role === "ADMIN";
+  const { allowed } = useRoleGate(["ADMIN"]); // Admin only; anyone else is sent to their own home
+  void me;
   const [reload, setReload] = useState(0);
   const { data, error } = useData(reload, allowed);
   const [editing, setEditing] = useState<Company | "new" | null>(null);
@@ -54,7 +56,7 @@ export default function CompaniesPage() {
   if (me && !allowed) {
     return (
       <div className="p-8">
-        <p className="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-[var(--shadow-card)]">Company management is only available to HR and Admin.</p>
+        <p className="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-[var(--shadow-card)]">Company management is only available to Admin.</p>
       </div>
     );
   }

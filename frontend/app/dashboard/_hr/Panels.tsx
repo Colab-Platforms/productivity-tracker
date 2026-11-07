@@ -46,7 +46,7 @@ export function Skeleton({ className = "" }: { className?: string }) {
 
 export function EmptyNote({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-24 items-center justify-center rounded-xl bg-[#F6F7FE] px-4 py-6 text-center text-xs text-slate-500">
+    <div className="flex min-h-24 items-center justify-center rounded-xl bg-[#F3F7F6] px-4 py-6 text-center text-xs text-slate-500">
       {children}
     </div>
   );
@@ -102,7 +102,7 @@ export function StatTile({
         <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${TONES[tone]}`}>
           {icon}
         </span>
-        <span className="rounded-full bg-[#EEF0FD] px-2 py-0.5 text-[10px] font-medium text-indigo-600">
+        <span className="rounded-full bg-[#E7F6F1] px-2 py-0.5 text-[10px] font-medium text-indigo-600">
           {tag}
         </span>
       </div>
@@ -153,7 +153,7 @@ export function WeekStrip({
             className={`flex flex-col items-center rounded-xl px-1 py-2 text-center transition-colors ${
               isSelected
                 ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
-                : "bg-[#F6F7FE] text-slate-600 hover:bg-indigo-50"
+                : "bg-[#F3F7F6] text-slate-600 hover:bg-indigo-50"
             }`}
           >
             <span className={`text-[10px] ${isSelected ? "text-indigo-100" : "text-slate-400"}`}>
@@ -193,7 +193,7 @@ export function ApprovalRow({
   return (
     <Link
       href={href}
-      className="flex items-center gap-3 rounded-xl bg-[#F6F7FE] px-3 py-2.5 transition-colors hover:bg-indigo-50"
+      className="flex items-center gap-3 rounded-xl bg-[#F3F7F6] px-3 py-2.5 transition-colors hover:bg-indigo-50"
     >
       <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold tabular-nums ${TONES[tone]}`}>
         {count}
@@ -251,7 +251,7 @@ export function EventsList({ holidays, today }: { holidays: Holiday[]; today: st
       {holidays.map((h) => {
         const left = Math.round((parseDay(h.date).getTime() - parseDay(today).getTime()) / 86_400_000);
         return (
-          <li key={h.id} className="flex items-center gap-3 rounded-xl bg-[#F6F7FE] px-3 py-2.5">
+          <li key={h.id} className="flex items-center gap-3 rounded-xl bg-[#F3F7F6] px-3 py-2.5">
             <span className="flex h-9 w-9 shrink-0 flex-col items-center justify-center rounded-lg bg-white text-indigo-600 shadow-sm">
               <span className="text-[9px] font-medium uppercase leading-none text-slate-400">
                 {parseDay(h.date).toLocaleDateString("en-IN", { month: "short", timeZone: "UTC" })}
@@ -306,7 +306,7 @@ export function PerformanceTable({ people }: { people: Person[] }) {
               {members.map((p, i) => {
             const bar = Math.min(100, Math.round((p.attainment || 0) * 100));
             return (
-              <tr key={p.userId} className={i % 2 === 0 ? "bg-[#F8F9FE]" : ""}>
+              <tr key={p.userId} className={i % 2 === 0 ? "bg-[#F5F8F7]" : ""}>
                 <td className="rounded-l-xl px-3 py-2.5">
                   <div className="flex items-center gap-2.5">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-semibold text-indigo-700">
@@ -317,7 +317,7 @@ export function PerformanceTable({ people }: { people: Person[] }) {
                       <span className="block truncate text-[11px] text-slate-400">
                         {p.designation ?? roleLabel(p.role)}
                         {p.employeeCode ? ` · ${p.employeeCode}` : ""}
-                        {p.role === "MANAGER" && <span className="ml-1.5 rounded-full bg-[#EEF0FD] px-1.5 py-0.5 text-[10px] font-medium text-indigo-700" title="Attendance is shown, but managers are left out of the team productivity figures">manager</span>}
+                        {p.role === "MANAGER" && <span className="ml-1.5 rounded-full bg-[#E7F6F1] px-1.5 py-0.5 text-[10px] font-medium text-indigo-700" title="Attendance is shown, but managers are left out of the team productivity figures">manager</span>}
                       </span>
                     </span>
                   </div>

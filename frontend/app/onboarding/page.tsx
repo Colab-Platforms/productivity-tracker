@@ -87,7 +87,7 @@ const STAGE_COPY: Record<string, { title: string; body: string }> = {
 };
 
 const STATUS_CHIP: Record<string, string> = {
-  REQUESTED: "bg-[#EEF0FD] text-slate-500",
+  REQUESTED: "bg-[#E7F6F1] text-slate-500",
   SUBMITTED: "bg-sky-50 text-sky-700",
   APPROVED: "bg-emerald-50 text-emerald-700",
   REJECTED: "bg-rose-50 text-rose-700",
@@ -253,7 +253,7 @@ export default function OnboardingPage() {
                   {data.progress.done} of {data.progress.total} uploaded
                 </p>
               </div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#EEF0FD]">
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#E7F6F1]">
                 <div
                   className="h-full bg-indigo-600 transition-all duration-500"
                   style={{ width: `${pct}%` }}
@@ -355,7 +355,7 @@ function ChecklistRow({
 
       <span
         className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-medium ${
-          STATUS_CHIP[item.status] ?? "bg-[#EEF0FD] text-slate-500"
+          STATUS_CHIP[item.status] ?? "bg-[#E7F6F1] text-slate-500"
         }`}
       >
         {STATUS_WORD[item.status] ?? item.status.toLowerCase()}

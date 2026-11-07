@@ -140,7 +140,7 @@ const DAY_LABELS = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const STATUS_CHIP: Record<string, string> = {
   ACTIVE: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   INVITED: "bg-sky-50 text-sky-700 ring-sky-200",
-  CANDIDATE: "bg-[#F6F7FE] text-slate-600 ring-slate-200",
+  CANDIDATE: "bg-[#F3F7F6] text-slate-600 ring-slate-200",
   SUSPENDED: "bg-amber-50 text-amber-700 ring-amber-200",
   EXITED: "bg-rose-50 text-rose-700 ring-rose-200",
 };
@@ -216,7 +216,7 @@ export default function AdminPage() {
         </p>
       </div>
 
-      <div className="inline-flex rounded-xl border border-indigo-100 bg-[#F6F7FE] p-0.5">
+      <div className="inline-flex rounded-xl border border-indigo-100 bg-[#F3F7F6] p-0.5">
         {tabs.map((t) => (
           <button
             key={t}
@@ -352,7 +352,7 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)]">
         <table className="min-w-full text-sm">
-          <thead className="bg-[#F6F7FE] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+          <thead className="bg-[#F3F7F6] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Code</th>
@@ -388,7 +388,7 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
                 <td className="px-4 py-3">
                   <span
                     className={`rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${
-                      STATUS_CHIP[p.status] ?? "bg-[#F6F7FE] text-slate-600 ring-slate-200"
+                      STATUS_CHIP[p.status] ?? "bg-[#F3F7F6] text-slate-600 ring-slate-200"
                     }`}
                   >
                     {p.status.toLowerCase()}
@@ -795,7 +795,7 @@ type EditModel = {
     designation: string | null; dateOfJoining: string | null; reportsToId: string | null; shiftId: string | null; trackerAccessEnabled: boolean;
     employmentType: string | null; companyId: string; company: string; departments: { id: string; name: string }[]; monthlySalary?: number | null; photoAt?: string | null;
   };
-  permissions: { canEditSalary: boolean; canChangeRoles: boolean };
+  permissions: { canEditSalary: boolean; canChangeRoles: boolean; canEditHierarchy?: boolean };
   dropdowns: {
     departments: { id: string; name: string }[]; designations: string[]; managers: { id: string; name: string; employeeCode: string | null; role: string }[];
     shifts: { id: string; name: string; startTime: string; endTime: string }[]; statuses: string[]; employeeTypes: string[];
@@ -862,7 +862,7 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
     if (f.email.trim().toLowerCase() !== p.email.toLowerCase()) body.email = f.email;
     if (f.phone.trim() !== (p.phone ?? "")) body.phone = f.phone;
     if (designationChanged) body.designation = f.designation.trim() || null;
-    if ((f.reportsToId || null) !== (p.reportsToId ?? null)) body.reportsToId = f.reportsToId || null;
+    if (model!.permissions.canEditHierarchy && (f.reportsToId || null) !== (p.reportsToId ?? null)) body.reportsToId = f.reportsToId || null;
     if ((f.shiftId || null) !== (p.shiftId ?? null)) body.shiftId = f.shiftId || null;
     if ((f.dateOfJoining || null) !== (p.dateOfJoining ?? null)) body.dateOfJoining = f.dateOfJoining || null;
     if (f.status !== p.status) body.status = f.status;
@@ -949,18 +949,22 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
           {teamIds.map((id) => (
             <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 py-1 pl-2.5 pr-1 text-xs text-indigo-700">
               {deptName(id)}
-              <button type="button" onClick={() => setTeamIds((cur) => cur.filter((x) => x !== id))} aria-label={`Remove from ${deptName(id)}`} className="rounded-full p-0.5 hover:bg-indigo-100">
+              <button type="button" hidden={!model.permissions.canEditHierarchy} onClick={() => setTeamIds((cur) => cur.filter((x) => x !== id))} aria-label={`Remove from ${deptName(id)}`} className="rounded-full p-0.5 hover:bg-indigo-100">
                 <svg viewBox="0 0 20 20" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="m5 5 10 10M15 5 5 15" /></svg>
               </button>
             </span>
           ))}
         </div>
+        {model.permissions.canEditHierarchy ? (
         <Select value="" onChange={(v) => v && setTeamIds((cur) => (cur.includes(v) ? cur : [...cur, v]))}>
           <option value="">Add a department…</option>
           {dd.departments.filter((d) => !teamIds.includes(d.id)).map((d) => (
             <option key={d.id} value={d.id}>{d.name}</option>
           ))}
         </Select>
+        ) : (
+          <p className="text-xs text-slate-500">Only an Admin can change department / project assignments.</p>
+        )}
         {(teamAdds.length > 0 || teamRemoves.length > 0) && (
           <p className="mt-2 text-xs text-amber-700">
             Not saved yet:{teamAdds.length > 0 ? ` add to ${teamAdds.map(deptName).join(", ")}.` : ""}
@@ -989,8 +993,8 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
         )}
       </Field>
 
-      <Field label="Reporting manager" hint="Active managers and admins of this company.">
-        <Select value={f.reportsToId} onChange={(v) => set("reportsToId", v)}>
+      <Field label="Reporting manager" hint={model.permissions.canEditHierarchy ? "Active managers and admins of this company." : "Only an Admin can change who a person reports to."}>
+        <Select value={f.reportsToId} onChange={(v) => set("reportsToId", v)} disabled={!model.permissions.canEditHierarchy}>
           <option value="">Nobody: top of the chain</option>
           {currentManagerMissing && <option value={f.reportsToId}>{person.reportsTo?.name ?? "Current manager"} (current)</option>}
           {managerOptions.map((m) => (
@@ -1195,7 +1199,7 @@ function TeamsTab({ options, onError, onDone }: TabProps) {
                 </p>
               </div>
               {t.manager && (
-                <span className="rounded-md bg-[#EEF0FD] px-2 py-0.5 text-xs text-slate-600">
+                <span className="rounded-md bg-[#E7F6F1] px-2 py-0.5 text-xs text-slate-600">
                   {t.manager.name}
                 </span>
               )}
@@ -1208,7 +1212,7 @@ function TeamsTab({ options, onError, onDone }: TabProps) {
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {t.coManagers.length === 0 && <span className="text-xs text-slate-400">None</span>}
                 {t.coManagers.map((c) => (
-                  <span key={c.id} className="inline-flex items-center gap-1 rounded-full bg-[#EEF0FD] py-1 pl-2.5 pr-1.5 text-xs text-slate-700">
+                  <span key={c.id} className="inline-flex items-center gap-1 rounded-full bg-[#E7F6F1] py-1 pl-2.5 pr-1.5 text-xs text-slate-700">
                     {c.name}
                     <button type="button" onClick={() => removeCoManager(t.id, c.id)} aria-label={`Remove ${c.name}`} className="text-slate-400 hover:text-rose-600">×</button>
                   </span>
@@ -1370,7 +1374,7 @@ function ShiftsTab({ onError, onDone }: TabProps) {
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)]">
         <table className="min-w-full text-sm">
-          <thead className="bg-[#F6F7FE] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+          <thead className="bg-[#F3F7F6] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Hours</th>
@@ -1765,7 +1769,7 @@ function LeaveTab({ options, onError, onDone }: TabProps) {
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)]">
         <table className="min-w-full text-sm">
-          <thead className="bg-[#F6F7FE] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+          <thead className="bg-[#F3F7F6] text-left text-xs font-medium uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-4 py-3">Date</th>
               <th className="px-4 py-3">Person</th>
@@ -1895,7 +1899,7 @@ function Input({
       placeholder={placeholder}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-indigo-500 disabled:bg-[#F6F7FE] disabled:text-slate-400"
+      className="w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-indigo-500 disabled:bg-[#F3F7F6] disabled:text-slate-400"
     />
   );
 }
@@ -1904,16 +1908,19 @@ function Select({
   value,
   onChange,
   children,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
   children: React.ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <select
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+      className="w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
     >
       {children}
     </select>
