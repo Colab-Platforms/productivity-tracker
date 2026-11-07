@@ -12,7 +12,8 @@ import { narrowIds, resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { NO_FILTERS, type HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
-import { huddleBreakdowns } from "../meetings/participation.service.js";
+import { huddleBreakdowns, huddleSecondsByDay } from "../meetings/participation.service.js";
+import { projectsAndManagers } from "./peopleDetails.js";
 import { awayRows, isDiscussion, splitAwayTime } from "../tracker/activityClass.js";
 import { photoStamps } from "../photos/photos.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
@@ -278,12 +279,15 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string, filt
   const byUser = new Map(sessions.map((s) => [s.userId, s]));
   const onLeave = new Set(leaveDays.map((l) => l.userId));
   const huddle = await huddleBreakdowns(sessions as never, now);
+  const details = await projectsAndManagers(ids); // project names + reporting manager, for the export (additive fields)
 
   const rows = people.map((p) => {
     const t = targetsFor(p);
     const s = byUser.get(p.id) ?? null;
+    const extra = { projects: details.get(p.id)?.projects ?? [], reportingManager: details.get(p.id)?.reportingManager ?? null };
     if (!s) {
       return {
+        ...extra,
         userId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), employeeCode: p.employeeCode, teamName: t.teamName,
         hasSession: false, dayState: onLeave.has(p.id) ? "ON_LEAVE" : isToday ? "NOT_CLOCKED_IN" : "NO_RECORD",
         loginAt: null, logoutAt: null, working: false, shiftSeconds: null,
@@ -302,6 +306,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string, filt
     }
 
     return {
+      ...extra,
       userId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), employeeCode: p.employeeCode, teamName: t.teamName,
       hasSession: true, dayState: s.status === "COMPLETED" ? "CLOCKED_OUT" : "WORKING",
       loginAt: s.loginAt.toISOString(), logoutAt: s.logoutAt ? s.logoutAt.toISOString() : null,
@@ -402,6 +407,9 @@ export async function getAttendanceReport(
     (m) => (!q.userId || m.id === q.userId) && (!q.teamId || m.teamId === q.teamId) && (!q.shift || m.shift?.name === q.shift)
   );
   const base = { generatedAt: new Date().toISOString(), timezone, today: today.toISOString().slice(0, 10), from: fromIso, to: toIso, options, scope: narrowed.scope };
+  // Project names, reporting manager and Team Huddle time per day, for the export (additive fields; batched reads for the chosen people only).
+  const chosenIds = chosen.map((m) => m.id);
+  const [details, huddleByDay] = chosen.length ? await Promise.all([projectsAndManagers(chosenIds), huddleSecondsByDay(chosenIds, from, to)]) : [new Map(), new Map<string, number>()];
   if (chosen.length === 0) {
     return { ...base, kpis: { employees: 0, present: 0, halfDay: 0, absent: 0, notYet: 0, workingDays: 0, attendancePct: null as number | null, totalWorkedHours: 0, avgWorkedHours: null as number | null }, rows: [] as unknown[] };
   }
@@ -535,6 +543,9 @@ export async function getAttendanceReport(
         name: who.name,
         employeeCode: who.code,
         teamName: who.teamName,
+        projects: details.get(month.userId)?.projects ?? [],
+        reportingManager: details.get(month.userId)?.reportingManager ?? null,
+        huddleHours: huddleByDay.has(`${month.userId}|${d.date}`) ? Math.round((huddleByDay.get(`${month.userId}|${d.date}`)! / 3600) * 100) / 100 : null,
         date: d.date,
         shiftName: who.shift?.name ?? null,
         shiftStart: who.shift?.startTime ?? null,

@@ -20,6 +20,9 @@ import { selfManagedTaskIdsOf } from "../tasks/tasks.self.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { localDayOf, parseIsoDay, platformToday, zonedToUtc } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
+import { projectsAndManagers } from "./peopleDetails.js";
+import { entryDetailsFor } from "../tasks/tasks.entry.js";
+import { progressOf } from "../tasks/tasks.entry.logic.js";
 
 const MAX_RANGE_DAYS = 93;
 const MAX_TARGET = 1000;
@@ -152,6 +155,7 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   const plannedBy = new Map(planned.map((r) => [`${r.userId}|${rangeDay(r.date)}`, r._count._all]));
   const legacyBy = new Map(legacy.map((r) => [`${r.userId}|${rangeDay(r.date)}`, r._count._all]));
 
+  const details = await projectsAndManagers(ids);
   const out = people.map((p) => {
     const t = resolveTarget(targets.rows, p.platformId, p.id, p.teamId);
     const days: { date: string; completed: number | null; percent: number | null; state: "DATA" | "NO_TASK_DATA" }[] = [];
@@ -179,6 +183,7 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
     const targetTotal = t.perDay ? t.perDay * dataDays : null;
     return {
       userId: p.id, name: p.name, employeeCode: p.code, teamName: p.teamName,
+      projects: details.get(p.id)?.projects ?? [], reportingManager: details.get(p.id)?.reportingManager ?? null,
       targetPerDay: t.perDay, targetSource: t.source,
       daysWithData: dataDays,
       completedTotal: dataDays > 0 ? completedTotal : null,
@@ -189,6 +194,73 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   });
 
   return { ...base, scope, targetsReady: targets.ready, people: out };
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE TASKS BEHIND THE REPORT (for the Excel export)
+// Same people as the report (scopedPeople: the viewer's authorised list narrowed by the filters, never widened), same range, same
+// exclusions (a manager's own self-managed tasks are not team productivity). One row per task whose task DATE is in the range, plus any
+// task COMPLETED in the range (that is how the report counts it, in the day it was finished). `counted` says whether the report counts the
+// task: the SAME rule as getProductivity (completed, approved, finished inside the range, not rated below the "completed" threshold), so
+// the number of counted rows equals the report's "Tasks completed" total.
+// ---------------------------------------------------------------------------------------------
+export async function getProductivityTasks(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters }) {
+  const viewer = await getViewer(viewerId);
+  const tz = viewer.platform.timezone;
+  const today = platformToday(tz).toISOString().slice(0, 10);
+  const fromIso = q.from ? parseIsoDay(q.from).toISOString().slice(0, 10) : today;
+  const toIsoRaw = q.to ? parseIsoDay(q.to).toISOString().slice(0, 10) : fromIso;
+  if (toIsoRaw < fromIso) throw new Error("BAD_RANGE");
+  const dayCount = (Date.parse(toIsoRaw) - Date.parse(fromIso)) / 86400000 + 1;
+  if (dayCount > MAX_RANGE_DAYS) throw new Error("RANGE_TOO_LONG");
+  const toIso = toIsoRaw > today ? today : toIsoRaw;
+  const base = { generatedAt: new Date().toISOString(), timezone: tz, today, from: fromIso, to: toIso };
+
+  const { people, scope } = await scopedPeople(viewer, q);
+  if (people.length === 0 || toIso < fromIso) return { ...base, scope, tasks: [] as unknown[] };
+  const ids = people.map((p) => p.id);
+  const byPerson = new Map(people.map((p) => [p.id, p]));
+  const startUtc = zonedToUtc(fromIso, "00:00", tz);
+  const endUtc = zonedToUtc(addDays(toIso, 1), "00:00", tz);
+
+  const selfIds = await selfManagedTaskIdsOf(ids);
+  const rows = await prisma.dailyTask.findMany({
+    where: {
+      userId: { in: ids },
+      id: { notIn: selfIds },
+      OR: [{ date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, { ...COUNTED, completedAt: { gte: startUtc, lt: endUtc } }],
+    },
+    select: { id: true, userId: true, title: true, description: true, weight: true, status: true, approvalStatus: true, outcome: true, date: true, completedAt: true, team: { select: { name: true } } },
+    orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+  });
+  const taskIds = rows.map((r) => r.id);
+  const [details, people2, countedRows] = await Promise.all([
+    entryDetailsFor(taskIds),
+    projectsAndManagers(ids),
+    keepFullyDone(rows.filter((r) => String(r.status) === "COMPLETED" && String(r.approvalStatus) === "APPROVED" && r.completedAt && r.completedAt >= startUtc && r.completedAt < endUtc)),
+  ]);
+  const counted = new Set(countedRows.map((r) => r.id));
+
+  const tasks = rows.map((t) => {
+    const p = byPerson.get(t.userId)!;
+    const d = details.get(t.id);
+    const status = String(t.status);
+    return {
+      id: t.id, userId: t.userId, employee: p.name, employeeCode: p.code,
+      project: t.team?.name ?? null,
+      reportingManager: people2.get(t.userId)?.reportingManager ?? null, // the person's permanent reporting manager
+      taggedManager: d?.taggedManagerName ?? null, // the manager this task was sent to for approval
+      title: t.title, description: t.description,
+      date: t.date.toISOString().slice(0, 10),
+      priority: String(t.weight),
+      hoursSpent: d?.hoursSpent ?? null,
+      progress: status === "CANCELLED" ? "CANCELLED" : progressOf(status, d?.blocked === true),
+      approvalStatus: String(t.approvalStatus),
+      completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+      counted: counted.has(t.id),
+    };
+  });
+  return { ...base, scope, tasks };
 }
 
 // ---------------------------------------------------------------------------------------------
