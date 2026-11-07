@@ -75,7 +75,7 @@ function Fields({ rows }: { rows: [string, string | null | undefined][] }) {
 }
 
 function NotStored({ what }: { what: string }) {
-  return <p className="rounded-xl bg-[#F6F7FE] px-4 py-6 text-center text-sm text-slate-500">{what} is not recorded in your profile yet. If HR needs it, they will ask you for it.</p>;
+  return <p className="rounded-xl bg-[#F3F7F6] px-4 py-6 text-center text-sm text-slate-500">{what} is not recorded in your profile yet. If HR needs it, they will ask you for it.</p>;
 }
 
 export default function ProfilePage() {
@@ -137,6 +137,9 @@ export default function ProfilePage() {
     load();
   }, [load]);
 
+  // A company owner has no personal documents: a link straight to that tab lands on Personal instead of an empty tab.
+  if (me && me.documentsExempt && tab === "My Documents") setTab("Personal");
+
   if (!me) return null;
 
   const fullName = `${me.firstName} ${me.lastName}`.trim();
@@ -177,10 +180,8 @@ export default function ProfilePage() {
           {[
             { label: "Sign in with", value: me.employeeCode ?? me.email },
             { label: "Payslips", value: String(published.length) },
-            {
-              label: "Documents",
-              value: docCount === null ? "—" : String(docCount),
-            },
+            // owners owe no personal documents, so there is no document count to show them
+            ...(me.documentsExempt ? [] : [{ label: "Documents", value: docCount === null ? "—" : String(docCount) }]),
             {
               label: "Tracker",
               value: me.trackerAccessEnabled ? "Open" : "Locked",
@@ -204,7 +205,7 @@ export default function ProfilePage() {
 
       {/* ---- profile sections ---- */}
       <div role="tablist" aria-label="Profile sections" className="mb-4 flex flex-wrap gap-1 rounded-xl bg-white p-1 shadow-[var(--shadow-card)] no-print">
-        {TABS.map((t) => (
+        {TABS.filter((t) => !(t === "My Documents" && me.documentsExempt)).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`rounded-lg px-3.5 py-2 text-sm font-medium ${tab === t ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
             {t}
           </button>
@@ -239,7 +240,7 @@ export default function ProfilePage() {
             ]}
           />
         )}
-        {tab === "My Documents" && <MyDocuments />}
+        {tab === "My Documents" && !me.documentsExempt && <MyDocuments />}
       </section>
 
       {/* ---- offer letter ---- */}

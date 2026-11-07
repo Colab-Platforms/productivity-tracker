@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { isOwnerAdmin, ownerAdminIds } from "../../lib/owner.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { isApplicable, scopeMap, typesOf } from "../onboarding/onboarding.service.js";
 
@@ -107,6 +108,10 @@ function checklist(
 
 export async function listMine(userId: string) {
   const me = await who(userId);
+  // Company owners (Admin with the all-companies grant) owe no personal documents: an empty checklist, flagged, never "missing".
+  if (await isOwnerAdmin(userId)) {
+    return { exempt: true, employmentType: null, items: [], archived: [], summary: { required: 0, verified: 0, submitted: 0, rejected: 0, missing: 0 } };
+  }
   const [requirements, docs, types, scopeBy] = await Promise.all([
     prisma.documentRequirement.findMany({ where: { platformId: me.platformId }, orderBy: [{ sortOrder: "asc" }, { label: "asc" }] }),
     prisma.employeeDocument.findMany({ where: { userId }, include: { reviewedBy: { select: { firstName: true, lastName: true } } } }),
@@ -130,10 +135,12 @@ export async function tracking(
   if (wantType && wantType !== "UNSPECIFIED" && !EMPLOYMENT_TYPES.includes(wantType as never)) throw new Error("BAD_EMPLOYMENT_TYPE");
   const teamId = f.teamId ? String(f.teamId) : "";
 
+  const owners = await ownerAdminIds(); // owners are not part of the employee document compliance list or its counts
   const users = await prisma.user.findMany({
     where: {
       platformId: v.platformId,
       status: { notIn: ["EXITED", "SUSPENDED"] },
+      ...(owners.length ? { id: { notIn: owners } } : {}),
       ...(q ? { OR: [{ firstName: { contains: q, mode: "insensitive" as const } }, { lastName: { contains: q, mode: "insensitive" as const } }, { employeeCode: { contains: q, mode: "insensitive" as const } }] } : {}),
       ...(teamId ? { teamMemberships: { some: { teamId, isActive: true } } } : {}),
     },
