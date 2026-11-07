@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { roleLabel } from "@/lib/roles";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
+import { useRoleGate } from "../_routing/useRoleGate";
 import { Modal } from "../_employees/Modal";
 
 // ---------------------------------------------------------------------------
@@ -73,7 +74,8 @@ function useApi<T>(path: string | null, reload: number) {
 
 export default function AuditLogsPage() {
   const me = useMe();
-  const allowed = me?.role === "HR" || me?.role === "ADMIN";
+  const { allowed } = useRoleGate(["ADMIN"]); // the audit log is an Admin (owner) screen; anyone else is sent to their own home
+  void me;
 
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");

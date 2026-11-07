@@ -37,7 +37,7 @@ const run = (fn: (req: Request) => Promise<unknown>) => async (req: Request, res
 };
 
 // Read-only by design: there is deliberately no POST, PATCH or DELETE in this file.
-router.use(requireAuth, requireRole("HR", "ADMIN"));
+router.use(requireAuth, requireRole("ADMIN"));
 router.get("/filters", run((req) => audit.filters(req.user!.userId)));
 router.get("/", run((req) => audit.listLogs(req.user!.userId, req.query as Record<string, unknown>)));
 router.get("/:id", run((req) => audit.getLog(req.user!.userId, String(req.params.id))));

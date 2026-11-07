@@ -43,11 +43,11 @@ const run = (fn: (req: Request) => Promise<unknown>) => async (req: Request, res
   }
 };
 
-// Managers and Employees are refused before any service code runs.
+// Managers and Employees are refused before any service code runs. Creating or editing a company is Admin-only (HR can read the list).
 router.use(requireAuth, requireRole("HR", "ADMIN"));
 
 router.get("/", run((req) => companies.listCompanies(req.user!.userId)));
-router.post("/", run((req) => companies.createCompany(req.user!.userId, req.body ?? {})));
-router.post("/:id", run((req) => companies.updateCompany(req.user!.userId, String(req.params.id), req.body ?? {})));
+router.post("/", requireRole("ADMIN"), run((req) => companies.createCompany(req.user!.userId, req.body ?? {})));
+router.post("/:id", requireRole("ADMIN"), run((req) => companies.updateCompany(req.user!.userId, String(req.params.id), req.body ?? {})));
 
 export default router;

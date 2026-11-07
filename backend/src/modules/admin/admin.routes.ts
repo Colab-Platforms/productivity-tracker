@@ -31,6 +31,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   TEAM_NOT_FOUND: { status: 404, message: "That team doesn't exist on your platform." },
   MISSING_FIELDS: { status: 400, message: "Please fill in all the required fields." },
   EMAIL_TAKEN: { status: 409, message: "Someone on this platform already uses that email." },
+  HIERARCHY_ADMIN_ONLY: { status: 403, message: "Only an Admin can change who a person reports to." },
   ROLE_NOT_ALLOWED: { status: 403, message: "Only an Admin can create or change HR and Admin accounts." },
   WEAK_PASSWORD: { status: 400, message: "The password must be at least 8 characters." },
   BAD_DATE: { status: 400, message: "Dates must be in YYYY-MM-DD format." },
@@ -324,7 +325,7 @@ router.get("/teams", async (req, res) => {
   }
 });
 
-router.post("/teams", async (req, res) => {
+router.post("/teams", requireRole("ADMIN"), async (req, res) => {
   try {
     const team = await admin.createTeam(req.user!.userId, req.body ?? {});
     res.status(201).json({ team });
@@ -333,7 +334,7 @@ router.post("/teams", async (req, res) => {
   }
 });
 
-router.patch("/teams/:id", async (req, res) => {
+router.patch("/teams/:id", requireRole("ADMIN"), async (req, res) => {
   try {
     await admin.updateTeam(req.user!.userId, id(req.params.id), req.body ?? {});
     res.json({ ok: true });
@@ -342,7 +343,7 @@ router.patch("/teams/:id", async (req, res) => {
   }
 });
 
-router.post("/teams/:id/members", async (req, res) => {
+router.post("/teams/:id/members", requireRole("ADMIN"), async (req, res) => {
   try {
     const userId = String(req.body?.userId ?? "");
     res.json(await admin.addTeamMember(req.user!.userId, id(req.params.id), userId));
@@ -351,7 +352,7 @@ router.post("/teams/:id/members", async (req, res) => {
   }
 });
 
-router.delete("/teams/:id/members/:userId", async (req, res) => {
+router.delete("/teams/:id/members/:userId", requireRole("ADMIN"), async (req, res) => {
   try {
     res.json(
       await admin.removeTeamMember(

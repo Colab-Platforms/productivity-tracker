@@ -47,7 +47,8 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.use(requireRole("HR", "ADMIN"));
+// Every write below (create/edit a project, its managers and members) is Admin-only. HR can still read the list above.
+router.use(requireRole("ADMIN"));
 
 router.post("/", async (req, res) => {
   try {
