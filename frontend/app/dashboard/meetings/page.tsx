@@ -8,6 +8,7 @@ import { Modal } from "../_employees/Modal";
 import { useRealtime } from "@/lib/realtime";
 import { HistoryModal, InviteResponse, JoinControl, ParticipationPanel, PastRecord, type TrackedFields } from "./_participation/Participation";
 import HuddleOverview from "../_standup/HuddleOverview";
+import MinutesSection from "./_minutes/Minutes";
 import { forTab, tabCounts, tabFromUrl, tabsFor, type TabKey } from "./tabs";
 
 // ---------------------------------------------------------------------------
@@ -276,7 +277,7 @@ function DetailsModal({ id, tz, onClose, onEdit, onChanged }: { id: string; tz: 
   const { data: m, error } = useApi<Meeting & { timezone: string }>(`/meetings/${id}`, rl);
   useRealtime(["meetings:changed"], () => setRl((n) => n + 1));
   return (
-    <Modal title={m?.title ?? "Meeting"} subtitle={m ? `${dayFmt(m.startsAt, tz)} · ${range(m, tz)}` : undefined} onClose={onClose} width={m?.tracked && m.isOrganizer ? "max-w-3xl" : "max-w-lg"}>
+    <Modal title={m?.title ?? "Meeting"} subtitle={m ? `${dayFmt(m.startsAt, tz)} · ${range(m, tz)}` : undefined} onClose={onClose} width={m?.isOrganizer || m?.tracked ? "max-w-3xl" : "max-w-lg"}>
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
       {!m && !error && <div className="skeleton h-32" aria-busy="true" />}
       {m && (
@@ -311,6 +312,7 @@ function DetailsModal({ id, tz, onClose, onEdit, onChanged }: { id: string; tz: 
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Invited ({m.attendees.length})</p>
             <div className="mt-1 flex flex-wrap gap-1.5">{m.attendees.map((a) => <span key={a.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700">{a.name}</span>)}</div>
           </div>
+          <MinutesSection meetingId={m.id} state={m.state} isOrganizer={m.isOrganizer} tz={tz} />
           <div className="flex flex-wrap items-center justify-end gap-2">
             {m.canEdit && <button onClick={() => onEdit(m)} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit</button>}
             {m.canEnd && <EndInline id={m.id} onDone={() => onChanged("Meeting ended. It now shows under Past.")} />}

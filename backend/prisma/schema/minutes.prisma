@@ -1,0 +1,55 @@
+// ===========================================================================
+// MEETING MINUTES (MOM) - NEW TABLES ONLY, no column added to meetings.
+//
+// One current row per meeting (unique meetingId): DRAFT while the organizer reviews the AI draft, PUBLISHED once he publishes it.
+// meeting_minutes_versions keeps every earlier published version (rows are only ever added). The recording itself is NEVER stored:
+// it is sent for transcription and dropped. The transcript lives only on the draft and is cleared when the minutes are published.
+// No relations to existing models on purpose; the foreign keys live in the migration SQL.
+// ===========================================================================
+
+model MeetingMinutes {
+  id            String    @id @default(uuid()) @db.Uuid
+  meetingId     String    @unique @db.Uuid
+  platformId    String    @db.Uuid
+  status        String    @default("DRAFT") // DRAFT | PUBLISHED
+  version       Int       @default(0) // number of the last PUBLISHED version; 0 = never published
+  summary       String    @default("")
+  agenda        Json      @default("[]") // string[]
+  discussion    Json      @default("[]") // { topic, points[] }[]
+  nextMeeting   String?
+  decisions     Json      @default("[]") // string[]
+  actionItems   Json      @default("[]") // { task, owner, due }[] (owner/due null when not said)
+  attendees     Json      @default("[]") // string[] names, worked out by the server when the draft is made
+  attendeeBasis String    @default("INVITED") // JOINED (from the Team Huddle join records) | INVITED
+  transcript    String? // draft only, cleared on publish
+  language      String? // what the speech was detected as
+  aiModel       String? // "<speech model> + <summary model>"
+  recordedAt    DateTime  @default(now())
+  publishedAt   DateTime?
+  publishedById String?   @db.Uuid
+  createdById   String    @db.Uuid
+  updatedAt     DateTime  @updatedAt
+
+  @@index([platformId])
+  @@map("meeting_minutes")
+}
+
+model MeetingMinutesVersion {
+  id            String   @id @default(uuid()) @db.Uuid
+  minutesId     String   @db.Uuid
+  meetingId     String   @db.Uuid
+  version       Int
+  summary       String
+  agenda        Json      @default("[]")
+  discussion    Json      @default("[]")
+  nextMeeting   String?
+  decisions     Json
+  actionItems   Json
+  attendees     Json
+  attendeeBasis String
+  publishedAt   DateTime
+  publishedById String   @db.Uuid
+
+  @@unique([minutesId, version])
+  @@map("meeting_minutes_versions")
+}
