@@ -1,8 +1,9 @@
-import { Router, type Request, type Response } from "express";
+import express, { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import * as meetings from "./meetings.service.js";
 import * as participation from "./participation.service.js";
+import * as minutes from "./minutes.service.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -47,6 +48,21 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   TIME_IN_FUTURE: { status: 400, message: "A joining or leaving time can't be in the future." },
   NOT_YOUR_REPORT: { status: 403, message: "A Team Huddle can only include people who report to you." },
   END_BEFORE_JOIN: { status: 400, message: "The leaving time must be after the joining time." },
+  // --- minutes (MOM) ---
+  MINUTES_NOT_CONFIGURED: { status: 503, message: "Automatic minutes are not set up yet. Ask your administrator to add the speech service key." },
+  AI_KEY_INVALID: { status: 502, message: "The speech service rejected the key. Ask your administrator to check it." },
+  AI_RATE_LIMITED: { status: 429, message: "The free speech service is busy or its limit was reached. Try again in a few minutes." },
+  AI_UNREACHABLE: { status: 502, message: "Could not reach the speech service. Check the internet connection and try again." },
+  AI_FAILED: { status: 502, message: "The speech service could not make the minutes. Try again, or write them by hand." },
+  BAD_AUDIO_TYPE: { status: 400, message: "That audio format is not supported. Use a recording from the app, or a webm, ogg, mp3, m4a, wav or flac file." },
+  AUDIO_EMPTY: { status: 400, message: "The recording is empty or far too short." },
+  AUDIO_TOO_LARGE: { status: 413, message: "That recording is too large (limit about 24 MB, roughly 2 hours). Record it in two parts." },
+  NO_SPEECH: { status: 422, message: "No speech could be heard in that recording, so there is nothing to write minutes from." },
+  MINUTES_PUBLISHED: { status: 409, message: "These minutes are already published. Edit them instead." },
+  ALREADY_PUBLISHED: { status: 409, message: "These minutes are already published." },
+  MINUTES_NOT_FOUND: { status: 404, message: "There are no minutes to publish yet. Record the meeting or write them first." },
+  MINUTES_EMPTY: { status: 400, message: "The minutes are empty. Add a summary, a decision or an action item." },
+  MINUTES_TOO_LONG: { status: 400, message: "Something in the minutes is too long. Shorten the summary (4000 characters), decisions (500 each) or action items (300 each)." },
 };
 
 function fail(res: Response, error: unknown) {
@@ -78,6 +94,20 @@ router.get("/people", run((req) => meetings.people(uid(req))));
 // In-person participation. Static paths come before "/:id".
 router.get("/huddles/overview", run((req) => participation.managerOverview(uid(req), typeof req.query.date === "string" ? req.query.date : undefined)));
 router.get("/participation/history", run((req) => participation.history(uid(req), typeof req.query.userId === "string" && req.query.userId ? req.query.userId : undefined)));
+// Minutes (MOM). The audio route takes the recording as the raw request body (the app's JSON parser only reads application/json).
+router.get("/:id/minutes", run((req) => minutes.getMinutes(uid(req), String(req.params.id))));
+router.post("/:id/minutes/recording", run((req) => minutes.announceRecording(uid(req), String(req.params.id))));
+router.post(
+  "/:id/minutes/audio",
+  express.raw({ type: () => true, limit: "25mb" }),
+  run((req) => {
+    const audio = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    req.body = {}; // the audit log copies the body: never let it copy the recording
+    return minutes.generateFromAudio(uid(req), String(req.params.id), audio, String(req.headers["content-type"] ?? ""), { language: req.query.language, output: req.query.output });
+  })
+);
+router.put("/:id/minutes", run((req) => minutes.saveMinutes(uid(req), String(req.params.id), req.body ?? {})));
+router.post("/:id/minutes/publish", run((req) => minutes.publishMinutes(uid(req), String(req.params.id))));
 router.get("/:id", run((req) => meetings.getOne(uid(req), String(req.params.id))));
 router.post("/:id/respond", run((req) => participation.respond(uid(req), String(req.params.id), req.body?.response)));
 router.post("/:id/join", run((req) => participation.join(uid(req), String(req.params.id))));

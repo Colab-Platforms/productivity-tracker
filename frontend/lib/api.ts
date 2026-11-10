@@ -100,3 +100,25 @@ export async function apiGet<T>(path: string): Promise<T> {
   if (!res.ok) throw new Error(said(data.error));
   return data as T;
 }
+export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  const res = await send(`${API_URL}${path}`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify(body ?? {}),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(said(data.error));
+  return data as T;
+}
+
+/** Sends a file (for example a meeting recording) as the raw request body, with its own content type. */
+export async function apiPostFile<T>(path: string, file: Blob, contentType: string): Promise<T> {
+  const h = headers();
+  h["Content-Type"] = contentType;
+  const res = await send(`${API_URL}${path}`, { method: "POST", headers: h, body: file });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(said(data.error));
+  return data as T;
+}

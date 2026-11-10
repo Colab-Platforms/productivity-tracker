@@ -167,6 +167,11 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/meetings\/:id\/leave$/, module: "Meetings", action: "UPDATE", summary: "Declared leaving an in-person meeting", recordType: "Meeting" },
   { method: "PATCH", re: /^\/api\/meetings\/:id\/participation\/:userId$/, module: "Meetings", action: "UPDATE", summary: "Corrected meeting participation", recordType: "Meeting" },
   { method: "POST", re: /^\/api\/meetings\/:id\/end$/, module: "Meetings", action: "UPDATE", summary: "Ended a meeting early", recordType: "Meeting" },
+  // the recording is a raw audio body: the route empties req.body after reading it so the audio is never copied into the log
+  { method: "POST", re: /^\/api\/meetings\/:id\/minutes\/audio$/, module: "Meetings", action: "CREATE", summary: "Drafted meeting minutes", recordType: "Meeting" },
+  { method: "POST", re: /^\/api\/meetings\/:id\/minutes\/recording$/, module: "Meetings", action: "UPDATE", summary: "Started recording a meeting for minutes", recordType: "Meeting" },
+  { method: "PUT", re: /^\/api\/meetings\/:id\/minutes$/, module: "Meetings", action: "UPDATE", summary: "Saved meeting minutes", recordType: "Meeting" },
+  { method: "POST", re: /^\/api\/meetings\/:id\/minutes\/publish$/, module: "Meetings", action: "APPROVE", summary: "Published meeting minutes", recordType: "Meeting" },
   { method: "POST", re: /^\/api\/meetings\/:id\/cancel$/, module: "Meetings", action: "CANCEL", summary: "Cancelled a meeting", recordType: "Meeting" },
   { method: "POST", re: /^\/api\/team-attendance\/targets$/, module: "Teams & rules", action: "UPDATE", summary: "Changed a daily task target", recordType: "DailyTaskTarget" },
   { method: "POST", re: /^\/api\/companies$/, module: "Companies", action: "CREATE", summary: "Added a company" },
