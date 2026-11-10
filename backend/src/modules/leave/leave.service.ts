@@ -590,6 +590,91 @@ export async function decideRequest(viewerId: string, requestId: string, decisio
   return { status: "APPROVED", days: dates.length };
 }
 
+// --- cancel an APPROVED leave (HR / Admin) -----------------------------------------
+//
+// Use when the person turns up for work on a day that was approved as leave. Removes the leave days (all of them, or only a date range
+// inside the request) so the day is read from the check-in again. Required: a written reason. The attendance engine also reads APPROVED
+// requests as a safety net, so the request itself is trimmed to the days that stay: days before the range keep the original request, days
+// after it move to a new APPROVED request, and if no day stays the request becomes CANCELLED. Nothing else is touched (no attendance edit).
+export async function revokeLeave(viewerId: string, requestId: string, body: { from?: unknown; to?: unknown; reason?: unknown }) {
+  const v = await decider(viewerId);
+  const reason = String(body.reason ?? "").trim();
+  if (reason.length < 5) throw new Error("REVOKE_REASON_REQUIRED");
+  if (reason.length > 500) throw new Error("REASON_TOO_LONG");
+  const rFrom = body.from ? parseIsoDay(body.from) : null;
+  const rTo = body.to ? parseIsoDay(body.to) : rFrom;
+  if ((body.from && !rFrom) || (body.to && !rTo)) throw new Error("BAD_DATE");
+  if (rFrom && rTo && rTo.getTime() < rFrom.getTime()) throw new Error("BAD_RANGE");
+
+  const r = await prisma.leaveRequest.findFirst({ where: { id: requestId, ...scopeOf(v) } });
+  if (!r) throw new Error("NOT_FOUND");
+  if (r.userId === v.id) throw new Error("OWN_REQUEST");
+  if (r.status !== "APPROVED") throw new Error("NOT_APPROVED");
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    const days = await tx.leaveDay.findMany({ where: { leaveRequestId: r.id }, orderBy: { date: "asc" } });
+    const lo = rFrom?.getTime() ?? -Infinity;
+    const hi = rTo?.getTime() ?? Infinity;
+    const gone = days.filter((d) => d.date.getTime() >= lo && d.date.getTime() <= hi);
+    if (gone.length === 0) throw new Error("NO_DAYS_TO_REVOKE");
+    const left = days.filter((d) => d.date.getTime() < lo);
+    const right = days.filter((d) => d.date.getTime() > hi);
+    const units = (ds: typeof days) => ds.reduce((n, d) => n + (d.isHalfDay ? 0.5 : 1), 0);
+
+    await tx.leaveDay.deleteMany({ where: { id: { in: gone.map((d) => d.id) } } });
+
+    const keep = left.length ? left : right; // the original request carries the first remaining piece
+    if (keep.length === 0) {
+      const res = await tx.leaveRequest.updateMany({ where: { id: r.id, status: "APPROVED" }, data: { status: "CANCELLED", dayCount: 0 } });
+      if (res.count === 0) throw new Error("NOT_APPROVED");
+    } else {
+      const res = await tx.leaveRequest.updateMany({
+        where: { id: r.id, status: "APPROVED" },
+        data: { fromDate: keep[0].date, toDate: keep[keep.length - 1].date, dayCount: units(keep) },
+      });
+      if (res.count === 0) throw new Error("NOT_APPROVED");
+    }
+    let movedTo: string | null = null;
+    if (left.length && right.length) {
+      const copy = await tx.leaveRequest.create({
+        data: {
+          platformId: r.platformId, userId: r.userId, fromDate: right[0].date, toDate: right[right.length - 1].date,
+          leaveType: r.leaveType, isHalfDay: r.isHalfDay, isFirstHalf: r.isFirstHalf, dayCount: units(right), reason: r.reason,
+          status: "APPROVED", decidedById: r.decidedById, decidedAt: r.decidedAt, decisionNote: r.decisionNote,
+        },
+      });
+      await tx.leaveDay.updateMany({ where: { id: { in: right.map((d) => d.id) } }, data: { leaveRequestId: copy.id } });
+      movedTo = copy.id;
+    }
+    return { removed: gone.map((d) => iso(d.date)), kept: units(keep) + (movedTo ? units(right) : 0), closed: keep.length === 0, movedTo };
+  });
+
+  if (await flowReady()) {
+    const actor = await actorOf(v.id);
+    await recordEvent(prisma, { platformId: r.platformId, requestId: r.id, actor, step: "HR", action: "CANCELLED", comment: `Approved leave cancelled for ${outcome.removed.join(", ")}: ${reason}` }).catch((e) => console.error("[leave] history not written:", e));
+  }
+  auditNote({
+    recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId,
+    before: { status: "APPROVED", from: iso(r.fromDate), to: iso(r.toDate), days: r.dayCount },
+    after: { removedDays: outcome.removed, daysStillOnLeave: outcome.kept, status: outcome.closed ? "CANCELLED" : "APPROVED", reason },
+    summary: `Cancelled approved leave for ${outcome.removed.length === 1 ? outcome.removed[0] : `${outcome.removed[0]} to ${outcome.removed[outcome.removed.length - 1]}`}`,
+  });
+  try {
+    await notifyUsers({
+      platformId: r.platformId,
+      userIds: [r.userId],
+      type: "LEAVE_DECIDED",
+      title: "Approved leave cancelled",
+      body: `Your approved leave for ${outcome.removed.join(", ")} was cancelled by HR. Reason: ${reason}`,
+      link: "/dashboard/leave",
+      data: { requestId: r.id },
+    });
+  } catch (e) {
+    console.error("[leave] could not notify requester:", e);
+  }
+  return { ok: true, removedDays: outcome.removed, daysStillOnLeave: outcome.kept, requestClosed: outcome.closed };
+}
+
 // --- manager step ----------------------------------------------------------------
 
 // The first-level approver: a Manager (for an employee's leave) or an Admin (for a manager's or HR's leave). With the flow's tables missing,

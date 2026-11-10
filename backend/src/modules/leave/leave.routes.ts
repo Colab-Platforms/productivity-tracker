@@ -35,6 +35,9 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   SKIP_REASON_REQUIRED: { status: 400, message: "Give a reason (at least 5 characters) for deciding without the manager." },
   MANAGER_REJECTED: { status: 409, message: "The manager rejected this request, so it cannot be approved. You can close it as rejected." },
   STEP_ALREADY_DECIDED: { status: 409, message: "The manager step on this request was already answered." },
+  NOT_APPROVED: { status: 409, message: "Only an approved leave can be cancelled this way, and it may already have been changed." },
+  REVOKE_REASON_REQUIRED: { status: 400, message: "Give a reason (at least 5 characters) for cancelling this approved leave." },
+  NO_DAYS_TO_REVOKE: { status: 400, message: "None of the chosen dates is a leave day of this request." },
   COMMENT_REQUIRED: { status: 400, message: "Please say why you are rejecting this request." },
 };
 
@@ -90,6 +93,9 @@ router.post(
   "/requests/:id/decide",
   run((req) => leave.decideRequest(req.user!.userId, String(req.params.id), req.body?.decision, req.body?.note, { skipManager: req.body?.skipManager, skipReason: req.body?.skipReason }))
 );
+
+// HR / Admin: cancel (all or some days of) an APPROVED leave, with a written reason.
+router.post("/requests/:id/revoke", run((req) => leave.revokeLeave(req.user!.userId, String(req.params.id), req.body ?? {})));
 
 // Manager: requests from the people who report to them (the manager step).
 router.get("/manager/requests", run((req) => leave.managerRequests(req.user!.userId)));

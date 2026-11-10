@@ -196,6 +196,23 @@ export default function LeavePage() {
     }
   }
 
+  const [revokeFor, setRevokeFor] = useState<string | null>(null);
+  async function revoke(id: string, from: string, to: string, reason: string) {
+    if (busyId) return;
+    setBusyId(id);
+    setActionError("");
+    try {
+      const res = await apiPost<{ removedDays: string[]; requestClosed: boolean }>(`/leave/requests/${id}/revoke`, { from, to, reason });
+      setNotice(`Approved leave cancelled for ${res.removedDays.length} ${res.removedDays.length === 1 ? "day" : "days"}. Those days now follow the person's check-in.`);
+      setRevokeFor(null);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setBusyId("");
+    }
+  }
+
   async function cancel(id: string) {
     if (busyId) return;
     setBusyId(id);
@@ -406,10 +423,18 @@ export default function LeavePage() {
                         </button>
                       </>
                     )}
+                    {r.status === "APPROVED" && !ownRequest && (
+                      <button onClick={() => setRevokeFor(revokeFor === r.id ? null : r.id)} className="rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
+                        Cancel approved leave
+                      </button>
+                    )}
                     {r.status === "PENDING" && ownRequest && <span className="text-xs text-slate-400">{flow ? "The tagged Admin decides this" : "Another HR/Admin must decide this"}</span>}
                     {r.status === "PENDING" && flow && !ownRequest && waitingFirst && <span className="text-xs text-slate-400">HR can act after {r.tagged ?? "the first approver"} approves</span>}
                   </div>
                 </div>
+                {revokeFor === r.id && (
+                  <RevokeBox r={r} busy={busyId === r.id} onCancel={() => setRevokeFor(null)} onConfirm={(from, to, reason) => revoke(r.id, from, to, reason)} />
+                )}
                 {noteFor === r.id && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Reason for rejecting (optional)" className="min-w-[16rem] flex-1 rounded-xl border border-indigo-100 px-3 py-2 text-sm" />
@@ -712,5 +737,30 @@ function RequestModal({ options, onClose, onDone }: { options: FormOptions | nul
         {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
       </div>
     </Modal>
+  );
+}
+
+// HR / Admin: cancel an approved leave (all of it, or only the dates the person actually worked), with a written reason.
+function RevokeBox({ r, busy, onCancel, onConfirm }: { r: { from: string; to: string }; busy: boolean; onCancel: () => void; onConfirm: (from: string, to: string, reason: string) => void }) {
+  const [from, setFrom] = useState(r.from);
+  const [to, setTo] = useState(r.to);
+  const [reason, setReason] = useState("");
+  const bad = !from || !to || to < from || from < r.from || to > r.to;
+  const ok = !bad && reason.trim().length >= 5;
+  const input = "h-9 rounded-xl border border-indigo-100 bg-white px-2 text-sm text-slate-800 outline-none focus:border-indigo-400";
+  return (
+    <div className="mt-3 space-y-2 rounded-xl bg-indigo-50/50 p-3">
+      <p className="text-xs text-slate-500">Choose the days to cancel (for example the day the person came to work). Those days then follow their check-in instead of showing as leave. The person is told.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input type="date" aria-label="Cancel from" min={r.from} max={r.to} value={from} onChange={(e) => setFrom(e.target.value)} className={input} />
+        <span className="text-xs text-slate-400">to</span>
+        <input type="date" aria-label="Cancel to" min={from || r.from} max={r.to} value={to} onChange={(e) => setTo(e.target.value)} className={input} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Reason (required), e.g. came to work" className="min-w-[16rem] flex-1 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm" />
+        <button disabled={busy || !ok} onClick={() => onConfirm(from, to, reason.trim())} className="rounded-lg bg-red-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Confirm cancel</button>
+        <button type="button" onClick={onCancel} className="rounded-lg border border-indigo-100 px-3.5 py-2 text-xs font-medium text-slate-600 hover:bg-white">Close</button>
+      </div>
+    </div>
   );
 }

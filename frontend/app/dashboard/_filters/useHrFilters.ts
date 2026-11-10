@@ -65,12 +65,14 @@ export function useHrFilters() {
     setReady(true);
   }, []);
 
+  // URL is written in an effect, never inside a state updater: Next patches history.replaceState
+  // to update its router, and doing that during a render/updater triggers a React error.
+  useEffect(() => {
+    if (ready) writeUrl(filters);
+  }, [filters, ready]);
+
   const update = useCallback((patch: Partial<Filters>) => {
-    setFilters((prev) => {
-      const next = { ...prev, ...patch };
-      writeUrl(next);
-      return next;
-    });
+    setFilters((prev) => ({ ...prev, ...patch }));
   }, []);
   const clear = useCallback(() => update({ ...NO_FILTERS }), [update]);
 

@@ -136,6 +136,7 @@ const RULES: Rule[] = [
 
   { method: "POST", re: /^\/api\/leave\/requests$/, module: "Leave", action: "SUBMIT", summary: "Requested leave" },
   { method: "POST", re: /^\/api\/leave\/requests\/:id\/cancel$/, module: "Leave", action: "CANCEL", summary: "Cancelled a leave request", recordType: "LeaveRequest" },
+  { method: "POST", re: /^\/api\/leave\/requests\/:id\/revoke$/, module: "Leave", action: "CANCEL", summary: "Cancelled an approved leave", recordType: "LeaveRequest" },
   { method: "POST", re: /^\/api\/leave\/requests\/:id\/decide$/, module: "Leave", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Rejected a leave request" : "Approved a leave request"), recordType: "LeaveRequest" },
 
   { method: "POST", re: /^\/api\/policies\/:id\/acknowledge$/, module: "Policies", action: "APPROVE", summary: "Confirmed they read a policy", recordType: "InductionDocument" },

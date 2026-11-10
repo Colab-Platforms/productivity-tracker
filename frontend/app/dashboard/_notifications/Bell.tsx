@@ -24,7 +24,15 @@ export default function Bell() {
     if (!open && button.current) {
       const r = button.current.getBoundingClientRect();
       const wide = window.innerWidth < 768;
-      setPos({ top: wide ? r.bottom + 8 : Math.max(12, r.top), left: wide ? 16 : r.right + 12, wide });
+      const panelW = 384; // 24rem
+      let left = r.right + 12; // sidebar bell: open beside it
+      let top = Math.max(12, r.top);
+      if (left + panelW > window.innerWidth - 16) {
+        // bell sits near the right edge (top bar): open below it, right edges aligned, never off-screen
+        left = Math.max(16, Math.min(r.right - panelW, window.innerWidth - panelW - 16));
+        top = r.bottom + 8;
+      }
+      setPos({ top: wide ? r.bottom + 8 : top, left: wide ? 16 : left, wide });
       reload();
     }
     setOpen((o) => !o);
