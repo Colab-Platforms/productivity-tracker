@@ -1,6 +1,7 @@
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { prisma } from "../../lib/prisma.js";
 import { platformToday } from "../../lib/dates.js";
+import { accessFor } from "../../lib/companyAccess.js";
 
 // ---------------------------------------------------------------------------
 // HOLIDAYS
@@ -14,6 +15,7 @@ import { platformToday } from "../../lib/dates.js";
 // ---------------------------------------------------------------------------
 
 const MANAGING_ROLES = ["HR", "ADMIN"];
+export const MAX_BACKDATE_DAYS = 90;
 
 async function viewerContext(viewerId: string) {
   const user = await prisma.user.findUnique({
@@ -23,7 +25,7 @@ async function viewerContext(viewerId: string) {
   if (!user) throw new Error("USER_NOT_FOUND");
   const role = String(user.role);
   if (!MANAGING_ROLES.includes(role)) throw new Error("NOT_ALLOWED");
-  return { user, role, platformId: user.platformId, timezone: user.platform.timezone };
+  return { user, role, userId: user.id, platformId: user.platformId, timezone: user.platform.timezone };
 }
 
 // Which companies this person may set holidays for.
@@ -32,16 +34,19 @@ async function viewerContext(viewerId: string) {
 // their own. You run three companies from one admin login, so scoping Admin
 // to a single platform would make the screen useless to you. If you'd rather
 // HR also covered all three, it's a one-line change here.
-async function allowedPlatforms(ctx: { role: string; platformId: string }) {
+async function allowedPlatforms(ctx: { role: string; platformId: string; userId?: string }) {
   if (ctx.role === "ADMIN") {
     return prisma.platform.findMany({
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     });
   }
+  // HR: every company they act on (their own, assigned ones, or all for top management), the same rule as the rest of the app.
+  const access = await accessFor(ctx.userId ?? "");
   return prisma.platform.findMany({
-    where: { id: ctx.platformId },
+    where: access.all ? {} : { id: { in: access.ids.length ? access.ids : [ctx.platformId] } },
     select: { id: true, name: true },
+    orderBy: { name: "asc" },
   });
 }
 
@@ -107,6 +112,7 @@ export async function listHolidays(viewerId: string, yearIn?: unknown) {
   return {
     year,
     today: key(today),
+    maxBackdateDays: MAX_BACKDATE_DAYS, // a past holiday can be ADDED (with confirmation) up to this many days back; removing one stays blocked
     years: [year - 1, year, year + 1],
     companies: platforms,
     holidays,
@@ -131,9 +137,13 @@ export async function addHoliday(
 
   const date = parseDay(body.date);
 
-  // A holiday added in the past would silently rewrite last month's
-  // attainment for everyone. HR sets these BEFORE the month starts.
-  if (date.getTime() < today.getTime()) throw new Error("DATE_IN_THE_PAST");
+  // A holiday added for a day that has passed changes the reports for that day for everyone (the day stops counting as a working day).
+  // HR forgets sometimes, so it is allowed, but only up to MAX_BACKDATE_DAYS back and only after HR confirms they understand.
+  if (date.getTime() < today.getTime()) {
+    const daysBack = Math.round((today.getTime() - date.getTime()) / 86_400_000);
+    if (daysBack > MAX_BACKDATE_DAYS) throw new Error("DATE_TOO_OLD");
+    if (body.confirmBackdate !== true) throw new Error("BACKDATE_CONFIRM_REQUIRED");
+  }
 
   const platforms = await allowedPlatforms(ctx);
   const allowedIds = new Set(platforms.map((p) => p.id));
@@ -152,7 +162,7 @@ export async function addHoliday(
     // Unique key is [platformId, date, name], so re-adding the same holiday
     // is a no-op rather than an error the user has to understand.
     const existing = await prisma.holiday.findFirst({
-      where: { platformId, date, name },
+      where: { platformId, date, name: { equals: name, mode: "insensitive" } }, // "Diwali Holiday" and "diwali holiday" are the same holiday
       select: { id: true },
     });
     if (existing) continue;
