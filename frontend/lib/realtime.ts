@@ -117,3 +117,43 @@ export function useRealtime(events: string[], onChange: () => void): { connected
 
   return { connected };
 }
+
+/**
+ * Chat typing. `typing` = ids of the other people who are typing in this conversation right now (each fades after 4 seconds without a
+ * new hint). Call `notifyTyping()` as the person types; it sends at most one hint every 2 seconds. Shares the one connection.
+ */
+export function useChatTyping(conversationId: string | null): { typing: string[]; notifyTyping: () => void } {
+  const [typing, setTyping] = useState<Record<string, number>>({});
+  const last = useRef(0);
+
+  useEffect(() => {
+    if (!conversationId) return;
+    const s = acquire();
+    const onTyping = (e: { conversationId?: string; userId?: string }) => {
+      if (e?.conversationId !== conversationId || !e.userId) return;
+      const id = e.userId;
+      setTyping((cur) => ({ ...cur, [id]: Date.now() + 4000 }));
+    };
+    s.on("chat:typing", onTyping);
+    const sweep = setInterval(() => {
+      setTyping((cur) => {
+        const now = Date.now();
+        const next = Object.fromEntries(Object.entries(cur).filter(([, until]) => until > now));
+        return Object.keys(next).length === Object.keys(cur).length ? cur : next;
+      });
+    }, 1000);
+    return () => {
+      clearInterval(sweep);
+      s.off("chat:typing", onTyping);
+      release();
+      setTyping({});
+    };
+  }, [conversationId]);
+
+  const notifyTyping = () => {
+    if (!conversationId || !socket?.connected || Date.now() - last.current < 2000) return;
+    last.current = Date.now();
+    socket.emit("chat:typing", { conversationId });
+  };
+  return { typing: Object.keys(typing), notifyTyping };
+}

@@ -43,6 +43,8 @@ type Rule = {
 const verdict = (b: Body, key: string, yes: unknown[], a: AuditAction, no: AuditAction): AuditAction => (yes.includes(b?.[key]) ? a : no);
 
 const RULES: Rule[] = [
+  // Chat is private to its members: the audit log must never copy message text, so no chat write is logged.
+  ...(["POST", "PUT", "PATCH", "DELETE"] as const).map((method) => ({ method, re: /^\/api\/chat(\/.*)?$/, module: "Other", action: "OTHER" as const, summary: "Chat", skip: true })),
   // Talk to Management is confidential: never logged, so HR (who can read the audit log) can never see it. First rule on purpose.
   { method: "POST", re: /^\/api\/management-talk(\/.*)?$/, module: "Other", action: "OTHER", summary: "Confidential", skip: true },
   { method: "PUT", re: /^\/api\/management-talk(\/.*)?$/, module: "Other", action: "OTHER", summary: "Confidential", skip: true },

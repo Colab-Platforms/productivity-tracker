@@ -1,0 +1,49 @@
+// ===========================================================================
+// CHAT - NEW TABLES ONLY. Any active person can message any other active person, in any company.
+//
+// chat_conversations : a DIRECT chat (exactly two people, found again through directKey) or a GROUP (a title, an admin or more).
+// chat_members       : who is in a conversation. leftAt set = no longer in it. lastReadAt drives unread counts and "seen".
+//                      joinedAt: a member only sees messages sent from then on.
+// chat_messages      : text only. A delete by the sender clears the body and sets deletedAt (shown as "message deleted").
+// Only the members of a conversation can read it: HR and Admin get no extra view. No relations to existing models on purpose;
+// the foreign keys live in the migration SQL.
+// ===========================================================================
+
+model ChatConversation {
+  id            String   @id @default(uuid()) @db.Uuid
+  kind          String // DIRECT | GROUP
+  title         String? // groups only
+  directKey     String?  @unique // "<smaller user id>:<larger user id>" for DIRECT, so the same pair always finds the same chat
+  createdById   String   @db.Uuid
+  createdAt     DateTime @default(now())
+  lastMessageAt DateTime @default(now())
+
+  @@map("chat_conversations")
+}
+
+model ChatMember {
+  id             String    @id @default(uuid()) @db.Uuid
+  conversationId String    @db.Uuid
+  userId         String    @db.Uuid
+  isAdmin        Boolean   @default(false)
+  joinedAt       DateTime  @default(now())
+  leftAt         DateTime?
+  lastReadAt     DateTime  @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@map("chat_members")
+}
+
+model ChatMessage {
+  id             String    @id @default(uuid()) @db.Uuid
+  conversationId String    @db.Uuid
+  senderId       String    @db.Uuid
+  body           String
+  createdAt      DateTime  @default(now())
+  editedAt       DateTime? // set when the sender edits the text (within the edit window)
+  deletedAt      DateTime?
+
+  @@index([conversationId, createdAt])
+  @@map("chat_messages")
+}

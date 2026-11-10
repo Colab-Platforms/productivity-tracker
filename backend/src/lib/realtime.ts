@@ -49,6 +49,8 @@ export type RealtimeDeps = {
   personsFor: (user: SocketUser) => Promise<string[]>;
   origins: string[];
   recheckEveryMs?: number;
+  // Chat typing: the OTHER members of a conversation the user belongs to (empty = not a member, so nothing is sent).
+  typingAudience?: (userId: string, conversationId: string) => Promise<string[]>;
 };
 
 let io: Server | null = null;
@@ -133,6 +135,23 @@ export function startRealtime(httpServer: HttpServer, deps: RealtimeDeps): Serve
         /* keep the existing rooms; the next resync will retry */
       }
     });
+    // The second (and last) client message: "I am typing in conversation X". The server decides who hears it (the other members, checked
+    // against the database), nothing is stored, and each socket may send at most one per 2 seconds per conversation.
+    const lastTyping = new Map<string, number>();
+    socket.on("chat:typing", async (msg: unknown) => {
+      try {
+        const id = typeof (msg as { conversationId?: unknown })?.conversationId === "string" ? (msg as { conversationId: string }).conversationId : "";
+        if (!id || id.length > 40 || !deps.typingAudience) return;
+        const now = Date.now();
+        if (now - (lastTyping.get(id) ?? 0) < 2000) return;
+        lastTyping.set(id, now);
+        if (lastTyping.size > 200) lastTyping.clear();
+        const others = (await deps.typingAudience((socket.data.user as SocketUser).userId, id)).filter((x) => x !== (socket.data.user as SocketUser).userId);
+        if (others.length) io?.to(others.map(inboxRoom)).emit("chat:typing", { conversationId: id, userId: (socket.data.user as SocketUser).userId });
+      } catch {
+        /* a typing hint is never worth an error */
+      }
+    });
     // Everything else a client sends is ignored: there is no join/leave/subscribe message to abuse.
   });
 
@@ -214,5 +233,20 @@ export function emitNotificationChange(userIds: string[]): void {
     io.to([...new Set(userIds)].map(inboxRoom)).emit("notifications:changed", payload);
   } catch (e) {
     console.error("[realtime] notification emit failed:", e instanceof Error ? e.message : e);
+  }
+}
+
+// Chat. The signal says only WHICH conversation changed (new message, deleted message, someone read it, members changed). The page asks the
+// normal API for the content, which checks membership. Goes only to the private inbox rooms of the members, so nobody else (not even a
+// manager or HR) hears that a conversation exists. Never throws; a no-op when real-time is off.
+export type ChatSignal = { eventId: string; at: string; conversationId: string };
+
+export function emitChatChange(userIds: string[], conversationId: string): void {
+  try {
+    if (!io || userIds.length === 0) return;
+    const payload: ChatSignal = { eventId: randomUUID(), at: new Date().toISOString(), conversationId };
+    io.to([...new Set(userIds)].map(inboxRoom)).emit("chat:changed", payload);
+  } catch (e) {
+    console.error("[realtime] chat emit failed:", e instanceof Error ? e.message : e);
   }
 }
