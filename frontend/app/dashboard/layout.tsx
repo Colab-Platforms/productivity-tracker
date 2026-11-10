@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { dashboardTitle } from "@/lib/roles";
 import { homeFor } from "@/lib/roleHome";
 import { CARRIED } from "./_filters/useHrFilters";
@@ -14,6 +14,8 @@ import { resetTheme } from "@/lib/theme";
 import Link from "next/link";
 import Avatar from "./_photos/Avatar";
 import { apiGet, clearToken, getToken } from "@/lib/api";
+import { useRealtime } from "@/lib/realtime";
+import { desktopAlert, ping } from "@/lib/chatAlert";
 import { setPlatformTimezone } from "@/lib/time";
 
 export type Me = {
@@ -155,6 +157,12 @@ const I = {
       <path d="m12.5 9 5-2.6v7.2L12.5 11" />
     </svg>
   ),
+  chat: (p: IconProps) => (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M4 4.5h12a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H9l-3.5 3v-3H4a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" />
+      <path d="M6.5 8h7M6.5 10.8h4.5" />
+    </svg>
+  ),
   huddle: (p: IconProps) => (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}>
       <circle cx="10" cy="5.5" r="2" />
@@ -224,7 +232,7 @@ type NavItem = {
   // so the "Today" entry that other roles see is replaced for them.
   notRoles?: string[];
   // A live count shown beside the label (HR: requests waiting for a decision).
-  badge?: "queries";
+  badge?: "queries" | "chat";
   icon: (p: IconProps) => React.ReactElement;
 };
 
@@ -281,6 +289,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/tasks", label: "Daily Tasks", ready: true, icon: I.tasks },
       { href: "/dashboard/history", label: "My History", ready: true, icon: I.history },
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
+      { href: "/dashboard/chat", label: "Chat", ready: true, badge: "chat", icon: I.chat },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },
       { href: "/dashboard/leave", label: "Leave", ready: true, notRoles: ["HR", "ADMIN"], icon: I.holidays },
       { href: "/dashboard/meetings", label: "Team Huddle", ready: true, notRoles: ["ADMIN"], icon: I.huddle },
@@ -331,6 +340,8 @@ export default function DashboardLayout({
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
   const [pendingQueries, setPendingQueries] = useState(0);
+  const [chatUnread, setChatUnread] = useState(0);
+  const lastChatUnread = useRef<number | null>(null); // null until the first count, so opening the app never pings
 
   useEffect(() => {
     if (!getToken()) {
@@ -386,6 +397,34 @@ export default function DashboardLayout({
       window.removeEventListener("focus", load);
     };
   }, [hasMe, pathname]);
+
+  // Chat: unread messages across all conversations. Refreshed the moment the server says a conversation changed, and on focus.
+  const loadChatUnread = () => {
+    if (!hasMe) return;
+    apiGet<{ unread: number }>("/chat/unread")
+      .then((r) => {
+        // More unread than a moment ago = a message just arrived: ping (and a desktop popup if this tab is in the background).
+        if (lastChatUnread.current !== null && r.unread > lastChatUnread.current) {
+          ping();
+          desktopAlert(() => router.push("/dashboard/chat"));
+        }
+        lastChatUnread.current = r.unread;
+        setChatUnread(r.unread);
+      })
+      .catch(() => undefined);
+  };
+  const { connected: chatLive } = useRealtime(["chat:changed"], loadChatUnread);
+  useEffect(() => {
+    if (!hasMe) return;
+    loadChatUnread();
+    const timer = setInterval(loadChatUnread, chatLive ? 5 * 60_000 : 30_000);
+    window.addEventListener("focus", loadChatUnread);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", loadChatUnread);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMe, chatLive]);
 
   // Close the mobile drawer on navigation, otherwise it covers the page you
   // just asked for.
@@ -538,6 +577,9 @@ export default function DashboardLayout({
                       }`}
                     />
                     <span className="truncate">{item.label}</span>
+                    {item.badge === "chat" && chatUnread > 0 && (
+                      <span data-testid="chat-badge" className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{Math.min(99, chatUnread)}</span>
+                    )}
                     {item.badge === "queries" && pendingQueries > 0 && (
                       <span data-testid="queries-badge" className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{Math.min(99, pendingQueries)}</span>
                     )}

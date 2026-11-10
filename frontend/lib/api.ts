@@ -112,6 +112,14 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   return data as T;
 }
 
+export async function apiDelete<T>(path: string): Promise<T> {
+  const res = await send(`${API_URL}${path}`, { method: "DELETE", headers: headers() });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(said(data.error));
+  return data as T;
+}
+
 /** Sends a file (for example a meeting recording) as the raw request body, with its own content type. */
 export async function apiPostFile<T>(path: string, file: Blob, contentType: string): Promise<T> {
   const h = headers();

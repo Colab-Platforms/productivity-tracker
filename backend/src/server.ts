@@ -25,11 +25,13 @@ import preferenceRoutes from "./modules/preferences/preferences.routes.js";
 import auditRoutes from "./modules/audit/audit.routes.js";
 import documentRoutes from "./modules/documents/documents.routes.js";
 import meetingRoutes from "./modules/meetings/meetings.routes.js";
+import chatRoutes from "./modules/chat/chat.routes.js";
 import companyRoutes from "./modules/companies/companies.routes.js";
 import teamAttendanceRoutes from "./modules/team-attendance/teamAttendance.routes.js";
 import attendanceCalendarRoutes from "./modules/team-attendance/attendanceCalendar.routes.js";
 import adminConsoleRoutes from "./modules/admin-console/adminConsole.routes.js";
 import hrFiltersRoutes from "./modules/hr-filters/hrFilters.routes.js";
+import { typingAudience } from "./modules/chat/chat.service.js";
 import { startRealtime } from "./lib/realtime.js";
 import { manageableUserIds } from "./modules/tasks/tasks.service.js";
 import { requireAuth } from "./middlewares/auth.js";
@@ -108,6 +110,7 @@ app.use("/api/preferences", preferenceRoutes);
 app.use("/api/audit-logs", auditRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/meetings", meetingRoutes);
+app.use("/api/chat", chatRoutes);
 app.use("/api/companies", companyRoutes);
 app.use("/api/team-attendance", teamAttendanceRoutes);
 app.use("/api/attendance-calendar", attendanceCalendarRoutes);
@@ -123,6 +126,7 @@ const httpServer = createServer(app);
 try {
   startRealtime(httpServer, {
     origins: allowedOrigins,
+    typingAudience,
     // The people whose task events a user may receive: the same rule the Team Tasks queue already uses.
     personsFor: async (u) => (u.role === "EMPLOYEE" ? [] : manageableUserIds({ id: u.userId, role: u.role, platformId: u.platformId })),
   });
