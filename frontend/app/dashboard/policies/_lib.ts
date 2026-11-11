@@ -45,7 +45,7 @@ export type Manage = {
 };
 export type TrackRow = {
   userId: string; name: string; employeeCode: string | null; team: string | null; policyId: string; policyTitle: string; versionLabel: string;
-  required: boolean; status: "ACKNOWLEDGED" | "OPENED" | "PENDING"; openedAt: string | null; acknowledgedAt: string | null;
+  required: boolean; status: "ACKNOWLEDGED" | "OPENED" | "PENDING"; openedAt: string | null; acknowledgedAt: string | null; inAudience?: boolean;
 };
 export type Tracking = {
   teams: { id: string; name: string }[]; policies: { id: string; title: string }[]; people: { id: string; name: string; employeeCode: string | null }[];
