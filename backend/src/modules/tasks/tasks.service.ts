@@ -342,7 +342,7 @@ export async function listTasks(userId: string) {
   return {
     date: date.toISOString().slice(0, 10),
     entryForm,
-    selfApproves: !ctx.user.reportsToId || selfManagedMode,
+    selfApproves: selfManagedMode || (!ctx.user.reportsToId && entryForm.managers.length === 0),
     selfManagedMode,
     score,
     scorePercent: score.percent,
@@ -439,7 +439,6 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
   // A MANAGER's own tasks are self-managed: approved when created, no approval step, nobody notified, no review queue. (Employee
   // tasks keep the approval workflow. Before the migration nothing is self-managed and a manager's task waits as it always did.)
   const selfManaged = ctx.role === "MANAGER" && (await selfTasksReady());
-  const selfApprove = !ctx.user.reportsToId || selfManaged;
 
   // Daily task entry (hours, progress, tagged manager) once its table exists; a manager's own self-managed tasks use none of it.
   const entry = !selfManaged && (await entryReady());
@@ -455,6 +454,9 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
     taggedManagerId = await resolveTaggedManager({ id: userId, platformId: ctx.platformId }, body.taggedManagerId);
   }
   const stored = progress ? storeProgress(progress) : null;
+  // Self-approval only when nobody can approve: no tagged manager AND no reporting manager. A task tagged to a manager always waits for
+  // THAT manager, even when the employee has no reporting manager set.
+  const selfApprove = selfManaged || (!ctx.user.reportsToId && !taggedManagerId);
 
   let due: Date | null = null;
   if (selfManaged && body.dueDate !== undefined && body.dueDate !== null && body.dueDate !== "") {
