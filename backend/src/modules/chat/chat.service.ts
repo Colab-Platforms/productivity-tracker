@@ -1,7 +1,8 @@
 import { prisma } from "../../lib/prisma.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { emitChatChange } from "../../lib/realtime.js";
-import { canEditNow, cleanIds, cleanMessage, cleanTitle, directKey, LIMITS, makeLimiter, previewOf } from "./chat.logic.js";
+import { isUuid } from "../../lib/params.js";
+import { canEditNow, cleanIds, cleanMessage, cleanTitle, directKey, LIMITS, groupReactions, isReaction, makeLimiter, previewOf, quotePreview } from "./chat.logic.js";
 
 // ---------------------------------------------------------------------------
 // CHAT
@@ -19,7 +20,7 @@ import { canEditNow, cleanIds, cleanMessage, cleanTitle, directKey, LIMITS, make
 const isMissingTable = (e: unknown) => {
   const code = (e as { code?: unknown })?.code;
   const msg = e instanceof Error ? e.message : "";
-  return code === "P2021" || (/chat_(conversations|members|messages)/.test(msg) && /does not exist|relation/.test(msg));
+  return code === "P2021" || (/chat_(conversations|members|messages|reactions)/.test(msg) && /does not exist|relation/.test(msg));
 };
 let readyValue = false;
 let checkedAt = 0;
@@ -28,7 +29,7 @@ export async function chatReady(): Promise<boolean> {
   if (Date.now() - checkedAt < 15_000) return false;
   checkedAt = Date.now();
   try {
-    await Promise.all([prisma.chatConversation.findFirst({ select: { id: true } }), prisma.chatMember.findFirst({ select: { id: true } }), prisma.chatMessage.findFirst({ select: { id: true } })]);
+    await Promise.all([prisma.chatConversation.findFirst({ select: { id: true } }), prisma.chatMember.findFirst({ select: { id: true } }), prisma.chatMessage.findFirst({ select: { id: true } }), prisma.chatReaction.findFirst({ select: { id: true } })]);
     readyValue = true;
   } catch (e) {
     if (!isMissingTable(e)) throw e;
@@ -42,6 +43,7 @@ async function requireReady() {
 
 const nameOf = (p: { firstName: string; lastName: string }) => `${p.firstName} ${p.lastName}`.trim();
 const canSend = makeLimiter(LIMITS.perMinute);
+const canReact = makeLimiter(60);
 
 /** Who can be messaged: active or invited people in an active company (and inside the pinned company, if the deployment is pinned). */
 async function eligibleWhere() {
@@ -169,8 +171,14 @@ export async function getMessages(userId: string, conversationId: string, before
     select: { userId: true, isAdmin: true, lastReadAt: true },
     orderBy: { joinedAt: "asc" },
   });
+  // Replies quote the message they answer (even one further back than this page); reactions come with each message.
+  const quotedIds = [...new Set(page.map((r) => r.replyToId).filter((x): x is string => !!x))];
+  const quoted = quotedIds.length ? await prisma.chatMessage.findMany({ where: { id: { in: quotedIds }, conversationId }, select: { id: true, senderId: true, body: true, deletedAt: true } }) : [];
+  const quotedBy = new Map(quoted.map((q) => [q.id, q]));
+  const reactionRows = page.length ? await prisma.chatReaction.findMany({ where: { messageId: { in: page.map((r) => r.id) } }, select: { messageId: true, userId: true, emoji: true } }) : [];
   // Senders who have since left are still named on their old messages.
-  const who = await personsById([...members.map((x) => x.userId), ...page.map((r) => r.senderId)]);
+  const who = await personsById([...members.map((x) => x.userId), ...page.map((r) => r.senderId), ...quoted.map((q) => q.senderId), ...reactionRows.map((r) => r.userId)]);
+  const nameFor = (id: string) => who.get(id)?.name ?? "Former member";
   const other = conv.kind === "DIRECT" ? who.get(members.find((x) => x.userId !== userId)?.userId ?? "") : undefined;
   return {
     conversation: {
@@ -181,7 +189,10 @@ export async function getMessages(userId: string, conversationId: string, before
       iAmAdmin: m.isAdmin,
     },
     members: members.map((x) => ({ id: x.userId, name: who.get(x.userId)?.name ?? "Former member", designation: who.get(x.userId)?.designation ?? null, company: who.get(x.userId)?.company ?? null, isAdmin: x.isAdmin, lastReadAt: x.lastReadAt.toISOString() })),
-    messages: page.map((r) => ({ id: r.id, senderId: r.senderId, senderName: who.get(r.senderId)?.name ?? "Former member", body: r.deletedAt ? "" : r.body, createdAt: r.createdAt.toISOString(), deleted: !!r.deletedAt, edited: !!r.editedAt && !r.deletedAt })),
+    messages: page.map((r) => ({ id: r.id, senderId: r.senderId, senderName: who.get(r.senderId)?.name ?? "Former member", body: r.deletedAt ? "" : r.body, createdAt: r.createdAt.toISOString(), deleted: !!r.deletedAt, edited: !!r.editedAt && !r.deletedAt,
+      replyTo: r.replyToId && quotedBy.has(r.replyToId) ? { id: r.replyToId, senderName: nameFor(quotedBy.get(r.replyToId)!.senderId), preview: quotePreview(quotedBy.get(r.replyToId)!.body, !!quotedBy.get(r.replyToId)!.deletedAt), deleted: !!quotedBy.get(r.replyToId)!.deletedAt } : null,
+      reactions: r.deletedAt ? [] : groupReactions(reactionRows.filter((x) => x.messageId === r.id), userId, nameFor),
+    })),
     hasMore,
   };
 }
@@ -234,13 +245,21 @@ export async function openConversation(userId: string, body: Record<string, unkn
 export async function sendMessage(userId: string, conversationId: string, body: Record<string, unknown>) {
   await requireReady();
   const text = cleanMessage(body.body);
-  const { conv } = await membership(userId, conversationId);
+  const { m, conv } = await membership(userId, conversationId);
   if (!canSend(userId)) throw new Error("SENDING_TOO_FAST");
+  // A reply must point at a message of THIS conversation that the sender can see.
+  let replyToId: string | null = null;
+  if (body.replyToId !== undefined && body.replyToId !== null && body.replyToId !== "") {
+    if (!isUuid(body.replyToId)) throw new Error("REPLY_NOT_FOUND");
+    const target = await prisma.chatMessage.findFirst({ where: { id: String(body.replyToId), conversationId, createdAt: { gte: m.joinedAt } }, select: { id: true } });
+    if (!target) throw new Error("REPLY_NOT_FOUND");
+    replyToId = target.id;
+  }
   // In a direct chat both people must still be allowed to chat (a suspended or exited person can neither send nor receive).
   const ids = await activeMemberIds(conversationId);
   if (conv.kind === "DIRECT" && ids.length < 2) throw new Error("NOT_FOUND");
   const now = new Date();
-  const msg = await prisma.chatMessage.create({ data: { conversationId, senderId: userId, body: text, createdAt: now } });
+  const msg = await prisma.chatMessage.create({ data: { conversationId, senderId: userId, body: text, createdAt: now, replyToId } });
   await Promise.all([
     prisma.chatConversation.update({ where: { id: conversationId }, data: { lastMessageAt: now } }),
     prisma.chatMember.update({ where: { conversationId_userId: { conversationId, userId } }, data: { lastReadAt: now } }),
@@ -267,6 +286,34 @@ export async function deleteMessage(userId: string, conversationId: string, mess
   if (!msg.deletedAt) await prisma.chatMessage.update({ where: { id: messageId }, data: { deletedAt: new Date(), body: "" } });
   emitChatChange(await activeMemberIds(conversationId), conversationId);
   return { ok: true };
+}
+
+/** Reacts with an emoji, or takes the reaction back if you already used that emoji on this message. */
+export async function toggleReaction(userId: string, conversationId: string, messageId: string, body: Record<string, unknown>) {
+  await requireReady();
+  if (!isReaction(body.emoji)) throw new Error("BAD_EMOJI");
+  const emoji: string = body.emoji;
+  const { m } = await membership(userId, conversationId);
+  if (!canReact(userId)) throw new Error("SENDING_TOO_FAST");
+  const msg = await prisma.chatMessage.findFirst({ where: { id: messageId, conversationId, createdAt: { gte: m.joinedAt } }, select: { id: true, deletedAt: true } });
+  if (!msg) throw new Error("NOT_FOUND");
+  if (msg.deletedAt) throw new Error("MESSAGE_DELETED");
+  const key = { messageId_userId_emoji: { messageId, userId, emoji } };
+  const existing = await prisma.chatReaction.findUnique({ where: key });
+  let reacted: boolean;
+  if (existing) {
+    await prisma.chatReaction.delete({ where: key }).catch(() => undefined);
+    reacted = false;
+  } else {
+    try {
+      await prisma.chatReaction.create({ data: { messageId, userId, emoji } });
+    } catch (e) {
+      if ((e as { code?: string }).code !== "P2002") throw e; // a double click: it is already there
+    }
+    reacted = true;
+  }
+  emitChatChange(await activeMemberIds(conversationId), conversationId);
+  return { reacted };
 }
 
 export async function editMessage(userId: string, conversationId: string, messageId: string, body: Record<string, unknown>) {

@@ -18,7 +18,8 @@ import { initialsOf } from "../_photos/Avatar";
 
 type Conv = { id: string; kind: "DIRECT" | "GROUP"; title: string; subtitle: string; lastMessage: { preview: string; mine: boolean; at: string } | null; lastMessageAt: string; unread: number };
 type Member = { id: string; name: string; designation: string | null; company: string | null; isAdmin: boolean; lastReadAt: string };
-type Msg = { id: string; senderId: string; senderName: string; body: string; createdAt: string; deleted: boolean; edited: boolean };
+type Msg = { id: string; senderId: string; senderName: string; body: string; createdAt: string; deleted: boolean; edited: boolean; replyTo: { id: string; senderName: string; preview: string; deleted: boolean } | null; reactions: { emoji: string; count: number; mine: boolean; names: string[] }[] };
+const REACTION_SET = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 type Thread = { conversation: { id: string; kind: "DIRECT" | "GROUP"; title: string; subtitle: string; iAmAdmin: boolean }; members: Member[]; messages: Msg[]; hasMore: boolean };
 type Person = { id: string; name: string; designation: string | null; company: string | null };
 
@@ -345,8 +346,11 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [menuFor, setMenuFor] = useState<string | null>(null); // message whose menu is open
-  const [menuCanEdit, setMenuCanEdit] = useState(false); // decided when the menu opens (the 15-minute edit window)
+  const [popup, setPopup] = useState<{ id: string; kind: "react" | "more"; canEdit: boolean } | null>(null); // the open emoji picker / options menu (canEdit: decided when it opens)
+  const [replyingTo, setReplyingTo] = useState<Msg | null>(null);
+  const [seenFor, setSeenFor] = useState<Msg | null>(null); // message whose "seen by" list is open
+  const [flash, setFlash] = useState<string | null>(null); // message briefly highlighted after jumping to it
+  const composer = useRef<HTMLTextAreaElement>(null);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [confirmDel, setConfirmDel] = useState<Msg | null>(null);
   const [working, setWorking] = useState(false);
@@ -367,8 +371,9 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
     setSending(true);
     setError("");
     try {
-      await apiPost(`/chat/conversations/${conv.id}/messages`, { body });
+      await apiPost(`/chat/conversations/${conv.id}/messages`, { body, ...(replyingTo ? { replyToId: replyingTo.id } : {}) });
       setText("");
+      setReplyingTo(null);
       stick.current = true;
       refresh();
     } catch (e) {
@@ -409,6 +414,32 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
     }
   };
 
+  const react = async (m: Msg, emoji: string) => {
+    setPopup(null);
+    try {
+      await apiPost(`/chat/conversations/${conv.id}/messages/${m.id}/reactions`, { emoji });
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not react.");
+    }
+  };
+
+  const startReply = (m: Msg) => {
+    setPopup(null);
+    setEditing(null);
+    setReplyingTo(m);
+    composer.current?.focus();
+  };
+
+  // Scroll to the message a reply quotes (if it is on screen already) and highlight it for a moment.
+  const jumpTo = (id: string) => {
+    const el = document.getElementById(`msg-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setFlash(id);
+    setTimeout(() => setFlash((cur) => (cur === id ? null : cur)), 1600);
+  };
+
   const earlier = async () => {
     if (loadingOlder || !messages[0]) return;
     setLoadingOlder(true);
@@ -430,7 +461,15 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
 
   // "Seen": in a direct chat the other person has read up to my last message; in a group, count the people who have.
   const myLast = [...messages].reverse().find((m) => m.senderId === meId && !m.deleted);
-  const seenBy = myLast ? members.filter((m) => m.id !== meId && new Date(m.lastReadAt).getTime() >= new Date(myLast.createdAt).getTime()).length : 0;
+  // Who has seen a message: everyone else whose "last read" time is at or after it was sent.
+  const readersOf = (msg: Msg) => members.filter((x) => x.id !== meId && new Date(x.lastReadAt).getTime() >= new Date(msg.createdAt).getTime());
+  const seenText = (msg: Msg) => {
+    const r = readersOf(msg);
+    if (r.length === 0) return "Not seen yet";
+    if (r.length === others) return "Seen by everyone";
+    if (r.length <= 2) return `Seen by ${r.map((x) => x.name.split(" ")[0]).join(", ")}`;
+    return `Seen by ${r.length} of ${others}`;
+  };
   const others = members.filter((m) => m.id !== meId).length;
 
   return (
@@ -471,7 +510,7 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
           const mine = m.senderId === meId;
           const sameSender = i > 0 && messages[i - 1].senderId === m.senderId && !showDay;
           return (
-            <div key={m.id}>
+            <div key={m.id} id={`msg-${m.id}`}>
               {showDay && (
                 <div className="my-3 text-center">
                   <span className="rounded-full bg-slate-200 px-3 py-0.5 text-[11px] text-slate-600">{day}</span>
@@ -506,66 +545,130 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
                       </div>
                     </div>
                   ) : (
-                    <div className={`flex items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
-                      <div
-                        className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm ${
-                          m.deleted ? "border border-dashed border-slate-300 bg-transparent italic text-slate-400" : mine ? "bg-indigo-600 text-white" : "border border-slate-200 bg-white text-slate-800"
-                        }`}
-                      >
-                        {m.deleted ? "Message deleted" : m.body}
-                      </div>
-                      {mine && !m.deleted && (
-                        <div className="relative">
-                          <button
-                            onClick={() => {
-                              setMenuCanEdit(Date.now() - new Date(m.createdAt).getTime() <= 15 * 60_000);
-                              setMenuFor(menuFor === m.id ? null : m.id);
-                            }}
-                            aria-label="Message options"
-                            aria-expanded={menuFor === m.id}
-                            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 opacity-100 hover:bg-slate-200 hover:text-slate-700 focus:opacity-100 md:opacity-0 md:group-hover:opacity-100"
-                          >
-                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor"><circle cx="4.5" cy="10" r="1.5" /><circle cx="10" cy="10" r="1.5" /><circle cx="15.5" cy="10" r="1.5" /></svg>
-                          </button>
-                          {menuFor === m.id && (
-                            <>
-                              <div className="fixed inset-0 z-10" onClick={() => setMenuFor(null)} />
-                              <div className="absolute bottom-full right-0 z-20 mb-1 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-sm shadow-lg">
-                                {menuCanEdit ? (
-                                  <button
-                                    onClick={() => {
-                                      setMenuFor(null);
-                                      setEditing({ id: m.id, text: m.body });
-                                    }}
-                                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-slate-700 hover:bg-slate-50"
-                                  >
-                                    <svg viewBox="0 0 20 20" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="m12.5 4.5 3 3L7 16H4v-3l8.5-8.5Z" /></svg>
-                                    Edit
-                                  </button>
-                                ) : (
-                                  <p className="px-3 py-1.5 text-[11px] text-slate-400">Editing closes after 15 minutes</p>
-                                )}
-                                <button
-                                  onClick={() => {
-                                    setMenuFor(null);
-                                    setConfirmDel(m);
-                                  }}
-                                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-rose-600 hover:bg-rose-50"
-                                >
-                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L14 6" /></svg>
-                                  Delete
-                                </button>
-                              </div>
-                            </>
+                    <>
+                      <div className={`flex items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
+                        <div
+                          className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm transition ${flash === m.id ? "ring-2 ring-amber-300" : ""} ${
+                            m.deleted ? "border border-dashed border-slate-300 bg-transparent italic text-slate-400" : mine ? "bg-indigo-600 text-white" : "border border-slate-200 bg-white text-slate-800"
+                          }`}
+                        >
+                          {m.replyTo && !m.deleted && (
+                            <button
+                              type="button"
+                              onClick={() => jumpTo(m.replyTo!.id)}
+                              className={`mb-1.5 block w-full rounded-lg border-l-4 px-2 py-1 text-left text-xs ${mine ? "border-indigo-300 bg-indigo-500/60 text-indigo-50" : "border-indigo-400 bg-slate-100 text-slate-600"}`}
+                            >
+                              <span className="block font-semibold">{m.replyTo.senderName}</span>
+                              <span className={`line-clamp-2 break-words ${m.replyTo.deleted ? "italic opacity-80" : ""}`}>{m.replyTo.preview}</span>
+                            </button>
                           )}
+                          {m.deleted ? "Message deleted" : m.body}
+                        </div>
+                        {!m.deleted && (
+                          <div className={`relative flex items-center focus-within:opacity-100 md:group-hover:opacity-100 ${popup?.id === m.id ? "md:opacity-100" : "md:opacity-0"}`}>
+                            <button
+                              onClick={() => setPopup(popup?.id === m.id && popup.kind === "react" ? null : { id: m.id, kind: "react", canEdit: false })}
+                              aria-label="React"
+                              aria-expanded={popup?.id === m.id && popup.kind === "react"}
+                              className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                            >
+                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="10" cy="10" r="7" /><path d="M7.3 11.8a3.6 3.6 0 0 0 5.4 0M7.8 8h.01M12.2 8h.01" /></svg>
+                            </button>
+                            <button onClick={() => startReply(m)} aria-label="Reply" className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-200 hover:text-slate-700">
+                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M8.5 5 3.5 9.5l5 4.5V11c4 0 6.3.9 8 4-.4-4.6-3-7.2-8-7.5V5Z" /></svg>
+                            </button>
+                            {mine && (
+                              <button
+                                onClick={() => setPopup(popup?.id === m.id && popup.kind === "more" ? null : { id: m.id, kind: "more", canEdit: Date.now() - new Date(m.createdAt).getTime() <= 15 * 60_000 })}
+                                aria-label="Message options"
+                                aria-expanded={popup?.id === m.id && popup.kind === "more"}
+                                className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                              >
+                                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor"><circle cx="4.5" cy="10" r="1.5" /><circle cx="10" cy="10" r="1.5" /><circle cx="15.5" cy="10" r="1.5" /></svg>
+                              </button>
+                            )}
+                            {popup?.id === m.id && (
+                              <>
+                                <div className="fixed inset-0 z-10" onClick={() => setPopup(null)} />
+                                {popup.kind === "react" ? (
+                                  <div className={`absolute bottom-full z-20 mb-1 flex gap-0.5 rounded-full border border-slate-200 bg-white px-1.5 py-1 shadow-lg ${mine ? "right-0" : "left-0"}`}>
+                                    {REACTION_SET.map((emoji) => (
+                                      <button key={emoji} onClick={() => void react(m, emoji)} aria-label={`React ${emoji}`} className="h-8 w-8 rounded-full text-lg leading-none transition hover:scale-125 hover:bg-slate-100">
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className={`absolute bottom-full z-20 mb-1 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-sm shadow-lg ${mine ? "right-0" : "left-0"}`}>
+                                    {popup.canEdit ? (
+                                      <button
+                                        onClick={() => {
+                                          setPopup(null);
+                                          setEditing({ id: m.id, text: m.body });
+                                        }}
+                                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-slate-700 hover:bg-slate-50"
+                                      >
+                                        <svg viewBox="0 0 20 20" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="m12.5 4.5 3 3L7 16H4v-3l8.5-8.5Z" /></svg>
+                                        Edit
+                                      </button>
+                                    ) : (
+                                      <p className="px-3 py-1.5 text-[11px] text-slate-400">Editing closes after 15 minutes</p>
+                                    )}
+                                    {conv.kind === "GROUP" && (
+                                      <button
+                                        onClick={() => {
+                                          setPopup(null);
+                                          setSeenFor(m);
+                                        }}
+                                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-slate-700 hover:bg-slate-50"
+                                      >
+                                        <svg viewBox="0 0 20 20" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 10S5 4.5 10 4.5 17.5 10 17.5 10 15 15.5 10 15.5 2.5 10 2.5 10Z" /><circle cx="10" cy="10" r="2.2" /></svg>
+                                        Seen by
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => {
+                                        setPopup(null);
+                                        setConfirmDel(m);
+                                      }}
+                                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-rose-600 hover:bg-rose-50"
+                                    >
+                                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L14 6" /></svg>
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {m.reactions.length > 0 && (
+                        <div className={`mt-0.5 flex flex-wrap gap-1 ${mine ? "justify-end" : ""}`}>
+                          {m.reactions.map((r) => (
+                            <button
+                              key={r.emoji}
+                              onClick={() => void react(m, r.emoji)}
+                              title={r.names.join(", ")}
+                              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition hover:scale-105 ${r.mine ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-600"}`}
+                            >
+                              <span className="text-sm leading-none">{r.emoji}</span>
+                              <span className="font-medium">{r.count}</span>
+                            </button>
+                          ))}
                         </div>
                       )}
-                    </div>
+                    </>
                   )}
                   <span className="px-1 text-[10px] text-slate-400">
                     {timeOf(m.createdAt)}
                     {m.edited && <> · edited</>}
-                    {myLast?.id === m.id && others > 0 && seenBy > 0 && <> · {conv.kind === "DIRECT" ? "Seen" : `Seen by ${seenBy}`}</>}
+                    {myLast?.id === m.id && others > 0 &&
+                      (conv.kind === "DIRECT" ? (
+                        readersOf(m).length > 0 && <> · <span className="font-medium text-indigo-500">Seen</span></>
+                      ) : (
+                        <> · <button onClick={() => setSeenFor(m)} className={`font-medium hover:underline ${readersOf(m).length ? "text-indigo-500" : "text-slate-400"}`}>{seenText(m)}</button></>
+                      ))}
                   </span>
                 </div>
               </div>
@@ -573,6 +676,33 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
           );
         })}
       </div>
+
+      {seenFor && (
+        <Modal title="Seen by" subtitle={`${seenText(seenFor)} · sent ${timeOf(seenFor.createdAt)}`} onClose={() => setSeenFor(null)} width="max-w-sm">
+          <p className="mb-3 line-clamp-3 whitespace-pre-wrap break-words rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{seenFor.body}</p>
+          {(() => {
+            const seen = readersOf(seenFor);
+            const waiting = members.filter((x) => x.id !== meId && !seen.some((r) => r.id === x.id));
+            const row = (x: Member) => (
+              <li key={x.id} className="flex items-center gap-3 py-1.5">
+                <Badge name={x.name} kind="DIRECT" size={32} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-slate-800">{x.name}</span>
+                  <span className="block truncate text-xs text-slate-500">{[x.designation, x.company].filter(Boolean).join(" · ")}</span>
+                </span>
+              </li>
+            );
+            return (
+              <>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-indigo-600">Seen ({seen.length})</p>
+                {seen.length ? <ul className="mb-3 divide-y divide-slate-100">{seen.map(row)}</ul> : <p className="mb-3 text-sm text-slate-500">Nobody yet.</p>}
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Not seen yet ({waiting.length})</p>
+                {waiting.length ? <ul className="divide-y divide-slate-100">{waiting.map(row)}</ul> : <p className="text-sm text-slate-500">Everyone has seen it.</p>}
+              </>
+            );
+          })()}
+        </Modal>
+      )}
 
       {confirmDel && (
         <Modal
@@ -598,14 +728,25 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
           {typers.length === 0 ? "" : typers.length === 1 ? `${typers[0]} is typing…` : typers.length === 2 ? `${typers[0]} and ${typers[1]} are typing…` : "Several people are typing…"}
         </p>
         {error && <p className="mb-2 rounded-md bg-rose-50 px-3 py-1.5 text-xs text-rose-700">{error}</p>}
+        {replyingTo && (
+          <div className="mb-2 flex items-start gap-2 rounded-lg border-l-4 border-indigo-400 bg-indigo-50 px-3 py-1.5">
+            <div className="min-w-0 flex-1 text-xs">
+              <span className="block font-semibold text-indigo-700">Replying to {replyingTo.senderId === meId ? "yourself" : replyingTo.senderName}</span>
+              <span className="line-clamp-1 break-words text-slate-600">{replyingTo.deleted ? "Message deleted" : replyingTo.body}</span>
+            </div>
+            <button onClick={() => setReplyingTo(null)} aria-label="Cancel reply" className="shrink-0 rounded-full px-1.5 text-slate-500 hover:bg-indigo-100">✕</button>
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
+            ref={composer}
             value={text}
             onChange={(e) => {
               setText(e.target.value);
               if (e.target.value) notifyTyping();
             }}
             onKeyDown={(e) => {
+              if (e.key === "Escape" && replyingTo) setReplyingTo(null);
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 void send();

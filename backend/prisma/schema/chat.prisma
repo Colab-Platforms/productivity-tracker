@@ -42,8 +42,22 @@ model ChatMessage {
   body           String
   createdAt      DateTime  @default(now())
   editedAt       DateTime? // set when the sender edits the text (within the edit window)
+  replyToId      String?   @db.Uuid // the message this one answers (same conversation); cleared if that message is ever removed
   deletedAt      DateTime?
 
   @@index([conversationId, createdAt])
   @@map("chat_messages")
+}
+
+// One row per (message, person, emoji): reacting again with the same emoji removes it. Only members of the conversation can react or see them.
+model ChatReaction {
+  id        String   @id @default(uuid()) @db.Uuid
+  messageId String   @db.Uuid
+  userId    String   @db.Uuid
+  emoji     String
+  createdAt DateTime @default(now())
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@map("chat_reactions")
 }

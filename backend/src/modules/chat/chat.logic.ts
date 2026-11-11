@@ -5,6 +5,21 @@ export const LIMITS = { message: 4000, title: 80, groupMembers: 100, perMinute: 
 export const EDIT_WINDOW_MS = 15 * 60_000;
 export const canEditNow = (sentAt: Date, now: number = Date.now()) => now - sentAt.getTime() <= EDIT_WINDOW_MS;
 
+/** The only reactions on offer. A fixed set keeps the data clean and the picker small. */
+export const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"] as const;
+export const isReaction = (v: unknown): v is (typeof REACTIONS)[number] => typeof v === "string" && (REACTIONS as readonly string[]).includes(v);
+
+/** The quoted line shown above a reply. */
+export const quotePreview = (body: string, deleted: boolean) => (deleted ? "Message deleted" : body.replace(/\s+/g, " ").slice(0, 120));
+
+/** Counts per emoji (in the fixed order), whether the viewer reacted, and who. */
+export function groupReactions(rows: { emoji: string; userId: string }[], me: string, nameOf: (id: string) => string) {
+  return REACTIONS.map((emoji) => {
+    const hits = rows.filter((r) => r.emoji === emoji);
+    return { emoji, count: hits.length, mine: hits.some((r) => r.userId === me), names: hits.map((r) => nameOf(r.userId)) };
+  }).filter((g) => g.count > 0);
+}
+
 /** The same two people always get the same key, whoever starts the chat. */
 export const directKey = (a: string, b: string) => (a < b ? `${a}:${b}` : `${b}:${a}`);
 

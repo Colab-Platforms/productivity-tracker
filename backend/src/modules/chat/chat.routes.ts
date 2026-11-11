@@ -21,6 +21,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   MESSAGE_TOO_LONG: { status: 400, message: "Keep a message under 4000 characters." },
   SENDING_TOO_FAST: { status: 429, message: "You are sending too fast. Wait a moment." },
   NOT_YOURS: { status: 403, message: "You can only change your own messages." },
+  REPLY_NOT_FOUND: { status: 400, message: "The message you are replying to was not found in this chat." },
+  BAD_EMOJI: { status: 400, message: "That reaction is not available." },
   MESSAGE_DELETED: { status: 409, message: "That message was deleted." },
   EDIT_WINDOW_PASSED: { status: 409, message: "A message can be edited for 15 minutes after it is sent." },
   NOT_ADMIN: { status: 403, message: "Only a group admin can do that." },
@@ -59,6 +61,7 @@ router.get("/conversations/:id/messages", run((req) => chat.getMessages(uid(req)
 router.post("/conversations/:id/messages", run((req) => chat.sendMessage(uid(req), String(req.params.id), req.body ?? {})));
 router.delete("/conversations/:id/messages/:messageId", run((req) => chat.deleteMessage(uid(req), String(req.params.id), String(req.params.messageId))));
 router.patch("/conversations/:id/messages/:messageId", run((req) => chat.editMessage(uid(req), String(req.params.id), String(req.params.messageId), req.body ?? {})));
+router.post("/conversations/:id/messages/:messageId/reactions", run((req) => chat.toggleReaction(uid(req), String(req.params.id), String(req.params.messageId), req.body ?? {})));
 router.post("/conversations/:id/read", run((req) => chat.markRead(uid(req), String(req.params.id))));
 router.patch("/conversations/:id", run((req) => chat.renameGroup(uid(req), String(req.params.id), req.body ?? {})));
 router.post("/conversations/:id/members", run((req) => chat.addMembers(uid(req), String(req.params.id), req.body ?? {})));
