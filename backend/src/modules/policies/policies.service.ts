@@ -747,7 +747,10 @@ export async function manageList(viewerId: string) {
 }
 
 // Who has and has not confirmed, across policies (or one). One row per person per published policy.
-export async function tracking(viewerId: string, q: { policyId?: string; teamId?: string; userId?: string; status?: string; search?: string }) {
+// `everyone` (the Acknowledgments screen): every active person of the company against every published policy, only two
+// statuses (ACKNOWLEDGED / PENDING; opening is not acknowledging), and `inAudience` says whether the policy was meant for
+// the person. Without it (the older per-policy report) only people in the policy's audience are listed, as before.
+export async function tracking(viewerId: string, q: { policyId?: string; teamId?: string; userId?: string; status?: string; search?: string; everyone?: boolean }) {
   const v = await staff(viewerId);
   const docs = await prisma.inductionDocument.findMany({ where: { platformId: v.platformId, isActive: true, ...(q.policyId ? { id: q.policyId } : {}) }, orderBy: { title: "asc" } });
   const meta = await loadMeta(docs.map((d) => d.id));
@@ -758,21 +761,22 @@ export async function tracking(viewerId: string, q: { policyId?: string; teamId?
     prisma.team.findMany({ where: { platformId: v.platformId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
   const needle = String(q.search ?? "").trim().toLowerCase();
-  const rows: { userId: string; name: string; employeeCode: string | null; team: string | null; policyId: string; policyTitle: string; versionLabel: string; required: boolean; status: string; openedAt: Date | null; acknowledgedAt: Date | null }[] = [];
+  const rows: { userId: string; name: string; employeeCode: string | null; team: string | null; policyId: string; policyTitle: string; versionLabel: string; required: boolean; status: string; openedAt: Date | null; acknowledgedAt: Date | null; inAudience: boolean }[] = [];
   for (const d of live) {
     const required = requiredNumber(d, meta);
     const aud = meta.audience.get(d.id) ?? [];
     for (const p of ppl) {
-      if (!appliesTo(p, d, aud)) continue;
+      const inAudience = appliesTo(p, d, aud);
+      if (!inAudience && !q.everyone) continue;
       if (q.userId && p.id !== q.userId) continue;
       if (q.teamId && !p.teamIds.includes(q.teamId)) continue;
       if (needle && !p.name.toLowerCase().includes(needle) && !(p.employeeCode ?? "").toLowerCase().includes(needle)) continue;
       const mine = acks.filter((a) => a.inductionDocumentId === d.id && a.userId === p.id);
       const done = mine.find((a) => a.acknowledgedAt && a.documentVersion >= required);
       const opened = mine.find((a) => a.documentVersion === d.version && a.openedAt);
-      const status = done ? "ACKNOWLEDGED" : opened ? "OPENED" : "PENDING";
+      const status = done ? "ACKNOWLEDGED" : opened && !q.everyone ? "OPENED" : "PENDING";
       if (q.status && status !== q.status) continue;
-      rows.push({ userId: p.id, name: p.name, employeeCode: p.employeeCode, team: p.teamNames[0] ?? null, policyId: d.id, policyTitle: d.title, versionLabel: labelOf(d, meta), required: d.isMandatory, status, openedAt: opened?.openedAt ?? null, acknowledgedAt: done?.acknowledgedAt ?? null });
+      rows.push({ userId: p.id, name: p.name, employeeCode: p.employeeCode, team: p.teamNames.join(", ") || null, policyId: d.id, policyTitle: d.title, versionLabel: labelOf(d, meta), required: d.isMandatory, status, openedAt: opened?.openedAt ?? null, acknowledgedAt: done?.acknowledgedAt ?? null, inAudience });
     }
   }
   const limited = rows.slice(0, 10_000);

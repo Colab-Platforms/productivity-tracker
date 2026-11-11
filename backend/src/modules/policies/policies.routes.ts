@@ -99,8 +99,8 @@ router.get(
     const userId = text(req.query.userId, 40);
     if ([policyId, teamId, userId].some((x) => x && !UUID.test(x))) throw new Error("BAD_STATUS");
     const status = text(req.query.status, 20);
-    if (status && !["ACKNOWLEDGED", "OPENED", "PENDING"].includes(status)) throw new Error("BAD_STATUS");
-    return policies.tracking(uid(req), { policyId, teamId, userId, status, search: text(req.query.search, 60) });
+    if (status && !["ACKNOWLEDGED", "PENDING"].includes(status)) throw new Error("BAD_STATUS");
+    return policies.tracking(uid(req), { policyId, teamId, userId, status, search: text(req.query.search, 60), everyone: true });
   })
 );
 router.post("/", run((req) => policies.createDocument(uid(req), req.body ?? {})));
