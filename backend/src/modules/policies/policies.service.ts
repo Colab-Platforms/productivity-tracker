@@ -750,8 +750,31 @@ export async function manageList(viewerId: string) {
 // `everyone` (the Acknowledgments screen): every active person of the company against every published policy, only two
 // statuses (ACKNOWLEDGED / PENDING; opening is not acknowledging), and `inAudience` says whether the policy was meant for
 // the person. Without it (the older per-policy report) only people in the policy's audience are listed, as before.
-export async function tracking(viewerId: string, q: { policyId?: string; teamId?: string; userId?: string; status?: string; search?: string; everyone?: boolean }) {
-  const v = await staff(viewerId);
+type TrackQuery = { policyId?: string; teamId?: string; userId?: string; status?: string; search?: string; everyone?: boolean; allCompanies?: boolean; companyId?: string };
+
+export async function tracking(viewerId: string, q: TrackQuery) {
+  if (!q.allCompanies) return trackingOne(await staff(viewerId), q);
+  // Every company the viewer may act on (own, assigned, or all for top management). Each company is read exactly as it
+  // would be on its own, so a person is only ever listed against the policies of THEIR company.
+  await staff(viewerId);
+  const access = await accessFor(viewerId);
+  const companies = visibleCompanies(access, await prisma.platform.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }))
+    .filter((c) => !q.companyId || c.id === q.companyId);
+  const parts = await Promise.all(companies.map(async (c) => ({ c, t: await trackingOne(await staff(viewerId, c.id), q, c.name) })));
+  const rows = parts.flatMap((p) => p.t.rows).slice(0, 10_000);
+  const count = (s: string) => rows.filter((r) => r.status === s).length;
+  return {
+    companies,
+    teams: parts.flatMap((p) => p.t.teams.map((t) => ({ ...t, name: companies.length > 1 ? `${p.c.name} · ${t.name}` : t.name }))),
+    policies: parts.flatMap((p) => p.t.policies.map((x) => ({ ...x, title: companies.length > 1 ? `${x.title} (${p.c.name})` : x.title }))),
+    people: parts.flatMap((p) => p.t.people),
+    summary: { total: rows.length, acknowledged: count("ACKNOWLEDGED"), opened: count("OPENED"), pending: count("PENDING"), completionPercent: rows.length ? Math.round((count("ACKNOWLEDGED") / rows.length) * 1000) / 10 : null },
+    truncated: parts.some((p) => p.t.truncated) || parts.flatMap((p) => p.t.rows).length > rows.length,
+    rows,
+  };
+}
+
+async function trackingOne(v: Viewer, q: TrackQuery, companyName: string | null = null) {
   const docs = await prisma.inductionDocument.findMany({ where: { platformId: v.platformId, isActive: true, ...(q.policyId ? { id: q.policyId } : {}) }, orderBy: { title: "asc" } });
   const meta = await loadMeta(docs.map((d) => d.id));
   const live = docs.filter((d) => statusOf(d, meta) === "PUBLISHED");
@@ -761,7 +784,7 @@ export async function tracking(viewerId: string, q: { policyId?: string; teamId?
     prisma.team.findMany({ where: { platformId: v.platformId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
   const needle = String(q.search ?? "").trim().toLowerCase();
-  const rows: { userId: string; name: string; employeeCode: string | null; team: string | null; policyId: string; policyTitle: string; versionLabel: string; required: boolean; status: string; openedAt: Date | null; acknowledgedAt: Date | null; inAudience: boolean }[] = [];
+  const rows: { userId: string; name: string; employeeCode: string | null; team: string | null; policyId: string; policyTitle: string; versionLabel: string; required: boolean; status: string; openedAt: Date | null; acknowledgedAt: Date | null; inAudience: boolean; company: string | null; companyId: string }[] = [];
   for (const d of live) {
     const required = requiredNumber(d, meta);
     const aud = meta.audience.get(d.id) ?? [];
@@ -776,7 +799,7 @@ export async function tracking(viewerId: string, q: { policyId?: string; teamId?
       const opened = mine.find((a) => a.documentVersion === d.version && a.openedAt);
       const status = done ? "ACKNOWLEDGED" : opened && !q.everyone ? "OPENED" : "PENDING";
       if (q.status && status !== q.status) continue;
-      rows.push({ userId: p.id, name: p.name, employeeCode: p.employeeCode, team: p.teamNames.join(", ") || null, policyId: d.id, policyTitle: d.title, versionLabel: labelOf(d, meta), required: d.isMandatory, status, openedAt: opened?.openedAt ?? null, acknowledgedAt: done?.acknowledgedAt ?? null, inAudience });
+      rows.push({ userId: p.id, name: p.name, employeeCode: p.employeeCode, team: p.teamNames.join(", ") || null, policyId: d.id, policyTitle: d.title, versionLabel: labelOf(d, meta), required: d.isMandatory, status, openedAt: opened?.openedAt ?? null, acknowledgedAt: done?.acknowledgedAt ?? null, inAudience, company: companyName, companyId: v.platformId });
     }
   }
   const limited = rows.slice(0, 10_000);

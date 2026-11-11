@@ -45,9 +45,10 @@ export type Manage = {
 };
 export type TrackRow = {
   userId: string; name: string; employeeCode: string | null; team: string | null; policyId: string; policyTitle: string; versionLabel: string;
-  required: boolean; status: "ACKNOWLEDGED" | "OPENED" | "PENDING"; openedAt: string | null; acknowledgedAt: string | null; inAudience?: boolean;
+  required: boolean; status: "ACKNOWLEDGED" | "OPENED" | "PENDING"; openedAt: string | null; acknowledgedAt: string | null; inAudience?: boolean; company?: string | null; companyId?: string;
 };
 export type Tracking = {
+  companies?: { id: string; name: string }[];
   teams: { id: string; name: string }[]; policies: { id: string; title: string }[]; people: { id: string; name: string; employeeCode: string | null }[];
   summary: { total: number; acknowledged: number; opened: number; pending: number; completionPercent: number | null }; truncated: boolean; rows: TrackRow[];
 };

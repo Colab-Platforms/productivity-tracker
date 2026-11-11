@@ -60,7 +60,7 @@ export default function PoliciesPage() {
         </div>
       )}
 
-      {companies?.canSwitch && tab !== "read" && (
+      {companies?.canSwitch && tab === "manage" && (
         <div className="flex flex-wrap items-center gap-3">
           <label htmlFor="pol-company" className="text-sm font-medium text-slate-600">Company</label>
           <select id="pol-company" value={chosen ?? companies.ownCompanyId ?? ""} onChange={(e) => { setChosen(e.target.value); setNotice(""); }} className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-700">
@@ -75,7 +75,7 @@ export default function PoliciesPage() {
       {tab === "read" && <ReadTab reload={reload} />}
       <CompanyContext.Provider value={acting}>
         {tab === "manage" && isHr && <ManageTab reload={reload} bump={bump} setNotice={setNotice} />}
-        {tab === "tracking" && isHr && <TrackingTab reload={reload} />}
+        {tab === "tracking" && isHr && <TrackingTab reload={reload} />}{/* Acknowledgments covers every company you may act on, with its own Company filter */}
       </CompanyContext.Provider>
     </div>
   );

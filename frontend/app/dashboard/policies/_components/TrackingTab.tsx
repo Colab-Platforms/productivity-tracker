@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { downloadCsv } from "../../reports/_team/format";
-import { card, field, fmtDateTime, useApi, useCompany, withCompany, type Tracking } from "../_lib";
+import { card, field, fmtDateTime, useApi, withCompany, type Tracking } from "../_lib";
 
 // HR / Admin: who has confirmed which policy, who has opened it but not confirmed, and who has not opened it.
 // One row per person per published policy. Filters narrow the list; the CSV is exactly the rows on screen.
@@ -18,7 +18,7 @@ function Stat({ label, value, tone }: { label: string; value: string | number; t
 }
 
 export default function TrackingTab({ reload }: { reload: number }) {
-  const co = useCompany();
+  const [companyId, setCompanyId] = useState("");
   const [policyId, setPolicyId] = useState("");
   const [teamId, setTeamId] = useState("");
   const [userId, setUserId] = useState("");
@@ -26,19 +26,21 @@ export default function TrackingTab({ reload }: { reload: number }) {
   const [search, setSearch] = useState("");
 
   const qs = new URLSearchParams();
+  if (companyId) qs.set("companyId", companyId);
   if (policyId) qs.set("policyId", policyId);
   if (teamId) qs.set("teamId", teamId);
   if (userId) qs.set("userId", userId);
   if (status) qs.set("status", status);
   if (search.trim()) qs.set("search", search.trim());
-  const { data, error } = useApi<Tracking>(withCompany(`/policies/tracking?${qs.toString()}`, co), reload);
+  const { data, error } = useApi<Tracking>(`/policies/tracking?${qs.toString()}`, reload);
+  const multi = (data?.companies?.length ?? 0) > 1 || !!companyId;
 
   function exportCsv() {
     if (!data) return;
     downloadCsv(
       `policy-acknowledgments-${new Date().toISOString().slice(0, 10)}.csv`,
-      ["Employee name", "Employee ID", "Department", "Policy name", "Acknowledgment status", "Acknowledged on"],
-      data.rows.map((r) => [r.name, r.employeeCode, r.team, r.policyTitle, r.status === "ACKNOWLEDGED" ? "Acknowledged" : "Pending", r.acknowledgedAt ?? ""])
+      ["Company", "Employee name", "Employee ID", "Department", "Policy name", "Acknowledgment status", "Acknowledged on"],
+      data.rows.map((r) => [r.company ?? "", r.name, r.employeeCode, r.team, r.policyTitle, r.status === "ACKNOWLEDGED" ? "Acknowledged" : "Pending", r.acknowledgedAt ?? ""])
     );
   }
 
@@ -57,6 +59,10 @@ export default function TrackingTab({ reload }: { reload: number }) {
 
       <section className={card}>
         <div className="flex flex-wrap items-end gap-3 px-5 py-4">
+          {(data?.companies?.length ?? 0) > 1 && (
+            <label className="block w-52 text-xs text-slate-500">Company
+              <select value={companyId} onChange={(e) => { setCompanyId(e.target.value); setPolicyId(""); setTeamId(""); setUserId(""); }} className={`${field} mt-1`}><option value="">All companies</option>{data?.companies?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+          )}
           <label className="block w-52 text-xs text-slate-500">Policy
             <select value={policyId} onChange={(e) => setPolicyId(e.target.value)} className={`${field} mt-1`}><option value="">All policies</option>{data?.policies.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}</select></label>
           <label className="block w-44 text-xs text-slate-500">Department (team)
@@ -79,18 +85,19 @@ export default function TrackingTab({ reload }: { reload: number }) {
           ) : data ? (
             <table className="w-full min-w-[900px] text-sm">
               <thead className="bg-slate-50"><tr className="text-left text-xs font-medium text-slate-500">
-                <th className="px-4 py-3">Employee name</th><th className="px-4 py-3">Employee ID</th><th className="px-4 py-3">Department</th><th className="px-4 py-3">Policy name</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Acknowledged on</th><th className="px-4 py-3">Action</th>
+                {multi && <th className="px-4 py-3">Company</th>}<th className="px-4 py-3">Employee name</th><th className="px-4 py-3">Employee ID</th><th className="px-4 py-3">Department</th><th className="px-4 py-3">Policy name</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Acknowledged on</th><th className="px-4 py-3">Action</th>
               </tr></thead>
               <tbody>
                 {data.rows.map((r) => (
                   <tr key={`${r.userId}|${r.policyId}`} className="border-t border-indigo-50">
+                    {multi && <td className="px-4 py-2.5 text-slate-600">{r.company ?? "—"}</td>}
                     <td className="px-4 py-2.5 font-medium text-slate-900">{r.name}</td>
                     <td className="px-4 py-2.5 text-slate-600">{r.employeeCode ?? "—"}</td>
                     <td className="px-4 py-2.5 text-slate-600">{r.team ?? "—"}</td>
                     <td className="px-4 py-2.5 text-slate-800">{r.policyTitle}{r.inAudience === false && <span className="ml-2 text-xs text-slate-400">not in audience</span>}</td>
                     <td className="px-4 py-2.5"><span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${r.status === "ACKNOWLEDGED" ? "bg-emerald-50 text-emerald-700" : "bg-orange-50 text-orange-700"}`}>{r.status === "ACKNOWLEDGED" ? "Acknowledged" : "Pending"}</span></td>
                     <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{fmtDateTime(r.acknowledgedAt)}</td>
-                    <td className="px-4 py-2.5"><Link href={withCompany(`/dashboard/policies/${r.policyId}`, co)} className="text-xs font-medium text-indigo-600 hover:underline">View details</Link></td>
+                    <td className="px-4 py-2.5"><Link href={withCompany(`/dashboard/policies/${r.policyId}`, r.companyId ?? null)} className="text-xs font-medium text-indigo-600 hover:underline">View details</Link></td>
                   </tr>
                 ))}
               </tbody>
