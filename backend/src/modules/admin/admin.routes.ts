@@ -326,7 +326,7 @@ router.post("/users/:id/password", async (req, res) => {
 
 router.get("/office-ips", async (req, res) => {
   try {
-    res.json({ entries: await officeNet.listOfficeIps(req.user!.platformId), yourIp: clientIp(req) });
+    res.json({ entries: await officeNet.listOfficeIps(), yourIp: clientIp(req) });
   } catch (e) {
     fail(res, e);
   }
@@ -344,7 +344,7 @@ router.post("/office-ips", async (req, res) => {
 
 router.delete("/office-ips/:id", async (req, res) => {
   try {
-    await officeNet.removeOfficeIp(req.user!.platformId, id(req.params.id));
+    await officeNet.removeOfficeIp(id(req.params.id));
     res.json({ ok: true });
   } catch (e) {
     fail(res, e);
