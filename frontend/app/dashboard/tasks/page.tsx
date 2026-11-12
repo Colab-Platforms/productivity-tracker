@@ -85,6 +85,7 @@ type Score = {
 };
 
 type Payload = {
+  date: string; // today, YYYY-MM-DD
   // true for a manager once self-managed tasks are available: his own tasks need no approval (see _self/SelfManagedTasks)
   selfManagedMode?: boolean;
   entryForm?: EntryForm;
@@ -188,6 +189,24 @@ export default function TasksPage() {
     setError("");
     try {
       setData(await call<Payload>(`/tasks/${task.id}`, "PATCH", { status }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update that");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // A task carried over from an earlier day is closed with a note for the manager (why it ran late / forgot to tick).
+  const [doneFor, setDoneFor] = useState<string | null>(null);
+  const [doneNote, setDoneNote] = useState("");
+  async function completeWithNote(task: Task) {
+    setBusy(true);
+    setError("");
+    try {
+      const note = doneNote.trim();
+      setData(await call<Payload>(`/tasks/${task.id}`, "PATCH", { status: "COMPLETED", ...(note ? { completionNote: note } : {}) }));
+      setDoneFor(null);
+      setDoneNote("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update that");
     } finally {
@@ -469,8 +488,32 @@ export default function TasksPage() {
                   ? `Assigned by ${t.assignedBy}`
                   : `Approved by ${t.approvedBy ?? "your manager"}`}
                 {t.isCarriedOver && " · carried over"}
-                {t.fromEarlierDay && ` · from ${t.date}`}
               </p>
+              {t.fromEarlierDay && (
+                <p className="mt-1">
+                  <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                    Added {new Date(`${t.date}T00:00:00Z`).toLocaleDateString("en-IN", { timeZone: "UTC", day: "numeric", month: "short" })}
+                    {" · "}
+                    {Math.max(1, Math.round((new Date(`${data!.date}T00:00:00Z`).getTime() - new Date(`${t.date}T00:00:00Z`).getTime()) / 86400000))} day(s) pending
+                  </span>
+                </p>
+              )}
+              {doneFor === t.id && (
+                <div className="mt-2 space-y-2">
+                  <textarea
+                    value={doneNote}
+                    onChange={(e) => setDoneNote(e.target.value)}
+                    maxLength={300}
+                    rows={2}
+                    placeholder="Note for your manager, e.g. finished on the day and forgot to tick / needed more time"
+                    className="w-full rounded-xl border border-indigo-100 px-3 py-2 text-sm text-slate-900"
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={() => completeWithNote(t)} disabled={busy} className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40">{busy ? "Saving…" : "Confirm done"}</button>
+                    <button onClick={() => { setDoneFor(null); setDoneNote(""); }} disabled={busy} className="rounded-xl border border-indigo-100 px-3 py-1.5 text-xs text-slate-700 hover:bg-indigo-50/60">Cancel</button>
+                  </div>
+                </div>
+              )}
               <EntryMeta t={t} />
               {t.reopened && (
                 <p className="mt-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-900">
@@ -506,8 +549,8 @@ export default function TasksPage() {
             )}
 
             <button
-              onClick={() => setStatus(t, "COMPLETED")}
-              disabled={busy}
+              onClick={() => (t.fromEarlierDay ? (setDoneFor(t.id), setDoneNote("")) : setStatus(t, "COMPLETED"))}
+              disabled={busy || doneFor === t.id}
               className="shrink-0 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
             >
               Mark done

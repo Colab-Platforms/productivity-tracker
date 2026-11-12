@@ -309,20 +309,28 @@ export async function listTasks(userId: string) {
 
   // A task a manager reopened keeps its original day, which may be earlier than today, but it is unfinished work again: it is shown with
   // the rest of the person's working tasks, flagged with the day it came from. It does not change today's score.
-  const reopenedOld = await withRatings(await prisma.dailyTask.findMany({
-    where: { userId, approvalStatus: "APPROVED", status: { in: ["PENDING", "IN_PROGRESS"] }, outcome: null, date: { lt: date }, reviewNote: { startsWith: REVERT_MARK_PREFIX } },
+  // The same goes for any approved task still IN_PROGRESS from an earlier day: its lifecycle ends when it is completed, not at midnight.
+  const reopenedOld = (await withRatings(await prisma.dailyTask.findMany({
+    where: {
+      userId,
+      approvalStatus: "APPROVED",
+      outcome: null,
+      // Same 30-day window updateMyTask allows for completing, so nothing is shown that can't be finished.
+      date: { lt: date, gte: new Date(date.getTime() - 30 * 86400000) },
+      status: { in: ["PENDING", "IN_PROGRESS"] },
+    },
     include: { team: { select: { name: true } } },
     orderBy: { date: "asc" },
-  }));
-  const selfDetails = await detailsFor(rows.map((r) => r.id));
-  const entries = await entryDetailsFor(rows.map((r) => r.id));
+  }))).filter((t) => t.rating == null);
+  const selfDetails = await detailsFor([...rows, ...reopenedOld].map((r) => r.id));
+  const entries = await entryDetailsFor([...rows, ...reopenedOld].map((r) => r.id));
   const nowForSelf = new Date();
   const tasks = rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone), ...entryView(String(t.status), entries.get(t.id)) }));
   // True for a manager once the self-managed tables exist: his own tasks need no approval.
   const selfManagedMode = ctx.role === "MANAGER" && (await selfTasksReady());
 
   const working = [
-    ...reopenedOld.map((t) => ({ ...shape(t, t.team?.name ?? null), selfManaged: false as const, fromEarlierDay: true })),
+    ...reopenedOld.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone), ...entryView(String(t.status), entries.get(t.id)), fromEarlierDay: true })),
     ...tasks.filter((t) => t.approvalStatus === "APPROVED" && t.status !== "COMPLETED").map((t) => ({ ...t, fromEarlierDay: false })),
   ];
   const awaiting = tasks.filter((t) => t.approvalStatus === "PENDING");
