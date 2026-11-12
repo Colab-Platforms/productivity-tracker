@@ -4,7 +4,7 @@ import { getTimesheet } from "./timesheet.service.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import { LateRemarkRequired } from "./lateRemarks.js";
-import { ClockInNotAllowed } from "./clockInNetwork.js";
+import { ClockInNotAllowed, assertClockInAllowed } from "./clockInNetwork.js";
 import { clientIp } from "../../lib/clientIp.js";
 import { liveHuddle } from "../meetings/participation.service.js";
 
@@ -118,6 +118,8 @@ router.post("/break/start", async (req, res) => {
   }
 
   try {
+    // Starting or ending a break is office-only too, or a phone could be used to "go on break" from anywhere.
+    await assertClockInAllowed(req.user!.platformId, clientIp(req));
     res.json(await tracker.startBreak(req.user!.userId, breakType, remark));
   } catch (error) {
     fail(res, error);
@@ -126,6 +128,7 @@ router.post("/break/start", async (req, res) => {
 
 router.post("/break/end", async (req, res) => {
   try {
+    await assertClockInAllowed(req.user!.platformId, clientIp(req));
     res.json(await tracker.endBreak(req.user!.userId));
   } catch (error) {
     fail(res, error);
