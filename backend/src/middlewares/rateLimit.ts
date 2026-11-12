@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { clientIp } from "../lib/clientIp.js";
 
 // ---------------------------------------------------------------------------
 // RATE LIMIT
@@ -31,8 +32,7 @@ setInterval(() => {
 }, WINDOW_MS).unref();
 
 function clientKey(req: Request) {
-  const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0];
-  const ip = forwarded.trim() || req.ip || "unknown";
+  const ip = clientIp(req) || "unknown";
 
   // Keyed on IP **and** the identifier being tried, so one person fumbling
   // their own password never locks out a colleague behind the same office

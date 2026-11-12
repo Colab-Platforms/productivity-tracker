@@ -20,6 +20,8 @@ import { guardUuidParams, isBadInput, isUuid } from "../../lib/params.js";
 import { accessFor, assertCompany } from "../../lib/companyAccess.js";
 import { peekEmployeeCode } from "./employeeCode.js";
 import { parseFilters } from "../hr-filters/hrFilters.logic.js";
+import * as officeNet from "../tracker/clockInNetwork.js";
+import { clientIp } from "../../lib/clientIp.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -77,6 +79,11 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   ACCESS_NOT_ALLOWED: { status: 403, message: "Only an Admin or top management can change which companies a person can act on (Admins: HR users only, never the all-companies option), and nobody can change their own." },
   ACCESS_ONLY_HR_ADMIN: { status: 400, message: "Company access can only be given to HR and Admin accounts." },
   NOTHING_TO_UPDATE_DESIGNATION: { status: 400, message: "Nothing to update." },
+  // office network (clock-in allow-list)
+  BAD_IP: { status: 400, message: "Enter an IPv4 address like 206.84.235.169, or a range like 192.168.1.0/24 (at least /8)." },
+  IP_EXISTS: { status: 409, message: "That address is already on the list." },
+  IP_NOT_FOUND: { status: 404, message: "That address is not on the list." },
+  OFFICE_IPS_NOT_READY: { status: 503, message: "This feature is not set up on this server yet. Ask an administrator to finish the database update." },
 };
 
 function fail(res: any, error: unknown) {
@@ -310,6 +317,35 @@ router.post("/users/:id/password", async (req, res) => {
   try {
     const password = String(req.body?.password ?? "");
     res.json(await admin.resetPassword(req.user!.userId, id(req.params.id), password));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+// --- office network: where people may clock in from --------------------------
+
+router.get("/office-ips", async (req, res) => {
+  try {
+    res.json({ entries: await officeNet.listOfficeIps(req.user!.platformId), yourIp: clientIp(req) });
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.post("/office-ips", async (req, res) => {
+  try {
+    // No address typed = use the one this request came from ("Add my current IP").
+    const cidr = req.body?.cidr ? req.body.cidr : clientIp(req);
+    res.status(201).json(await officeNet.addOfficeIp(req.user!.platformId, req.user!.userId, cidr, req.body?.label));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.delete("/office-ips/:id", async (req, res) => {
+  try {
+    await officeNet.removeOfficeIp(req.user!.platformId, id(req.params.id));
+    res.json({ ok: true });
   } catch (e) {
     fail(res, e);
   }

@@ -44,6 +44,11 @@ import { audit } from "./middlewares/audit.js";
 const app = express();
 const PORT = Number(process.env.PORT ?? 5001);
 
+// Render (like most hosts) puts a proxy in front, so the caller's real address arrives in X-Forwarded-For.
+// TRUST_PROXY_HOPS = how many proxies sit in front of this app (default 1). Locally there is none: set it to 0.
+// Express then picks the right entry counting from the proxy side, which a client cannot forge.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
+
 const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",

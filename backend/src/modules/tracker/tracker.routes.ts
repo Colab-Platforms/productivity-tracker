@@ -4,6 +4,8 @@ import { getTimesheet } from "./timesheet.service.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import { LateRemarkRequired } from "./lateRemarks.js";
+import { ClockInNotAllowed } from "./clockInNetwork.js";
+import { clientIp } from "../../lib/clientIp.js";
 import { liveHuddle } from "../meetings/participation.service.js";
 
 const router = Router();
@@ -62,6 +64,10 @@ function fail(res: Response, error: unknown) {
       lateByMinutes: error.lateByMinutes,
     });
   }
+  // Not on the office network: login worked, but clock-in is only allowed from the office.
+  if (error instanceof ClockInNotAllowed) {
+    return res.status(403).json({ error: "You can only clock in from the office network.", code: "CLOCKIN_NETWORK_RESTRICTED" });
+  }
   const code = error instanceof Error ? error.message : "UNKNOWN";
   const known = MESSAGES[code];
 
@@ -86,7 +92,7 @@ router.get("/session", async (req, res) => {
 
 router.post("/clock-in", async (req, res) => {
   try {
-    res.json(await tracker.clockIn(req.user!.userId, typeof req.body?.teamId === "string" ? req.body.teamId : null, req.body?.lateRemark));
+    res.json(await tracker.clockIn(req.user!.userId, typeof req.body?.teamId === "string" ? req.body.teamId : null, req.body?.lateRemark, clientIp(req)));
   } catch (error) {
     fail(res, error);
   }

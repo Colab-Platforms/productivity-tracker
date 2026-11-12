@@ -429,6 +429,7 @@ export default function HrDashboard() {
                 ["/dashboard/employees", "Add an employee"],
                 ["/dashboard/offers", "Send an offer letter"],
                 ["/dashboard/holidays", "Add a holiday"],
+                ["/dashboard/office-network", "Office network (clock-in IPs)"],
                 ["/dashboard/queries", "Query Desk"],
               ].map(([href, label]) => (
                 <Link key={href} href={href} className="block px-4 py-2 text-slate-700 hover:bg-[var(--nav-hover)] hover:text-indigo-700">

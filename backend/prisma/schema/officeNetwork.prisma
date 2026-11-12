@@ -1,0 +1,21 @@
+// ===========================================================================
+// OFFICE NETWORK - the public IP addresses (or CIDR ranges) clock-in is allowed from.
+//
+// Login is open from anywhere; only CLOCK-IN checks this list. A company with NO rows is unrestricted, so
+// shipping this changes nothing until an admin adds an address.
+// NEW TABLE ONLY: nothing was added to an existing table. No Prisma relation to Platform on purpose (the foreign
+// key lives in the migration SQL).
+// ===========================================================================
+
+model OfficeIp {
+  id         String @id @default(uuid()) @db.Uuid
+  platformId String @db.Uuid // = platforms.id
+  cidr       String // "206.84.235.169" or "192.168.1.0/24" (IPv4), or an IPv6 address
+  label      String @default("")
+
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@unique([platformId, cidr])
+  @@map("office_ips")
+}

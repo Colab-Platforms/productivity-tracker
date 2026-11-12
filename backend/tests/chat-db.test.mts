@@ -80,6 +80,41 @@ try {
   assert.equal(await code(chat.editMessage(A.id, d1.id, ed.id, { body: "back" })), "MESSAGE_DELETED"); ok("cannot edit a deleted message");
   assert.equal((await chat.getMessages(B.id, d1.id)).messages.find((m) => m.id === ed.id)!.edited, false); ok("deleted message is not shown as edited");
 
+  // reply
+  await chat.sendMessage(A.id, d1.id, { body: "Can you send the report?" });
+  const base = (await chat.getMessages(B.id, d1.id)).messages.find((m) => m.body === "Can you send the report?")!;
+  await chat.sendMessage(B.id, d1.id, { body: "Yes, tonight", replyToId: base.id });
+  const withReply = (await chat.getMessages(A.id, d1.id)).messages.find((m) => m.body === "Yes, tonight")!;
+  assert.equal(withReply.replyTo?.id, base.id); assert.equal(withReply.replyTo?.preview, "Can you send the report?"); assert.ok(withReply.replyTo?.senderName); assert.equal(withReply.replyTo?.deleted, false); ok("reply quotes the original with sender and text");
+  assert.equal((await chat.getMessages(A.id, d1.id)).messages.find((m) => m.id === base.id)!.replyTo, null); ok("a normal message has no quote");
+  assert.equal(await code(chat.sendMessage(B.id, d1.id, { body: "x", replyToId: "not-a-uuid" })), "REPLY_NOT_FOUND"); ok("reply to a malformed id refused");
+  assert.equal(await code(chat.sendMessage(B.id, d1.id, { body: "x", replyToId: "00000000-0000-4000-8000-000000000000" })), "REPLY_NOT_FOUND"); ok("reply to a missing message refused");
+  const g0 = await chat.openConversation(A.id, { userIds: [B.id, C.id], title: "Reply test" });
+  created.push(g0.id);
+  assert.equal(await code(chat.sendMessage(A.id, g0.id, { body: "cross reply", replyToId: base.id })), "REPLY_NOT_FOUND"); ok("cannot reply to a message from a different chat");
+  await chat.deleteMessage(A.id, d1.id, base.id);
+  const afterDel = (await chat.getMessages(B.id, d1.id)).messages.find((m) => m.body === "Yes, tonight")!;
+  assert.equal(afterDel.replyTo?.deleted, true); assert.equal(afterDel.replyTo?.preview, "Message deleted"); ok("quote of a deleted message shows Message deleted, no leaked text");
+
+  // reactions
+  await chat.sendMessage(A.id, d1.id, { body: "react to me" });
+  const target = (await chat.getMessages(B.id, d1.id)).messages.find((m) => m.body === "react to me")!;
+  assert.equal((await chat.toggleReaction(B.id, d1.id, target.id, { emoji: "👍" })).reacted, true);
+  await chat.toggleReaction(A.id, d1.id, target.id, { emoji: "👍" });
+  await chat.toggleReaction(A.id, d1.id, target.id, { emoji: "❤️" });
+  let rt = (await chat.getMessages(B.id, d1.id)).messages.find((m) => m.id === target.id)!;
+  assert.equal(rt.reactions.length, 2); assert.equal(rt.reactions[0].emoji, "👍"); assert.equal(rt.reactions[0].count, 2); assert.equal(rt.reactions[0].mine, true); assert.equal(rt.reactions[1].mine, false); assert.equal(rt.reactions[0].names.length, 2); ok("reactions counted, ordered, mine flag per viewer");
+  assert.equal((await chat.toggleReaction(B.id, d1.id, target.id, { emoji: "👍" })).reacted, false);
+  rt = (await chat.getMessages(B.id, d1.id)).messages.find((m) => m.id === target.id)!;
+  assert.equal(rt.reactions[0].count, 1); assert.equal(rt.reactions[0].mine, false); ok("same emoji again takes it back");
+  assert.equal(await code(chat.toggleReaction(B.id, d1.id, target.id, { emoji: "💩" })), "BAD_EMOJI"); ok("emoji outside the set refused");
+  assert.equal(await code(chat.toggleReaction(B.id, d1.id, target.id, {})), "BAD_EMOJI"); ok("missing emoji refused");
+  assert.equal(await code(chat.toggleReaction(C.id, d1.id, target.id, { emoji: "👍" })), "NOT_FOUND"); ok("outsider cannot react");
+  assert.equal(await code(chat.toggleReaction(B.id, g0.id, target.id, { emoji: "👍" })), "NOT_FOUND"); ok("cannot react to a message of another chat");
+  await chat.deleteMessage(A.id, d1.id, target.id);
+  assert.equal(await code(chat.toggleReaction(B.id, d1.id, target.id, { emoji: "👍" })), "MESSAGE_DELETED"); ok("cannot react to a deleted message");
+  assert.equal((await chat.getMessages(B.id, d1.id)).messages.find((m) => m.id === target.id)!.reactions.length, 0); ok("deleted message shows no reactions");
+
   if (other) {
     const x = await chat.openConversation(A.id, { userIds: [other.id] });
     created.push(x.id);

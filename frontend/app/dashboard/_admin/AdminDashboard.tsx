@@ -198,6 +198,7 @@ export default function AdminDashboard() {
           <Link href="/dashboard/projects" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Add Project</Link>
           <Link href="/dashboard/employees" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Manage Employees</Link>
           <Link href="/dashboard/reports" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">View Reports</Link>
+          <Link href="/dashboard/office-network" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Office Network</Link>
         </div>
       </header>
 

@@ -4,6 +4,7 @@ import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { managedByWhere } from "../../lib/teamManagers.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { cleanRemark, lateRemarksReady, LateRemarkRequired, remarksBySession } from "./lateRemarks.js";
+import { assertClockInAllowed } from "./clockInNetwork.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
 import { starsFor } from "../tasks/tasks.rating.js";
 import { creditOf } from "../tasks/tasks.rating.logic.js";
@@ -160,7 +161,7 @@ export async function getActiveSession(userId: string) {
   return { session: { ...fresh, washroomSeconds, discussionSeconds }, config: ctx.config, hostsOpenMeeting, projects };
 }
 
-export async function clockIn(userId: string, teamId?: string | null, lateRemark?: unknown) {
+export async function clockIn(userId: string, teamId?: string | null, lateRemark?: unknown, ip: string | null = null) {
   const ctx = await getContext(userId);
 
   // The project is optional, but if given it must be one of THIS person's own teams.
@@ -180,6 +181,10 @@ export async function clockIn(userId: string, teamId?: string | null, lateRemark
   if (existing?.status === "ACTIVE") {
     return recompute(existing.id);
   }
+
+  // Clock-in (new day or coming back after a clock-out) only from the office network. Placed after the
+  // already-ACTIVE return on purpose: someone who is clocked in is never re-checked.
+  await assertClockInAllowed(ctx.platformId, ip);
 
   // SESSION RESUME: clocked out early, coming back. Reopen the same session
   // and log the time away as a break, rather than locking them out all day.

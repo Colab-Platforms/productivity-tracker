@@ -53,6 +53,8 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/auth\/login$/, module: "Authentication", action: "LOGIN", summary: "Signed in" },
 
   { method: "POST", re: /^\/api\/tracker\/clock-in$/, module: "Attendance", action: "CLOCK", summary: "Clocked in" },
+  { method: "POST", re: /^\/api\/admin\/office-ips$/, module: "Attendance", action: "CREATE", summary: "Added an office network address", recordType: "OfficeIp" },
+  { method: "DELETE", re: /^\/api\/admin\/office-ips\/:id$/, module: "Attendance", action: "DELETE", summary: "Removed an office network address", recordType: "OfficeIp" },
   { method: "POST", re: /^\/api\/tracker\/clock-out$/, module: "Attendance", action: "CLOCK", summary: "Clocked out" },
   { method: "POST", re: /^\/api\/tracker\/break\/start$/, module: "Attendance", action: "CLOCK", summary: "Started a break" },
   { method: "POST", re: /^\/api\/tracker\/break\/end$/, module: "Attendance", action: "CLOCK", summary: "Ended a break" },

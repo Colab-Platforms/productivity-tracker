@@ -316,6 +316,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/audit-logs", label: "Audit Logs", ready: true, roles: ["ADMIN"], icon: I.list },
       { href: "/dashboard/employees?tab=Teams", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
+      { href: "/dashboard/office-network", label: "Office Network", ready: true, roles: ["HR", "ADMIN"], icon: I.admin },
     ],
   },
 ];

@@ -1,6 +1,6 @@
 // Chat rules, no database. Run: DATABASE_URL=postgresql://u:p@127.0.0.1:1/x npx tsx tests/chat-logic.test.mts
 import assert from "node:assert/strict";
-import { canEditNow, EDIT_WINDOW_MS, cleanIds, cleanMessage, cleanTitle, directKey, isUnread, LIMITS, makeLimiter, previewOf } from "../src/modules/chat/chat.logic.ts";
+import { groupReactions, isReaction, quotePreview, REACTIONS, canEditNow, EDIT_WINDOW_MS, cleanIds, cleanMessage, cleanTitle, directKey, isUnread, LIMITS, makeLimiter, previewOf } from "../src/modules/chat/chat.logic.ts";
 
 let n = 0;
 const t = (name: string, fn: () => void) => { fn(); n++; console.log("ok -", name); };
@@ -37,5 +37,25 @@ t("edit window: 15 minutes after sending, not after", () => {
   assert.equal(canEditNow(sent, sent.getTime() + EDIT_WINDOW_MS), true);
   assert.equal(canEditNow(sent, sent.getTime() + EDIT_WINDOW_MS + 1), false);
   assert.equal(EDIT_WINDOW_MS, 900_000);
+});
+t("reactions: fixed set only", () => {
+  assert.equal(REACTIONS.length, 6);
+  assert.equal(isReaction("👍"), true);
+  assert.equal(isReaction("💩"), false);
+  assert.equal(isReaction(5), false);
+  assert.equal(isReaction("<script>"), false);
+});
+t("reactions grouped in fixed order with count, mine and names", () => {
+  const rows = [{ emoji: "❤️", userId: "b" }, { emoji: "👍", userId: "a" }, { emoji: "👍", userId: "b" }];
+  const g = groupReactions(rows, "a", (id) => id.toUpperCase());
+  assert.deepEqual(g.map((x) => x.emoji), ["👍", "❤️"]);
+  assert.equal(g[0].count, 2); assert.equal(g[0].mine, true); assert.deepEqual(g[0].names, ["A", "B"]);
+  assert.equal(g[1].mine, false);
+  assert.deepEqual(groupReactions([], "a", () => ""), []);
+});
+t("quote preview", () => {
+  assert.equal(quotePreview("a\n  b", false), "a b");
+  assert.equal(quotePreview("secret", true), "Message deleted");
+  assert.equal(quotePreview("x".repeat(500), false).length, 120);
 });
 console.log(`${n} checks passed`);
