@@ -29,13 +29,13 @@ const MAX_TARGET = 1000;
 
 export type TargetSource = "PERSON" | "TEAM" | "COMPANY" | null;
 
-async function getViewer(viewerId: string) {
+async function getViewer(viewerId: string, self = false) {
   const viewer = await prisma.user.findUnique({
     where: { id: viewerId },
     select: { id: true, role: true, platformId: true, platform: { select: { timezone: true } } },
   });
   if (!viewer) throw new Error("USER_NOT_FOUND");
-  if (!["MANAGER", "HR", "ADMIN"].includes(String(viewer.role))) throw new Error("NOT_ALLOWED");
+  if (!self && !["MANAGER", "HR", "ADMIN"].includes(String(viewer.role))) throw new Error("NOT_ALLOWED");
   return viewer;
 }
 
@@ -90,9 +90,9 @@ async function keepFullyDone<T extends { id: string; outcome: unknown }>(rows: T
 
 type ScopedPerson = { id: string; name: string; code: string | null; platformId: string; teamId: string | null; teamName: string | null };
 
-async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { userId?: string; teamId?: string; filters?: HrFilters }): Promise<{ people: ScopedPerson[]; scope: { orgTotal: number; filteredTotal: number } }> {
+async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { userId?: string; teamId?: string; filters?: HrFilters; self?: boolean }): Promise<{ people: ScopedPerson[]; scope: { orgTotal: number; filteredTotal: number } }> {
   // The HR filters narrow what the viewer may already see; scope reports how many are left next to how many the viewer may see.
-  const narrowed = await narrowIds(await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId }), q.filters);
+  const narrowed = await narrowIds(q.self ? [viewer.id] : await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId }), q.self ? undefined : q.filters);
   const allowed = narrowed.ids;
   const scope = narrowed.scope;
   if (allowed.length === 0) return { people: [], scope };
@@ -114,8 +114,8 @@ async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { 
 // ---------------------------------------------------------------------------------------------
 // PRODUCTIVITY OVER A RANGE (per person, per day)
 // ---------------------------------------------------------------------------------------------
-export async function getProductivity(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters }) {
-  const viewer = await getViewer(viewerId);
+export async function getProductivity(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters; self?: boolean }) {
+  const viewer = await getViewer(viewerId, q.self === true);
   const tz = viewer.platform.timezone;
   const today = platformToday(tz).toISOString().slice(0, 10);
   const fromIso = q.from ? parseIsoDay(q.from).toISOString().slice(0, 10) : today;
@@ -204,8 +204,8 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
 // task: the SAME rule as getProductivity (completed, approved, finished inside the range, not rated below the "completed" threshold), so
 // the number of counted rows equals the report's "Tasks completed" total.
 // ---------------------------------------------------------------------------------------------
-export async function getProductivityTasks(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters }) {
-  const viewer = await getViewer(viewerId);
+export async function getProductivityTasks(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters; self?: boolean }) {
+  const viewer = await getViewer(viewerId, q.self === true);
   const tz = viewer.platform.timezone;
   const today = platformToday(tz).toISOString().slice(0, 10);
   const fromIso = q.from ? parseIsoDay(q.from).toISOString().slice(0, 10) : today;

@@ -280,6 +280,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       // HR and Manager
       { href: "/dashboard/queries", label: "Query Desk", ready: true, roles: ["MANAGER", "HR"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, roles: ["MANAGER", "HR"], icon: I.reports },
+      { href: "/dashboard/reports", label: "My Report", ready: true, roles: ["EMPLOYEE"], icon: I.reports },
     ],
   },
   {

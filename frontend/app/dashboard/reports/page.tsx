@@ -189,7 +189,7 @@ export default function ReportsPage() {
   ];
 
   if (!me) return <div className="p-8" aria-busy="true"><div className="skeleton h-10" /></div>;
-  if (!canSeeTeam) return <SummaryReport />;
+  if (!canSeeTeam) return <MyReport />;
 
   return (
     <div className="mx-auto page-7xl space-y-6 p-4 sm:p-8">
@@ -225,6 +225,25 @@ export default function ReportsPage() {
       ) : (
         <ProductivityReport canSetTargets={!!me && ["HR", "ADMIN"].includes(me.role)} filters={filters} ready={ready} onScope={setScope} />
       )}
+    </div>
+  );
+}
+
+// An employee's own monthly report: the same Attendance and Task productivity reports (and Excel/CSV downloads) the manager sees, for themselves only.
+function MyReport() {
+  const [tab, setTab] = useState<"attendance" | "productivity">("attendance");
+  return (
+    <div className="mx-auto page-7xl space-y-6 p-4 sm:p-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">My Report</h1>
+        <p className="mt-1 text-sm text-slate-500">Your own attendance and task productivity. Opens on this month; change the dates, then download CSV or Excel.</p>
+      </div>
+      <div role="tablist" className="inline-flex flex-wrap rounded-xl bg-white p-1 shadow-[var(--shadow-card)]">
+        {([["attendance", "Attendance report"], ["productivity", "Task productivity"]] as const).map(([key, label]) => (
+          <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === key ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50")}>{label}</button>
+        ))}
+      </div>
+      {tab === "attendance" ? <AttendanceReport self /> : <ProductivityReport self canSetTargets={false} />}
     </div>
   );
 }

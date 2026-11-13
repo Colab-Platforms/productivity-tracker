@@ -87,11 +87,12 @@ function Kpi({ tone, icon, label, value, sub }: { tone: "blue" | "green" | "red"
   );
 }
 
-export default function AttendanceReport({ filters, ready = true, onScope }: { filters?: HrFilterState; ready?: boolean; onScope?: (s: { orgTotal: number; filteredTotal: number } | null) => void }) {
+// `self` = an employee's own report: same table, KPIs and downloads, read from /my-reports (locked to the signed-in person), opening on This month, without the people/shift/status filters.
+export default function AttendanceReport({ filters, ready = true, onScope, self = false }: { filters?: HrFilterState; ready?: boolean; onScope?: (s: { orgTotal: number; filteredTotal: number } | null) => void; self?: boolean }) {
   // Company, project, reporting manager and name/ID search come from the shared bar on the Reports page; the server builds the KPIs, the table and
   // therefore both downloads from that one list.
   const hrQuery = filters ? filterQuery(filters) : "";
-  const [preset, setPreset] = useState<Preset>("today");
+  const [preset, setPreset] = useState<Preset>(self ? "thismonth" : "today");
   const [single, setSingle] = useState("");
   const [custom, setCustom] = useState<{ from: string; to: string }>({ from: "", to: "" });
   const [draft, setDraft] = useState<Filters>(NO_FILTERS); // what the dropdowns show
@@ -120,7 +121,7 @@ export default function AttendanceReport({ filters, ready = true, onScope }: { f
     if (applied.status) qs.set("status", applied.status);
     if (applied.arrival) qs.set("arrival", applied.arrival);
     try {
-      const data = await apiGet<Report>(`/team-attendance/attendance?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
+      const data = await apiGet<Report>(`${self ? "/my-reports" : "/team-attendance"}/attendance?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
       onScope?.(data.scope ?? null);
       setReport(data);
       setToday(data.today);
@@ -130,7 +131,7 @@ export default function AttendanceReport({ filters, ready = true, onScope }: { f
     } finally {
       setLoading(false);
     }
-  }, [range, applied, hrQuery, onScope]);
+  }, [range, applied, hrQuery, onScope, self]);
 
   useEffect(() => {
     if (!ready) return;
@@ -269,6 +270,7 @@ export default function AttendanceReport({ filters, ready = true, onScope }: { f
 
         {/* filters */}
         <div className="flex flex-wrap items-end gap-3">
+          {!self && <>
           <label className="block w-52 text-xs text-slate-500">
             Employee
             <select value={draft.userId} onChange={(e) => setDraft({ ...draft, userId: e.target.value })} className={`${select} mt-1`}>
@@ -307,6 +309,7 @@ export default function AttendanceReport({ filters, ready = true, onScope }: { f
             Apply Filters
           </button>
           <button onClick={reset} className="rounded-xl border border-indigo-100 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Reset</button>
+          </>}
 
           <div className="ml-auto">
             <ExportButtons onCsv={exportCsv} onExcel={exportXlsx} disabled={!report || rows.length === 0} />

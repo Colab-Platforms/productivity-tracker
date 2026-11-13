@@ -44,13 +44,14 @@ const BREAK_GROUP: Record<string, "TEA" | "LUNCH" | "BIO" | "OTHER"> = {
   OTHER: "OTHER",
 };
 
-async function getViewer(viewerId: string) {
+async function getViewer(viewerId: string, self = false) {
   const viewer = await prisma.user.findUnique({
     where: { id: viewerId },
     select: { id: true, role: true, platformId: true, platform: { select: { timezone: true, name: true } } },
   });
   if (!viewer) throw new Error("USER_NOT_FOUND");
-  if (!["MANAGER", "HR", "ADMIN"].includes(String(viewer.role))) throw new Error("NOT_ALLOWED");
+  // `self` = the person's own report: any role may read their own figures, nobody else's.
+  if (!self && !["MANAGER", "HR", "ADMIN"].includes(String(viewer.role))) throw new Error("NOT_ALLOWED");
   return viewer;
 }
 
@@ -348,9 +349,9 @@ function istInstant(dateIso: string, hhmm: string): Date | null {
 
 export async function getAttendanceReport(
   viewerId: string,
-  q: { from?: string; to?: string; userId?: string; teamId?: string; shift?: string; status?: string; arrival?: string; filters?: HrFilters }
+  q: { from?: string; to?: string; userId?: string; teamId?: string; shift?: string; status?: string; arrival?: string; filters?: HrFilters; self?: boolean }
 ) {
-  const viewer = await getViewer(viewerId);
+  const viewer = await getViewer(viewerId, q.self === true);
   const timezone = viewer.platform.timezone;
   const today = platformToday(timezone);
   const from = q.from ? parseIsoDay(q.from) : today;
@@ -364,8 +365,9 @@ export async function getAttendanceReport(
 
   // HR/Admin see the companies they are authorized for (assigned ones included); a manager sees the people who report to them.
   const role = String(viewer.role);
-  const allowed =
-    role === "HR" || role === "ADMIN"
+  const allowed = q.self
+    ? [viewer.id]
+    : role === "HR" || role === "ADMIN"
       ? (await prisma.user.findMany({ where: { ...scopeWhere(await accessFor(viewerId)), status: { in: ["ACTIVE", "INVITED"] } }, select: { id: true } })).map((u) => u.id)
       : await visibleUserIds({ id: viewer.id, role, platformId: viewer.platformId });
   // The HR filters (company, project, reporting manager, name/ID search) narrow what the viewer may already see; the KPIs, the table and the exports are

@@ -48,12 +48,14 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 
 const pctClass = (p: number | null) => (p === null ? "text-slate-400" : p >= 100 ? "text-emerald-600" : p >= 70 ? "text-amber-600" : "text-red-600");
 
-export default function ProductivityReport({ canSetTargets, filters, ready = true, onScope }: { canSetTargets: boolean; filters?: HrFilterState; ready?: boolean; onScope?: (s: { orgTotal: number; filteredTotal: number } | null) => void }) {
+// `self` = an employee's own report: the same table and downloads, read from /my-reports (locked to the signed-in person), opening on This month, with no team-only parts (hourly grid, targets).
+export default function ProductivityReport({ canSetTargets, filters, ready = true, onScope, self = false }: { canSetTargets: boolean; filters?: HrFilterState; ready?: boolean; onScope?: (s: { orgTotal: number; filteredTotal: number } | null) => void; self?: boolean }) {
+  const base = self ? "/my-reports" : "/team-attendance";
   // company, project, reporting manager and name/ID search come from the shared bar on the Reports page (the table, the KPIs and the CSV all use that list)
   const hrQuery = filters ? filterQuery(filters) : "";
   // Always opens on Today (nothing is restored from a previous visit). With no dates the server answers for today in the company timezone.
   const me = useMe();
-  const [preset, setPreset] = useState<Preset>("today");
+  const [preset, setPreset] = useState<Preset>(self ? "thismonth" : "today");
   const [single, setSingle] = useState("");
   const [custom, setCustom] = useState<{ from: string; to: string }>({ from: "", to: "" });
   const [today, setToday] = useState("");
@@ -79,7 +81,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
     if (range.from) qs.set("from", range.from);
     if (range.to) qs.set("to", range.to);
     try {
-      const d = await apiGet<Productivity>(`/team-attendance/productivity?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
+      const d = await apiGet<Productivity>(`${base}/productivity?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
       setData(d);
       onScope?.(d.scope ?? null);
       setToday(d.today);
@@ -89,7 +91,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
     } finally {
       setLoading(false);
     }
-  }, [range, hrQuery, onScope]);
+  }, [range, hrQuery, onScope, base]);
 
   useEffect(() => { if (!ready) return; const t = setTimeout(() => void load(), 0); return () => clearTimeout(t); }, [load, reloadTargets, ready]);
 
@@ -104,7 +106,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
       setHourError((e as Error).message);
     }
   }, [hrQuery]);
-  useEffect(() => { if (!ready) return; const t = setTimeout(() => void loadHourly(hourDate), 0); return () => clearTimeout(t); }, [hourDate, loadHourly, ready]);
+  useEffect(() => { if (!ready || self) return; const t = setTimeout(() => void loadHourly(hourDate), 0); return () => clearTimeout(t); }, [hourDate, loadHourly, ready, self]);
 
   const k = useMemo(() => {
     const people = data?.people ?? [];
@@ -144,7 +146,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
     if (!data) return;
     const tz = data.timezone;
     const qs = new URLSearchParams({ from: data.from, to: data.to });
-    const tasks = await apiGet<{ tasks: TaskRow[] }>(`/team-attendance/productivity/tasks?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
+    const tasks = await apiGet<{ tasks: TaskRow[] }>(`${base}/productivity/tasks?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
 
     const people: Col[] = [
       { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Team", width: 20 }, { header: "Project(s)", width: 28 }, { header: "Reporting manager", width: 22 },
@@ -296,7 +298,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
       </section>
 
       {/* hourly */}
-      <section className="rounded-2xl bg-white shadow-[var(--shadow-card)]">
+      {!self && <section className="rounded-2xl bg-white shadow-[var(--shadow-card)]">
         <div className="flex flex-wrap items-center justify-between gap-3 px-6 pt-6">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Tasks completed by hour</h2>
@@ -332,9 +334,9 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
           )}
         </div>
         <div className="h-4" />
-      </section>
+      </section>}
 
-      {canSetTargets && <TargetsPanel onChanged={() => setReloadTargets((n) => n + 1)} />}
+      {canSetTargets && !self && <TargetsPanel onChanged={() => setReloadTargets((n) => n + 1)} />}
     </div>
   );
 }
