@@ -182,6 +182,7 @@ export default function HrDashboard() {
   const [reload, setReload] = useState(0);
   const [range, setRange] = useState<{ from: string; to: string } | null>(null);
   const [employeeId, setEmployeeId] = useState("");
+  const [companyId, setCompanyId] = useState(""); // "" = every company this person is authorised for
   const [query, setQuery] = useState("");
   const [bellOpen, setBellOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -207,7 +208,7 @@ export default function HrDashboard() {
         : "";
 
   const groupBy = span > 62 ? "week" : "day";
-  const userParam = employeeId ? `&userId=${encodeURIComponent(employeeId)}` : "";
+  const userParam = (employeeId ? `&userId=${encodeURIComponent(employeeId)}` : "") + (companyId ? `&company=${encodeURIComponent(companyId)}` : "");
   const rangePath =
     today && from && to && !rangeError
       ? `/reports?from=${from}&to=${to}&groupBy=${groupBy}${userParam}`
@@ -229,18 +230,22 @@ export default function HrDashboard() {
   useRealtime(["tasks:changed", "notifications:changed", "meetings:changed"], () => setReload((n) => n + 1));
 
   // --- derived numbers ----------------------------------------------------------
-  // The page describes ONE company: the one you are signed into. An owner's
-  // /admin/users, /tracker/team and /onboarding/candidates span every company,
-  // while /reports is scoped to this one, so those lists are narrowed to match.
-  // Otherwise "Total Employees" could say 62 next to "Present Today: 3 of 6".
-  const myCompany = me?.platform.name ?? null;
-  const inMyCompany = (company: string | null | undefined) =>
-    !myCompany || !company || company === myCompany;
+  // The page covers EVERY company this person is authorised for (the server decides that: own company, assigned companies, or all), and the
+  // Company selector narrows it to one. The people list, the live board, the alerts, the joiner counts and /reports all follow the same company
+  // access on the server, so the numbers agree. Nothing is cut down to the signed-in company any more.
+  const companyOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const u of users.data?.users ?? []) if (u.companyId && u.company) m.set(u.companyId, u.company);
+    return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [users.data]);
+  const companyName = companyOptions.find((c) => c.id === companyId)?.name ?? null;
+  const myCompany = companyName; // kept as the memo key below
+  const inMyCompany = (company: string | null | undefined) => !companyName || !company || company === companyName;
 
   const companyUsers = useMemo(
     () => (users.data?.users ?? []).filter((u) => inMyCompany(u.company)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [users.data, myCompany]
+    [users.data, companyName]
   );
   const companyUserIds = useMemo(() => new Set(companyUsers.map((u) => u.id)), [companyUsers]);
   const staff = useMemo(
@@ -396,7 +401,7 @@ export default function HrDashboard() {
   const anniversaries = today ? upcomingAnniversaries(staff, today) : [];
 
   return (
-    <div className="page-fluid space-y-4 p-4 sm:p-6">
+    <div className="space-y-4">
       {/* greeting strip + actions: one compact row instead of an oversized banner */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1 basis-72">
@@ -429,7 +434,6 @@ export default function HrDashboard() {
                 ["/dashboard/employees", "Add an employee"],
                 ["/dashboard/offers", "Send an offer letter"],
                 ["/dashboard/holidays", "Add a holiday"],
-                ["/dashboard/office-network", "Office network (clock-in IPs)"],
                 ["/dashboard/queries", "Query Desk"],
               ].map(([href, label]) => (
                 <Link key={href} href={href} className="block px-4 py-2 text-slate-700 hover:bg-[var(--nav-hover)] hover:text-indigo-700">
@@ -533,6 +537,27 @@ export default function HrDashboard() {
               />
             </label>
           </div>
+
+          {companyOptions.length > 1 && (
+            <label className="block min-w-44">
+              <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">Company</span>
+              <select
+                value={companyId}
+                onChange={(e) => {
+                  setCompanyId(e.target.value);
+                  setEmployeeId("");
+                }}
+                className="w-full rounded-lg bg-[var(--brand-50)] px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              >
+                <option value="">All companies</option>
+                {companyOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <label className="block min-w-44">
             <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-slate-400">Employee</span>

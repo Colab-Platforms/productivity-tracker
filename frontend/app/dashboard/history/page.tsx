@@ -251,7 +251,7 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="p-8 page-6xl">
+    <div>
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm text-slate-400">Your record</p>

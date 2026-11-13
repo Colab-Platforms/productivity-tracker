@@ -55,7 +55,7 @@ export default function CompaniesPage() {
 
   if (me && !allowed) {
     return (
-      <div className="p-8">
+      <div>
         <p className="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-[var(--shadow-card)]">Company management is only available to Admin.</p>
       </div>
     );
@@ -63,7 +63,7 @@ export default function CompaniesPage() {
 
   const card = "rounded-2xl bg-white shadow-[var(--shadow-card)]";
   return (
-    <div className="page-fluid space-y-6 p-8">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Companies</h1>

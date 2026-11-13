@@ -266,9 +266,16 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string, filt
   const isToday = date.getTime() === today.getTime();
   const now = new Date();
 
-  const narrowed = await narrowIds(await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId }), filters);
+  const allVisible = await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId });
+  const narrowed = await narrowIds(allVisible, filters);
   const userIds = narrowed.ids;
-  const base = { generatedAt: now.toISOString(), timezone, date: date.toISOString().slice(0, 10), isToday, scope: narrowed.scope, rows: [] as unknown[] };
+  // The counts must describe the same people the table shows: a manager's reporting line can still list exited or suspended people.
+  const liveWhere = { status: { notIn: ["SUSPENDED", "EXITED"] as ("SUSPENDED" | "EXITED")[] } };
+  const [orgTotal, filteredTotal] = await Promise.all([
+    prisma.user.count({ where: { id: { in: allVisible }, ...liveWhere } }),
+    userIds.length ? prisma.user.count({ where: { id: { in: userIds }, ...liveWhere } }) : Promise.resolve(0),
+  ]);
+  const base = { generatedAt: now.toISOString(), timezone, date: date.toISOString().slice(0, 10), isToday, scope: { orgTotal, filteredTotal }, rows: [] as unknown[] };
   if (userIds.length === 0) return base;
 
   const people = await loadPeople(userIds);
@@ -372,7 +379,7 @@ export async function getAttendanceReport(
       : await visibleUserIds({ id: viewer.id, role, platformId: viewer.platformId });
   // The HR filters (company, project, reporting manager, name/ID search) narrow what the viewer may already see; the KPIs, the table and the exports are
   // all built from this one list.
-  const narrowed = await narrowIds(allowed, q.filters);
+  const narrowed = await narrowIds(allowed, q.filters, { activeOnly: true });
   const people = narrowed.ids.length
     ? await prisma.user.findMany({
         where: { id: { in: narrowed.ids }, status: { notIn: ["SUSPENDED", "EXITED"] } },

@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma.js";
-import { clientIp } from "../lib/clientIp.js";
 import { classify } from "../lib/auditCatalog.js";
 import { runWithAudit, scrub, type AuditNote } from "../lib/auditContext.js";
 
@@ -33,6 +32,8 @@ export function audit(req: Request, res: Response, next: NextFunction) {
     const cls = classify(req.method, path, body);
     if (cls.skip || note.skip) return;
 
+    const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0];
+
     const legacy = {
       actorId: note.actorId !== undefined ? note.actorId : (req.user?.userId ?? null),
       platformId: note.platformId !== undefined ? note.platformId : (req.user?.platformId ?? null),
@@ -41,7 +42,7 @@ export function audit(req: Request, res: Response, next: NextFunction) {
       status: res.statusCode,
       // What the client sent, with secrets and file contents removed.
       detail: scrub(body) as never,
-      ip: clientIp(req),
+      ip: forwarded.trim() || req.ip || null,
     };
     const structured = {
       ...legacy,

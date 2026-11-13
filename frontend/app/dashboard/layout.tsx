@@ -317,7 +317,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/audit-logs", label: "Audit Logs", ready: true, roles: ["ADMIN"], icon: I.list },
       { href: "/dashboard/employees?tab=Teams", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
-      { href: "/dashboard/office-network", label: "Office Network", ready: true, roles: ["HR", "ADMIN"], icon: I.admin },
     ],
   },
 ];
@@ -341,6 +340,24 @@ export default function DashboardLayout({
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
+  // Desktop sidebar: expanded (full labels) or collapsed (icon rail). Remembered in this browser only; the phone drawer is always expanded.
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem("hrms-sidebar") === "collapsed";
+    } catch {
+      return false; // storage blocked: stay expanded
+    }
+  });
+  const toggleSidebar = () =>
+    setCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("hrms-sidebar", next ? "collapsed" : "open");
+      } catch {
+        /* storage blocked: the choice just is not remembered */
+      }
+      return next;
+    });
   const [pendingQueries, setPendingQueries] = useState(0);
   const [chatUnread, setChatUnread] = useState(0);
   const lastChatUnread = useRef<number | null>(null); // null until the first count, so opening the app never pings
@@ -495,42 +512,46 @@ export default function DashboardLayout({
     ),
   })).filter((g) => g.items.length > 0);
 
-  const sidebar = (
-    <aside className="flex h-full w-64 shrink-0 flex-col rounded-2xl bg-[var(--nav-bg)] shadow-[var(--shadow-card)]">
-      {/* Compact brand and company identity */}
-      <div className="flex shrink-0 items-center gap-2.5 px-5 pb-1 pt-5">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-[13px] font-bold text-white">H</div>
-        <div className="min-w-0">
-          <p className="truncate text-[14px] font-bold leading-tight tracking-tight text-slate-900">Avatar HRMS</p>
-          <p className="truncate text-[11px] leading-tight text-[var(--text-secondary)]" title={me.platform.name}>{me.platform.name}</p>
-        </div>
-      </div>
+  const renderSidebar = (compact: boolean) => (
+    <aside aria-label="Main navigation" className={`flex h-full ${compact ? "w-[4.5rem]" : "w-64"} shrink-0 flex-col rounded-2xl bg-[var(--nav-bg)] shadow-[var(--shadow-card)] transition-[width] duration-200`}>
       {/* The ONE place the signed-in person is shown: their photo (or initials), full name, the My Profile link and the notification bell with its
           unread count. All of it comes from the authenticated user (/auth/me), for every role. */}
-      <div className="flex shrink-0 items-center gap-2.5 px-5 pb-3 pt-4">
-        {/* a mouse shortcut next to the My Profile link: hidden from screen readers and the tab order so the same link is not announced twice */}
-        <Link href="/dashboard/profile" aria-hidden="true" tabIndex={-1} className="shrink-0 rounded-full">
-          <Avatar userId={me.id} name={fullName} photoAt={me.photoAt} size={40} />
-        </Link>
-        <div className="min-w-0">
-          <p className="truncate text-[15px] font-bold leading-tight tracking-tight text-slate-900" title={fullName}>{fullName}</p>
-          <Link
-            href="/dashboard/profile"
-            aria-current={pathname === "/dashboard/profile" ? "page" : undefined}
-            className={`block truncate text-[12px] font-medium hover:underline ${pathname === "/dashboard/profile" ? "text-[var(--nav-active)]" : "text-indigo-600"}`}
-          >
-            My Profile
+      <div className={`flex h-[4.5rem] shrink-0 items-center gap-3 ${compact ? "justify-center px-2" : "px-5"}`}>
+        {compact ? (
+          <Link href="/dashboard/profile" aria-label="My Profile" title={`${fullName} · My Profile`} className="shrink-0 rounded-full">
+            <Avatar userId={me.id} name={fullName} photoAt={me.photoAt} size={40} />
           </Link>
-        </div>
-        <div className="ml-auto shrink-0 lg:hidden"><Bell /></div>
+        ) : (
+          <>
+            {/* a mouse shortcut next to the My Profile link: hidden from screen readers and the tab order so the same link is not announced twice */}
+            <Link href="/dashboard/profile" aria-hidden="true" tabIndex={-1} className="shrink-0 rounded-full">
+              <Avatar userId={me.id} name={fullName} photoAt={me.photoAt} size={40} />
+            </Link>
+            <div className="min-w-0">
+              <p className="truncate text-[15px] font-bold leading-tight tracking-tight text-slate-900" title={fullName}>{fullName}</p>
+              <Link
+                href="/dashboard/profile"
+                aria-current={pathname === "/dashboard/profile" ? "page" : undefined}
+                className={`block truncate text-[12px] font-medium hover:underline ${pathname === "/dashboard/profile" ? "text-[var(--nav-active)]" : "text-indigo-600"}`}
+              >
+                My Profile
+              </Link>
+            </div>
+            <div className="ml-auto shrink-0 lg:hidden"><Bell /></div>
+          </>
+        )}
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto pb-4">
+      <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-4">
         {groups.map((group) => (
           <div key={group.title} className="mb-3">
-            <p className="px-6 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
-              {group.title}
-            </p>
+            {compact ? (
+              <div aria-hidden="true" className="mx-4 mb-2 mt-1 border-t border-[var(--border)]" />
+            ) : (
+              <p className="px-6 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+                {group.title}
+              </p>
+            )}
             <div className="space-y-0.5">
               {group.items.map((item) => {
                 // Items that deep-link with ?tab= are never "active"; the
@@ -542,13 +563,16 @@ export default function DashboardLayout({
                   return (
                     <div
                       key={item.label}
-                      className="mx-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] text-slate-400"
+                      title={compact ? `${item.label} (soon)` : undefined}
+                      className={`mx-3 flex h-10 items-center rounded-lg text-[13px] text-slate-400 ${compact ? "justify-center" : "gap-3 px-3"}`}
                     >
                       <Icon className="h-[18px] w-[18px] shrink-0" />
-                      <span className="flex-1">{item.label}</span>
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-slate-500">
-                        soon
-                      </span>
+                      {!compact && <span className="flex-1">{item.label}</span>}
+                      {!compact && (
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-slate-500">
+                          soon
+                        </span>
+                      )}
                     </div>
                   );
                 }
@@ -567,7 +591,9 @@ export default function DashboardLayout({
                       e.preventDefault();
                       router.push(`${item.href}${item.href.includes("?") ? "&" : "?"}${carry.toString()}`);
                     }}
-                    className={`group relative mx-3 flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] ${
+                    title={compact ? item.label : undefined}
+                    aria-label={compact ? item.label : undefined}
+                    className={`group relative mx-3 flex h-10 items-center rounded-lg text-[13px] ${compact ? "justify-center" : "gap-3 px-3"} ${
                       active
                         ? "bg-[var(--nav-active-bg)] font-semibold text-[var(--nav-active)]"
                         : "text-[var(--nav-text)] hover:bg-[var(--nav-hover)] hover:text-slate-900"
@@ -578,12 +604,12 @@ export default function DashboardLayout({
                         active ? "text-[var(--nav-active)]" : "text-slate-400 group-hover:text-indigo-500"
                       }`}
                     />
-                    <span className="truncate">{item.label}</span>
+                    {!compact && <span className="truncate">{item.label}</span>}
                     {item.badge === "chat" && chatUnread > 0 && (
-                      <span data-testid="chat-badge" className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{Math.min(99, chatUnread)}</span>
+                      <span data-testid="chat-badge" className={`rounded-full bg-rose-500 font-bold leading-none text-white ${compact ? "absolute right-1 top-0.5 px-1 py-0.5 text-[9px]" : "ml-auto px-1.5 py-0.5 text-[10px]"}`}>{Math.min(99, chatUnread)}</span>
                     )}
                     {item.badge === "queries" && pendingQueries > 0 && (
-                      <span data-testid="queries-badge" className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{Math.min(99, pendingQueries)}</span>
+                      <span data-testid="queries-badge" className={`rounded-full bg-rose-500 font-bold leading-none text-white ${compact ? "absolute right-1 top-0.5 px-1 py-0.5 text-[9px]" : "ml-auto px-1.5 py-0.5 text-[10px]"}`}>{Math.min(99, pendingQueries)}</span>
                     )}
                     {/* The reference marks the current page with a bar on the
                         card's outer edge, readable from across a desk. */}
@@ -600,16 +626,18 @@ export default function DashboardLayout({
 
       {/* Pinned to the bottom: the theme switch and Logout only. */}
       <div className="shrink-0 border-t border-[var(--border)] p-3">
-        <ThemeRow />
+        {compact ? <div className="flex justify-center"><ThemeIconButton className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-[var(--nav-hover)] hover:text-indigo-600" /></div> : <ThemeRow />}
         <button
           onClick={signOut}
-          className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] text-[var(--nav-text)] hover:bg-[var(--nav-hover)] hover:text-slate-900"
+          title={compact ? "Logout" : undefined}
+          aria-label="Logout"
+          className={`mt-1 flex h-10 w-full items-center rounded-lg text-[13px] text-[var(--nav-text)] hover:bg-[var(--nav-hover)] hover:text-slate-900 ${compact ? "justify-center" : "gap-3 px-3"}`}
         >
           <svg viewBox="0 0 20 20" className="h-[18px] w-[18px] text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.6">
             <path d="M8 16H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" strokeLinecap="round" />
             <path d="M12.5 7 15.5 10l-3 3M15.5 10H8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          Logout
+          {!compact && "Logout"}
         </button>
       </div>
     </aside>
@@ -621,7 +649,7 @@ export default function DashboardLayout({
       <NotificationsProvider>
       <div className="flex min-h-screen bg-[var(--background)]">
         {/* Desktop */}
-        <div className="sticky top-0 hidden h-screen p-4 pr-0 lg:block">{sidebar}</div>
+        <div className="sticky top-0 hidden h-screen p-4 pr-0 lg:block">{renderSidebar(collapsed)}</div>
 
         {/* Mobile drawer — people will open this on a phone to clock in */}
         {open && (
@@ -630,13 +658,14 @@ export default function DashboardLayout({
               className="absolute inset-0 bg-slate-900/50"
               onClick={() => setOpen(false)}
             />
-            <div className="absolute left-0 top-0 h-full animate-in p-3">{sidebar}</div>
+            <div className="absolute left-0 top-0 h-full animate-in p-3">{renderSidebar(false)}</div>
           </div>
         )}
 
         <div className="min-w-0 flex-1">
           {/* Mobile top bar */}
-          <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-indigo-100 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
+          <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--card)]/90 backdrop-blur lg:hidden">
+            <div className="app-container flex h-14 items-center gap-3">
             <button
               onClick={() => setOpen(true)}
               aria-label="Open menu"
@@ -646,18 +675,14 @@ export default function DashboardLayout({
                 <path d="M3 6h14M3 10h14M3 14h14" strokeLinecap="round" />
               </svg>
             </button>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-[12px] font-bold text-white">
-              H
-            </div>
-            <p className="truncate text-sm font-semibold text-slate-900">
-              Avatar HRMS
-            </p>
+            <h1 className="min-w-0 truncate text-[16px] font-semibold tracking-tight text-slate-900">{headerTitle}</h1>
             <div className="ml-auto flex shrink-0 items-center gap-0.5"><ThemeIconButton /><Bell /></div>
+            </div>
           </header>
 
-          <TopBar me={me} title={headerTitle} onSignOut={signOut} />
+          <TopBar me={me} title={headerTitle} onSignOut={signOut} collapsed={collapsed} onToggleSidebar={toggleSidebar} />
 
-          <main className="animate-in">{children}</main>
+          <main className="app-container app-main animate-in">{children}</main>
         </div>
       </div>
       </NotificationsProvider>

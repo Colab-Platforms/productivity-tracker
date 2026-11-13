@@ -15,7 +15,7 @@ type Person = { id: string; firstName: string; lastName: string; role: string; e
 
 const iconBtn = "flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-[var(--nav-hover)] hover:text-indigo-600";
 
-export default function TopBar({ me, title, onSignOut }: { me: Person; title: string; onSignOut: () => void }) {
+export default function TopBar({ me, title, onSignOut, collapsed, onToggleSidebar }: { me: Person; title: string; onSignOut: () => void; collapsed: boolean; onToggleSidebar: () => void }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [menu, setMenu] = useState(false);
@@ -34,7 +34,19 @@ export default function TopBar({ me, title, onSignOut }: { me: Person; title: st
   }, [menu]);
 
   return (
-    <header className="sticky top-0 z-30 hidden items-center gap-4 border-b border-[var(--border)] bg-[var(--card)]/90 px-8 py-3 backdrop-blur lg:flex">
+    <header className="sticky top-0 z-30 hidden border-b border-[var(--border)] bg-[var(--card)]/90 backdrop-blur lg:block">
+    <div className="app-container flex h-16 items-center gap-4">
+      <button
+        type="button"
+        onClick={onToggleSidebar}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-pressed={collapsed}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        data-testid="sidebar-toggle"
+        className={`${iconBtn} -ml-2 shrink-0`}
+      >
+        <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 5.5h14M3 10h14M3 14.5h14" strokeLinecap="round" /></svg>
+      </button>
       <div className="min-w-0">
         <h1 className="truncate text-[17px] font-semibold leading-tight tracking-tight text-slate-900">{title}</h1>
         <nav aria-label="Breadcrumb" className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]">
@@ -97,6 +109,7 @@ export default function TopBar({ me, title, onSignOut }: { me: Person; title: st
           )}
         </div>
       </div>
+    </div>
     </header>
   );
 }

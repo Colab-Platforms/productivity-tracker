@@ -67,6 +67,7 @@ export type AdminUser = {
   status: string;
   designation: string | null;
   company: string | null;
+  companyId?: string;
   // already returned by /admin/users; used by the Employee Status table and the anniversaries
   teams?: { id: string; name: string }[];
   dateOfJoining?: string | null;

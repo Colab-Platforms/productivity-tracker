@@ -38,7 +38,7 @@ function DocumentsInner() {
   const shownTab = exempt && tab === "mine" ? "tracking" : tab;
 
   return (
-    <div className="page-fluid space-y-6 p-8">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Documents</h1>
         <p className="mt-1 text-sm text-slate-500">{isHr ? "Choose which documents are required, and follow who has submitted what." : "The documents your company asks for, and where each one stands."}</p>

@@ -90,7 +90,7 @@ export default function NotificationCentre() {
   }
 
   return (
-    <div className="page-5xl space-y-5 p-4 sm:p-8">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Notifications</h1>

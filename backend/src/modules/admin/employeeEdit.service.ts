@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { linksReady, linkedManagerIdsOf } from "../../lib/reportingLinks.js";
 import { reportingError } from "./hierarchy.logic.js";
 import { parseIsoDay } from "../../lib/dates.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
@@ -287,7 +288,11 @@ export async function editModel(viewerId: string, userId: string) {
   const type = (await typeTableReady()) ? (await prisma.employeeProfile.findUnique({ where: { userId }, select: { employmentType: true } }))?.employmentType ?? null : null;
   const mayEditSalary = canEditSalary(access);
   const photoAt = (await photoStamps([u.id])).get(u.id) ?? null;
+  const extraIds = (await linkedManagerIdsOf([u.id])).get(u.id) ?? [];
+  const extraPeople = extraIds.length ? await prisma.user.findMany({ where: { id: { in: extraIds } }, select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, platform: { select: { name: true } } } }) : [];
   return {
+    additionalManagers: extraPeople.map((m) => ({ id: m.id, name: `${m.firstName} ${m.lastName}`.trim(), employeeCode: m.employeeCode, role: String(m.role), company: m.platform.name })),
+    additionalManagersReady: await linksReady(),
     person: {
       id: u.id,
       photoAt,
@@ -318,3 +323,38 @@ export async function editModel(viewerId: string, userId: string) {
 }
 
 export { scopeWhere };
+
+/**
+ * ADDITIONAL reporting managers of one person. Admin only (the hierarchy is Admin-only). The list REPLACES the person's current extra managers.
+ * Each one must be an ACTIVE Manager or Admin, not the person themselves and not their main reporting manager; the company does not matter (a
+ * manager can run people of another company). The main reporting manager (users.reportsToId) is not touched.
+ */
+export async function setAdditionalManagers(viewerId: string, userId: string, managerIdsIn: unknown) {
+  const access = await accessFor(viewerId);
+  if (access.role !== "ADMIN") throw new Error("HIERARCHY_ADMIN_ONLY");
+  if (!(await linksReady())) throw new Error("FEATURES_NOT_READY");
+  if (!Array.isArray(managerIdsIn) || managerIdsIn.some((x) => typeof x !== "string")) throw new Error("BAD_MANAGER_LIST");
+  const wanted = [...new Set(managerIdsIn as string[])];
+  if (wanted.length > 5) throw new Error("TOO_MANY_MANAGERS");
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, platformId: true, firstName: true, lastName: true, reportsToId: true } });
+  if (!u) throw new Error("NOT_FOUND");
+  assertCompany(access, u.platformId);
+  if (wanted.includes(u.id)) throw new Error("MANAGER_IS_SELF");
+  if (u.reportsToId && wanted.includes(u.reportsToId)) throw new Error("ALREADY_MAIN_MANAGER");
+  const people = wanted.length ? await prisma.user.findMany({ where: { id: { in: wanted } }, select: { id: true, role: true, status: true } }) : [];
+  if (people.length !== wanted.length || people.some((p) => !["MANAGER", "ADMIN"].includes(String(p.role)) || !["ACTIVE", "INVITED"].includes(String(p.status)))) throw new Error("MANAGER_WRONG_ROLE");
+
+  const before = (await linkedManagerIdsOf([userId])).get(userId) ?? [];
+  await prisma.$transaction(async (tx) => {
+    await tx.reportingManagerLink.deleteMany({ where: { userId, managerId: { notIn: wanted } } });
+    for (const managerId of wanted) {
+      if (before.includes(managerId)) continue;
+      await tx.reportingManagerLink.create({ data: { userId, managerId, createdById: viewerId } });
+    }
+  });
+  auditNote({
+    platformId: u.platformId, module: "Employees", action: "UPDATE", recordType: "User", recordId: userId, targetUserId: userId,
+    summary: `Changed additional reporting managers of ${u.firstName} ${u.lastName}`.trim(), before: { additionalManagerIds: before }, after: { additionalManagerIds: wanted },
+  });
+  return { ok: true, managerIds: wanted };
+}

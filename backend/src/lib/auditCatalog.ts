@@ -53,8 +53,6 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/auth\/login$/, module: "Authentication", action: "LOGIN", summary: "Signed in" },
 
   { method: "POST", re: /^\/api\/tracker\/clock-in$/, module: "Attendance", action: "CLOCK", summary: "Clocked in" },
-  { method: "POST", re: /^\/api\/admin\/office-ips$/, module: "Attendance", action: "CREATE", summary: "Added an office network address", recordType: "OfficeIp" },
-  { method: "DELETE", re: /^\/api\/admin\/office-ips\/:id$/, module: "Attendance", action: "DELETE", summary: "Removed an office network address", recordType: "OfficeIp" },
   { method: "POST", re: /^\/api\/tracker\/clock-out$/, module: "Attendance", action: "CLOCK", summary: "Clocked out" },
   { method: "POST", re: /^\/api\/tracker\/break\/start$/, module: "Attendance", action: "CLOCK", summary: "Started a break" },
   { method: "POST", re: /^\/api\/tracker\/break\/end$/, module: "Attendance", action: "CLOCK", summary: "Ended a break" },
@@ -84,6 +82,7 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/queries\/:id\/request-info$/, module: "Queries", action: "UPDATE", summary: "Asked for more information on a query", recordType: "Ticket" },
   { method: "POST", re: /^\/api\/queries\/:id\/status$/, module: "Queries", action: "UPDATE", summary: "Changed the status of a query", recordType: "Ticket" },
   { method: "POST", re: /^\/api\/queries\/:id\/assign$/, module: "Queries", action: "UPDATE", summary: "Assigned a query", recordType: "Ticket" },
+  { method: "PUT", re: /^\/api\/admin\/employees\/:id\/additional-managers$/, module: "Employees", action: "UPDATE", summary: "Changed additional reporting managers", recordType: "User", targetIsId: true },
   { method: "POST", re: /^\/api\/admin\/designations$/, module: "Employees", action: "CREATE", summary: "Added a designation", recordType: "Designation" },
   { method: "PATCH", re: /^\/api\/admin\/designations\/:id$/, module: "Employees", action: "UPDATE", summary: "Changed a designation", recordType: "Designation" },
   { method: "POST", re: /^\/api\/admin\/company-access\/:userId$/, module: "Employees", action: "PERMISSION", summary: "Changed which companies a person can act on", recordType: "User", targetIsId: true },
@@ -143,6 +142,8 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/leave\/requests\/:id\/revoke$/, module: "Leave", action: "CANCEL", summary: "Cancelled an approved leave", recordType: "LeaveRequest" },
   { method: "POST", re: /^\/api\/leave\/requests\/:id\/decide$/, module: "Leave", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Rejected a leave request" : "Approved a leave request"), recordType: "LeaveRequest" },
 
+  { method: "POST", re: /^\/api\/warning-letters$/, module: "Employees", action: "CREATE", summary: "Issued a warning letter", recordType: "WarningLetter" },
+  { method: "POST", re: /^\/api\/warning-letters\/:id\/acknowledge$/, module: "Employees", action: "APPROVE", summary: "Acknowledged a warning letter", recordType: "WarningLetter" },
   { method: "POST", re: /^\/api\/policies\/:id\/acknowledge$/, module: "Policies", action: "APPROVE", summary: "Confirmed they read a policy", recordType: "InductionDocument" },
   { method: "POST", re: /^\/api\/policies$/, module: "Policies", action: "CREATE", summary: "Added a policy document" },
   { method: "POST", re: /^\/api\/policies\/:id\/file$/, module: "Policies", action: "UPDATE", summary: "Replaced the file of an unpublished policy version", recordType: "InductionDocument" },

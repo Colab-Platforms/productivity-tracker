@@ -1,3 +1,4 @@
+import { notWarningLetter } from "../warning-letters/warnings.logic.js";
 import { prisma } from "../../lib/prisma.js";
 import { isOwnerAdmin, ownerAdminIds } from "../../lib/owner.js";
 import { auditNote } from "../../lib/auditContext.js";
@@ -114,7 +115,7 @@ export async function listMine(userId: string) {
   }
   const [requirements, docs, types, scopeBy] = await Promise.all([
     prisma.documentRequirement.findMany({ where: { platformId: me.platformId }, orderBy: [{ sortOrder: "asc" }, { label: "asc" }] }),
-    prisma.employeeDocument.findMany({ where: { userId }, include: { reviewedBy: { select: { firstName: true, lastName: true } } } }),
+    prisma.employeeDocument.findMany({ where: { userId, ...notWarningLetter }, include: { reviewedBy: { select: { firstName: true, lastName: true } } } }),
     typesOf([userId]),
     scopeMap(me.platformId),
   ]);
@@ -151,7 +152,7 @@ export async function tracking(
   const ids = users.map((u) => u.id);
   const [requirements, docs, types, scopeBy, teams] = await Promise.all([
     prisma.documentRequirement.findMany({ where: { platformId: v.platformId } }),
-    ids.length ? prisma.employeeDocument.findMany({ where: { userId: { in: ids } }, include: { reviewedBy: { select: { firstName: true, lastName: true } } } }) : Promise.resolve([]),
+    ids.length ? prisma.employeeDocument.findMany({ where: { userId: { in: ids }, ...notWarningLetter }, include: { reviewedBy: { select: { firstName: true, lastName: true } } } }) : Promise.resolve([]),
     typesOf(ids),
     scopeMap(v.platformId),
     prisma.team.findMany({ where: { platformId: v.platformId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
@@ -193,7 +194,7 @@ export async function employeeChecklist(viewerId: string, userId: string) {
   if (!u) throw new Error("NOT_FOUND");
   const [requirements, docs, types, scopeBy] = await Promise.all([
     prisma.documentRequirement.findMany({ where: { platformId: v.platformId }, orderBy: [{ sortOrder: "asc" }, { label: "asc" }] }),
-    prisma.employeeDocument.findMany({ where: { userId }, include: { reviewedBy: { select: { firstName: true, lastName: true } } } }),
+    prisma.employeeDocument.findMany({ where: { userId, ...notWarningLetter }, include: { reviewedBy: { select: { firstName: true, lastName: true } } } }),
     typesOf([userId]),
     scopeMap(v.platformId),
   ]);

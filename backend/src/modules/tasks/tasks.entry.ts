@@ -1,3 +1,4 @@
+import { allLinkedManagerIds } from "../../lib/reportingLinks.js";
 import { prisma } from "../../lib/prisma.js";
 import { managerIdsByTeam } from "../../lib/teamManagers.js";
 import { getPinnedCompany, onlyPinnedCompany } from "../../lib/deployment.js";
@@ -93,6 +94,7 @@ export async function eligibleManagers(owner: { id: string; platformId: string }
   const byTeam = await managerIdsByTeam(activeTeams.map((t) => t.id));
   const ids = new Set<string>();
   for (const r of reportTargets) if (r.reportsToId) ids.add(r.reportsToId);
+  for (const m of await allLinkedManagerIds()) ids.add(m);
   for (const list of byTeam.values()) for (const id of list) ids.add(id);
   ids.delete(owner.id);
   const pinned = await onlyPinnedCompany([...ids]);

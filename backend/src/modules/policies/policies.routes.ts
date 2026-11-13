@@ -2,6 +2,9 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../middlewares/auth.js";
 import * as policies from "./policies.service.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
+import { prisma } from "../../lib/prisma.js";
+import { accessFor } from "../../lib/companyAccess.js";
+import { canAccess } from "../../lib/companyAccess.logic.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -80,6 +83,23 @@ router.use((req, res, next) => {
   const id = typeof raw === "string" ? raw : "";
   if (!UUID.test(id)) return fail(res, new Error("NOT_FOUND"));
   return policies.withActingCompany(id, () => next());
+});
+
+// HR/Admin opening a policy by its id when `?company=` is missing (an old link, a bookmark, a notification): if the policy belongs to
+// another company they are allowed to act on, work inside that company. Anyone else, or a policy outside their access, behaves as before.
+router.use(async (req, res, next) => {
+  try {
+    if (req.query.company !== undefined) return next();
+    const first = req.path.split("/")[1] ?? "";
+    if (!UUID.test(first)) return next();
+    const me = await prisma.user.findUnique({ where: { id: uid(req) }, select: { role: true, platformId: true } });
+    if (!me || !["HR", "ADMIN"].includes(String(me.role))) return next();
+    const doc = await prisma.inductionDocument.findUnique({ where: { id: first }, select: { platformId: true } });
+    if (!doc || doc.platformId === me.platformId || !canAccess(await accessFor(uid(req)), doc.platformId)) return next();
+    return policies.withActingCompany(doc.platformId, () => next());
+  } catch (e) {
+    return fail(res, e);
+  }
 });
 
 // --- Everyone (employees see only published policies meant for them; HR/Admin see their company's) ---

@@ -186,7 +186,7 @@ export default function AdminDashboard() {
   const maxMgr = Math.max(1, ...(d?.people.managers.map((m) => m.employees) ?? [1]));
 
   return (
-    <div className="page-fluid space-y-5 p-4 sm:p-6">
+    <div className="space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-[15px] font-semibold text-slate-900">{me ? `Welcome, ${me.firstName}` : "Welcome"}</p>
@@ -198,7 +198,6 @@ export default function AdminDashboard() {
           <Link href="/dashboard/projects" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Add Project</Link>
           <Link href="/dashboard/employees" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Manage Employees</Link>
           <Link href="/dashboard/reports" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">View Reports</Link>
-          <Link href="/dashboard/office-network" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Office Network</Link>
         </div>
       </header>
 

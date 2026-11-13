@@ -74,7 +74,7 @@ export default function OfficeNetworkPage() {
   const mineListed = entries.some((x) => x.cidr === mine);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-4">
+    <div className="space-y-4">
       <header>
         <h1 className="text-xl font-semibold text-slate-900">Office network</h1>
         <p className="text-sm text-slate-500">People can sign in from anywhere, but can only clock in from these addresses.</p>

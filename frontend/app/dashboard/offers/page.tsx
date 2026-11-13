@@ -184,7 +184,7 @@ export default function OffersPage() {
     form.joiningDate !== "";
 
   return (
-    <div className="p-8 page-4xl">
+    <div>
       <header className="mb-6">
         <p className="text-sm text-slate-400">HR</p>
         <h1 className="mt-0.5 text-2xl font-semibold text-slate-900">

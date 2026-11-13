@@ -289,7 +289,7 @@ export default function ApprovalsPage() {
 
   if (me && !allowed) {
     return (
-      <div className="p-8">
+      <div>
         <div className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-8 text-center text-sm text-slate-600">
           Approvals are for managers.
         </div>
@@ -298,7 +298,7 @@ export default function ApprovalsPage() {
   }
 
   return (
-    <div className="p-8 page-5xl space-y-5">
+    <div className="space-y-5">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Team tasks</h1>
         <p className="mt-1 text-sm text-slate-500">
