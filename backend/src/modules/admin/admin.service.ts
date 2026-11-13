@@ -1,3 +1,4 @@
+import { linkedEmployeesOfManagers } from "../../lib/reportingLinks.js";
 // ===========================================================================
 // ADMIN â€” people, teams, shifts, thresholds, leave
 //
@@ -142,6 +143,7 @@ export async function listUsers(
     companyScope = { platformId: filters.companyId };
   }
 
+  const linkedIds = filters.managerIds?.length ? await linkedEmployeesOfManagers(filters.managerIds) : [];
   const users = await prisma.user.findMany({
     where: {
       ...companyScope,
@@ -149,7 +151,7 @@ export async function listUsers(
       ...(status ? { status } : {}),
       // Project: anyone ACTIVELY on one of the chosen projects (a person on several is still one row). Reporting manager: who reports to them.
       ...(filters.projectIds?.length ? { teamMemberships: { some: { teamId: { in: filters.projectIds }, isActive: true } } } : {}),
-      ...(filters.managerIds?.length ? { reportsToId: { in: filters.managerIds } } : {}),
+      ...(filters.managerIds?.length ? { AND: [{ OR: [{ reportsToId: { in: filters.managerIds } }, ...(linkedIds.length ? [{ id: { in: linkedIds } }] : [])] }] } : {}),
       ...(filters.designation ? { designation: { equals: filters.designation, mode: "insensitive" as const } } : {}),
       ...(search
         ? {

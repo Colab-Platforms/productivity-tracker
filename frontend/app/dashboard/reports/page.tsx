@@ -192,7 +192,7 @@ export default function ReportsPage() {
   if (!canSeeTeam) return <MyReport />;
 
   return (
-    <div className="mx-auto page-7xl space-y-6 p-4 sm:p-8">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Reports &amp; Analytics</h1>
         <p className="mt-1 text-sm text-slate-500">History and trends for your people: HR and Admin see every company they act on, a manager sees their own team. For who is working right now, open Attendance.</p>
@@ -359,7 +359,7 @@ function SummaryReport() {
   const t = report?.totals;
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="space-y-6">
       {/* --- header ------------------------------------------------------- */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -418,7 +418,7 @@ function SummaryReport() {
             />
           </label>
 
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {(["today", "yesterday", "week", "month", "quarter", "year"] as const).map((p) => (
               <button
                 key={p}

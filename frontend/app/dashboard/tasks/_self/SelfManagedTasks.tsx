@@ -60,7 +60,7 @@ export default function SelfManagedTasks({ data, onData, error, setError }: { da
   const remove = (t: SelfTask) => { if (confirm(`Remove "${t.title}"?`)) void run(() => del<SelfPayload>(`/tasks/${t.id}`)); };
 
   return (
-    <div className="p-8 page-4xl space-y-5">
+    <div className="space-y-5">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">My tasks</h1>
         <p className="mt-1 text-sm text-slate-500">Your own work. You manage it yourself: no approval is needed and nobody reviews it. It counts in <b>My performance</b>, not in your team&apos;s figures.</p>

@@ -97,7 +97,7 @@ export default function PayslipsPage() {
   }
 
   return (
-    <div className="p-8 page-3xl space-y-5">
+    <div className="space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">

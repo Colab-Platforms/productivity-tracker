@@ -22,7 +22,7 @@ import { localDayOf, parseIsoDay, platformToday, zonedToUtc } from "../../lib/da
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { projectsAndManagers } from "./peopleDetails.js";
 import { entryDetailsFor } from "../tasks/tasks.entry.js";
-import { progressOf } from "../tasks/tasks.entry.logic.js";
+import { progressOf, pendingTaskVisibleTo } from "../tasks/tasks.entry.logic.js";
 
 const MAX_RANGE_DAYS = 93;
 const MAX_TARGET = 1000;
@@ -92,7 +92,11 @@ type ScopedPerson = { id: string; name: string; code: string | null; platformId:
 
 async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { userId?: string; teamId?: string; filters?: HrFilters; self?: boolean }): Promise<{ people: ScopedPerson[]; scope: { orgTotal: number; filteredTotal: number } }> {
   // The HR filters narrow what the viewer may already see; scope reports how many are left next to how many the viewer may see.
-  const narrowed = await narrowIds(q.self ? [viewer.id] : await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId }), q.self ? undefined : q.filters);
+  const narrowed = await narrowIds(
+  q.self ? [viewer.id] : await visibleUserIds({ id: viewer.id, role: String(viewer.role), platformId: viewer.platformId }),
+  q.self ? undefined : q.filters,
+  { activeOnly: true },
+  );
   const allowed = narrowed.ids;
   const scope = narrowed.scope;
   if (allowed.length === 0) return { people: [], scope };
@@ -241,7 +245,13 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
   ]);
   const counted = new Set(countedRows.map((r) => r.id));
 
-  const tasks = rows.map((t) => {
+  const tasks = rows.filter((t) => {
+    // Same visibility rule as the approval queue: a task still waiting for its manager is not shown to HR, nor to a manager it is not tagged to.
+    if (String(t.approvalStatus) !== "PENDING") return true;
+    const tag = details.get(t.id);
+    const mine = !(tag?.taggedManagerId && tag.taggedManagerActive) || tag.taggedManagerId === viewer.id;
+    return pendingTaskVisibleTo(String(viewer.role), mine);
+  }).map((t) => {
     const p = byPerson.get(t.userId)!;
     const d = details.get(t.id);
     const status = String(t.status);

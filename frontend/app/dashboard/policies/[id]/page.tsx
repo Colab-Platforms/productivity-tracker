@@ -131,7 +131,7 @@ function PolicyPageInner() {
   const dl = shownVersion === undefined ? "" : `&version=${shownVersion}`;
 
   return (
-    <div className="mx-auto page-4xl space-y-5 p-4 sm:p-8">
+    <div className="space-y-5">
       <Link href="/dashboard/policies" className="text-sm font-medium text-indigo-600 hover:underline">← Policies &amp; induction</Link>
 
       <header className={`${card} p-5 sm:p-6`}>

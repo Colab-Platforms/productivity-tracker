@@ -1,3 +1,4 @@
+import { linkedEmployeesOfManagers } from "../../lib/reportingLinks.js";
 import { prisma } from "../../lib/prisma.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
@@ -26,10 +27,11 @@ export async function authorizedPeople(viewerId: string): Promise<{ role: string
 }
 
 /** Prisma conditions for the filters (everything except the authorized id list). */
-export function personWhere(f: HrFilters) {
+export function personWhere(f: HrFilters, linkedIds: string[] = []) {
   return {
     ...(f.companyIds.length ? { platformId: { in: f.companyIds } } : {}),
-    ...(f.managerIds.length ? { reportsToId: { in: f.managerIds } } : {}),
+    // main reporting manager, or an ADDITIONAL one (linkedIds = people linked to the chosen managers)
+    ...(f.managerIds.length ? { AND: [{ OR: [{ reportsToId: { in: f.managerIds } }, ...(linkedIds.length ? [{ id: { in: linkedIds } }] : [])] }] } : {}),
     // A person on several of the chosen projects is still one row: this is a condition on the person, not a join.
     ...(f.projectIds.length ? { teamMemberships: { some: { teamId: { in: f.projectIds }, isActive: true } } } : {}),
     ...(f.designation ? { designation: { equals: f.designation, mode: "insensitive" as const } } : {}),
@@ -43,8 +45,9 @@ export function personWhere(f: HrFilters) {
 /** The unique people the viewer may see who pass the filters, and both totals (organization = everyone the viewer may see). */
 export async function resolvePeople(viewerId: string, f: HrFilters) {
   const scope = await authorizedPeople(viewerId);
+  const linked = f.managerIds.length ? await linkedEmployeesOfManagers(f.managerIds) : [];
   const rows = scope.ids.length
-    ? await prisma.user.findMany({ where: { id: { in: scope.ids }, ...personWhere(f) }, select: { id: true } })
+    ? await prisma.user.findMany({ where: { id: { in: scope.ids }, ...personWhere(f, linked) }, select: { id: true } })
     : [];
   return { role: scope.role, orgIds: scope.ids, ids: rows.map((r) => r.id), orgTotal: scope.ids.length, filteredTotal: rows.length };
 }
@@ -53,9 +56,22 @@ export async function resolvePeople(viewerId: string, f: HrFilters) {
  * Narrow a list of people a module has ALREADY decided the viewer may see by the HR filters. It can only remove people, never add; the totals say how
  * many the viewer may see (organization) and how many are left. Used by every report so tables, cards, charts and exports share one list.
  */
-export async function narrowIds(ids: string[], f: HrFilters | undefined): Promise<{ ids: string[]; scope: { orgTotal: number; filteredTotal: number } }> {
+export async function narrowIds(ids: string[], f: HrFilters | undefined, opts?: { activeOnly?: boolean }): Promise<{ ids: string[]; scope: { orgTotal: number; filteredTotal: number } }> {
+  const out = await narrowAll(ids, f);
+  if (!opts?.activeOnly) return out;
+  // For screens that list only people who are not suspended or exited, the "x of y" counts must describe that same list.
+  const live = { status: { notIn: ["SUSPENDED", "EXITED"] as ("SUSPENDED" | "EXITED")[] } };
+  const [orgTotal, filteredTotal] = await Promise.all([
+    ids.length ? prisma.user.count({ where: { id: { in: ids }, ...live } }) : 0,
+    out.ids.length ? prisma.user.count({ where: { id: { in: out.ids }, ...live } }) : 0,
+  ]);
+  return { ids: out.ids, scope: { orgTotal, filteredTotal } };
+}
+
+async function narrowAll(ids: string[], f: HrFilters | undefined): Promise<{ ids: string[]; scope: { orgTotal: number; filteredTotal: number } }> {
   if (!f || !isFiltering(f) || ids.length === 0) return { ids, scope: { orgTotal: ids.length, filteredTotal: ids.length } };
-  const rows = await prisma.user.findMany({ where: { id: { in: ids }, ...personWhere(f) }, select: { id: true } });
+  const linked = f.managerIds.length ? await linkedEmployeesOfManagers(f.managerIds) : [];
+  const rows = await prisma.user.findMany({ where: { id: { in: ids }, ...personWhere(f, linked) }, select: { id: true } });
   return { ids: rows.map((r) => r.id), scope: { orgTotal: ids.length, filteredTotal: rows.length } };
 }
 

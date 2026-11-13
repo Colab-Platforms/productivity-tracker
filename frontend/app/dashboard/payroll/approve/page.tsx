@@ -276,7 +276,7 @@ export default function PayrollApprovePage() {
 
   if (me && !["HR", "ADMIN"].includes(me.role)) {
     return (
-      <div className="p-8">
+      <div>
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">
           Payroll is limited to HR and administrators.
         </div>
@@ -293,7 +293,7 @@ export default function PayrollApprovePage() {
   const released = slips.filter((r) => r.slip!.publishedAt).length;
 
   return (
-    <div className="p-8 page-5xl space-y-5">
+    <div className="space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <Link href="/dashboard/payroll" className="text-xs text-slate-400 hover:text-slate-900">

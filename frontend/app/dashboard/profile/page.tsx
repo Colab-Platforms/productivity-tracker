@@ -6,6 +6,7 @@ import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import { MyDocuments } from "../_documents/MyDocuments";
 import Avatar, { PhotoEditor } from "../_photos/Avatar";
+import WarningLettersCard from "../_warnings/WarningLettersCard";
 
 // ---------------------------------------------------------------------------
 // MY PROFILE
@@ -148,7 +149,7 @@ export default function ProfilePage() {
   const published = slips.filter((s) => s.publishedAt !== null);
 
   return (
-    <div className="p-8 page-4xl">
+    <div>
       {/* ---- identity ---- */}
       <section className="mb-6 overflow-hidden rounded-2xl bg-indigo-600">
         <div className="flex flex-col gap-5 p-7 sm:flex-row sm:items-center">
@@ -303,7 +304,10 @@ export default function ProfilePage() {
         )}
       </section>
 
-           {/* ---- payslips: a pointer, not a second list ---- */}
+      {/* ---- warning letters: the person's own, with acknowledgment ---- */}
+      <WarningLettersCard />
+
+      {/* ---- payslips: a pointer, not a second list ---- */}
       <section className="overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)] no-print">
         <div className="flex items-center justify-between gap-4 px-5 py-4">
           <div>

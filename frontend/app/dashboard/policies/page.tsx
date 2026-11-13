@@ -37,7 +37,7 @@ export default function PoliciesPage() {
   const tabs: [Tab, string][] = isHr ? [["read", "Policies to read"], ["manage", "Manage policies"], ["tracking", "Acknowledgments"]] : [["read", "Policies to read"]];
 
   return (
-    <div className="mx-auto page-7xl space-y-5 p-4 sm:p-8">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Policies &amp; induction</h1>

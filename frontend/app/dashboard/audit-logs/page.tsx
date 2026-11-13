@@ -120,7 +120,7 @@ export default function AuditLogsPage() {
 
   if (me && !allowed) {
     return (
-      <div className="p-8">
+      <div>
         <p className="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-[var(--shadow-card)]">The audit log is only available to HR and Admin.</p>
       </div>
     );
@@ -133,7 +133,7 @@ export default function AuditLogsPage() {
   const lastRow = d ? Math.min(d.total, d.page * d.pageSize) : 0;
 
   return (
-    <div className="page-fluid space-y-6 p-8">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Audit log</h1>
         <p className="mt-1 text-sm text-slate-500">

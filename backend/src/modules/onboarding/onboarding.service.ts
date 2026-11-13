@@ -1,3 +1,4 @@
+import { isLetterRow, notWarningLetter } from "../warning-letters/warnings.logic.js";
 // ===========================================================================
 // ONBOARDING â€” the path from "HR created an employee ID" to "tracker unlocked"
 //
@@ -188,7 +189,7 @@ export async function recomputeOnboarding(userId: string) {
       select: { id: true, isMandatory: true, uploadedByEmployee: true, category: true },
     }),
     prisma.employeeDocument.findMany({
-      where: { userId },
+      where: { userId, ...notWarningLetter },
       select: { requirementId: true, status: true, category: true },
     }),
     typesOf([userId]),
@@ -576,7 +577,7 @@ export async function getCandidate(viewerId: string, userId: string) {
       orderBy: { sortOrder: "asc" },
     }),
     prisma.employeeDocument.findMany({
-      where: { userId },
+      where: { userId, ...notWarningLetter },
       include: {
         reviewedBy: { select: { firstName: true, lastName: true } },
       },
@@ -662,7 +663,7 @@ export async function getMyOnboarding(userId: string) {
       where: { platformId: user.platformId, isActive: true, uploadedByEmployee: true },
       orderBy: { sortOrder: "asc" },
     }),
-    prisma.employeeDocument.findMany({ where: { userId } }),
+    prisma.employeeDocument.findMany({ where: { userId, ...notWarningLetter } }),
     typesOf([userId]),
     scopeMap(user.platformId),
   ]);
@@ -797,9 +798,10 @@ export async function reviewDocument(
 
   const doc = await prisma.employeeDocument.findUnique({
     where: { id: documentId },
-    select: { id: true, platformId: true, userId: true, status: true, category: true },
+    select: { id: true, platformId: true, userId: true, status: true, category: true, rejectionReason: true },
   });
-  if (!doc) throw new Error("NOT_FOUND");
+  // A warning letter is not an onboarding document: it has its own route and must never be reviewed here (that would overwrite its details).
+  if (!doc || isLetterRow(doc.rejectionReason)) throw new Error("NOT_FOUND");
   // An owner reviews documents in every company; everyone else stays locked
   // to their own.
   if (doc.platformId !== viewer.platformId && !(await viewerIsOwner(viewerId))) {
@@ -915,9 +917,11 @@ export async function downloadDocument(viewerId: string, documentId: string) {
       storageKey: true,
       fileName: true,
       mimeType: true,
+      rejectionReason: true,
     },
   });
-  if (!doc) throw new Error("NOT_FOUND");
+  if (!doc || isLetterRow(doc.rejectionReason)) throw new Error("NOT_FOUND"); // letters are opened only through /api/warning-letters
+
   // An owner reviews documents in every company; everyone else stays locked
   // to their own.
   if (doc.platformId !== viewer.platformId && !(await viewerIsOwner(viewerId))) {

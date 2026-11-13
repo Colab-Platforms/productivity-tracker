@@ -83,7 +83,8 @@ const qs = (o) => "?" + new URLSearchParams(o).toString();
   console.log("\n## HR sees every company she acts on");
   const hr = await queue(HRALL);
   ok("HR with the all-companies grant sees both companies' employees in the dropdown list", JSON.stringify(mine(hr)) === JSON.stringify(["HTT-E1", "HTT-E2", "HTT-E3", "HTT-E4", "HTT-E5"]), mine(hr));
-  ok("...and the tasks of both companies", JSON.stringify(taskTitles(hr)) === JSON.stringify(["HTT task Asha (no tag)", "HTT task Omar", "HTT task Ravi", "HTT task Sana"]), taskTitles(hr));
+  // HR sees a task only once its manager has approved it: the three pending tasks are hidden, the approved one (Sana) is shown.
+  ok("...and only the APPROVED tasks of both companies (pending ones are the manager's alone)", JSON.stringify(taskTitles(hr)) === JSON.stringify(["HTT task Sana"]), taskTitles(hr));
   ok("the organization total equals the real number of active people", hr.b.scope.orgTotal === (await rawActive()) && hr.b.scope.filteredTotal === hr.b.scope.orgTotal && hr.b.teamSize === hr.b.members.length, [hr.b.scope, await rawActive(), hr.b.teamSize, hr.b.members.length]);
   const hra = await queue(HRA);
   ok("HR without a grant sees only their own company's people (no leak)", JSON.stringify(mine(hra)) === JSON.stringify(["HTT-E1", "HTT-E2", "HTT-E3"]) && !taskTitles(hra).includes("HTT task Omar"), [mine(hra), taskTitles(hra)]);
@@ -94,12 +95,12 @@ const qs = (o) => "?" + new URLSearchParams(o).toString();
 
   console.log("\n## filters narrow the list, the counts and the tasks together");
   const fc = await queue(HRALL, { company: AVN });
-  ok("company filter", JSON.stringify(mine(fc)) === JSON.stringify(["HTT-E4", "HTT-E5"]) && JSON.stringify(taskTitles(fc)) === JSON.stringify(["HTT task Omar"]), [mine(fc), taskTitles(fc)]);
+  ok("company filter", JSON.stringify(mine(fc)) === JSON.stringify(["HTT-E4", "HTT-E5"]) && JSON.stringify(taskTitles(fc)) === JSON.stringify([]), [mine(fc), taskTitles(fc)]);
   ok("the filtered total is shown against the organization total", fc.b.scope.filteredTotal === (await rawActive(AVN)) && fc.b.scope.filteredTotal < fc.b.scope.orgTotal && fc.b.scope.orgTotal === hr.b.scope.orgTotal, [fc.b.scope, await rawActive(AVN)]);
   const fp = await queue(HRALL, { project: `${P1},${P2}` });
   ok("two projects: a person on both (Ravi) is listed once", JSON.stringify(mine(fp)) === JSON.stringify(["HTT-E1", "HTT-E2", "HTT-E3"]) && fp.b.members.filter((m) => m.employeeCode === "HTT-E1").length === 1, mine(fp));
   const fm = await queue(HRALL, { manager: M1.id });
-  ok("reporting manager filter", JSON.stringify(mine(fm)) === JSON.stringify(["HTT-E1", "HTT-E2"]) && JSON.stringify(taskTitles(fm)) === JSON.stringify(["HTT task Ravi", "HTT task Sana"]), [mine(fm), taskTitles(fm)]);
+  ok("reporting manager filter", JSON.stringify(mine(fm)) === JSON.stringify(["HTT-E1", "HTT-E2"]) && JSON.stringify(taskTitles(fm)) === JSON.stringify(["HTT task Sana"]), [mine(fm), taskTitles(fm)]);
   ok("company + manager + project together", JSON.stringify(mine(await queue(HRALL, { company: AV, manager: M1.id, project: P2 }))) === JSON.stringify(["HTT-E1"]));
   ok("a filter outside her access matches nobody (no widening)", mine(await queue(HRA, { company: AVN })).length === 0 && mine(await queue(HRA, { project: P3 })).length === 0);
   ok("the date filter still works with the others", (await queue(HRALL, { from: "2020-01-01", to: "2020-01-02", company: AVN })).b.all.length === 0);
@@ -117,7 +118,9 @@ const qs = (o) => "?" + new URLSearchParams(o).toString();
 
   console.log("\n## HR can SEE tasks but cannot approve or reject them");
   const row = (r, title) => (r.b.all ?? []).find((t) => t.title === title);
-  ok("HR sees the task's progress fields and that she cannot act on it", row(hr, "HTT task Ravi")?.canAct === false && row(hr, "HTT task Ravi")?.hoursSpent === 2 && row(hr, "HTT task Ravi")?.taggedManager === "Mia Htt", row(hr, "HTT task Ravi"));
+  ok("HR does NOT see a task that is still waiting for its manager", row(hr, "HTT task Ravi") === undefined && !(hr.b.proposals ?? []).some((t) => t.title === "HTT task Ravi"), row(hr, "HTT task Ravi"));
+  const adRow = row(await queue(ADALL), "HTT task Ravi");
+  ok("Admin monitors it: progress fields and the tagged manager are shown, but she cannot act on it", adRow?.canAct === false && adRow?.hoursSpent === 2 && adRow?.taggedManager === "Mia Htt", adRow);
   ok("HR sees approval details of an approved task", row(hr, "HTT task Sana")?.approvalStatus === "APPROVED");
   ok("the tagged manager sees it as theirs", row(m1, "HTT task Ravi")?.canAct === true);
   for (const [who, tok] of [["HR (all companies)", HRALL.tok], ["HR (own company)", HRA.tok], ["Admin (all companies)", ADALL.tok], ["Admin (own company)", ADA.tok]]) {

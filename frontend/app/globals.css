@@ -116,6 +116,38 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+   APP CONTAINER: the ONE place that decides where page content starts and how wide it may be.
+   The top header and every page's content (<main>) use it, so the page title, the breadcrumb and the
+   first card all start at the same left edge, and end at the same right edge, on every page and role.
+   Pages must NOT add their own outer padding or max-width: that is what made the left edge jump
+   between pages (296 / 304 / 488 / 593 px) and left blank strips on the right.
+   Horizontal margin: 16 px phone, 24 px tablet, 32 px laptop and up. Vertical: 24 px.
+--------------------------------------------------------------------------- */
+:root {
+  --page-pad-x: 1rem;
+  --page-pad-y: 1.5rem;
+}
+@media (min-width: 640px) {
+  :root {
+    --page-pad-x: 1.5rem;
+  }
+}
+@media (min-width: 1024px) {
+  :root {
+    --page-pad-x: 2rem;
+  }
+}
+.app-container {
+  width: 100%;
+  max-width: var(--page-fluid);
+  margin-inline: auto;
+  padding-inline: var(--page-pad-x);
+}
+.app-main {
+  padding-block: var(--page-pad-y);
+}
+
 @utility page-3xl {
   max-width: var(--page-3xl);
   @media (min-width: 1600px) {

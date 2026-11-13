@@ -1,10 +1,10 @@
 import { prisma } from "../../lib/prisma.js";
+import { linkedReportIds } from "../../lib/reportingLinks.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { managedByWhere } from "../../lib/teamManagers.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { cleanRemark, lateRemarksReady, LateRemarkRequired, remarksBySession } from "./lateRemarks.js";
-import { assertClockInAllowed } from "./clockInNetwork.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
 import { starsFor } from "../tasks/tasks.rating.js";
 import { creditOf } from "../tasks/tasks.rating.logic.js";
@@ -161,7 +161,7 @@ export async function getActiveSession(userId: string) {
   return { session: { ...fresh, washroomSeconds, discussionSeconds }, config: ctx.config, hostsOpenMeeting, projects };
 }
 
-export async function clockIn(userId: string, teamId?: string | null, lateRemark?: unknown, ip: string | null = null) {
+export async function clockIn(userId: string, teamId?: string | null, lateRemark?: unknown) {
   const ctx = await getContext(userId);
 
   // The project is optional, but if given it must be one of THIS person's own teams.
@@ -181,10 +181,6 @@ export async function clockIn(userId: string, teamId?: string | null, lateRemark
   if (existing?.status === "ACTIVE") {
     return recompute(existing.id);
   }
-
-  // Clock-in (new day or coming back after a clock-out) only from the office network. Placed after the
-  // already-ACTIVE return on purpose: someone who is clocked in is never re-checked.
-  await assertClockInAllowed(ctx.platformId, ip);
 
   // SESSION RESUME: clocked out early, coming back. Reopen the same session
   // and log the time away as a break, rather than locking them out all day.
@@ -728,7 +724,7 @@ export async function visibleUserIds(viewer: {
     return everyone.map((u) => u.id);
   }
 
-  const [managedTeams, reports] = await Promise.all([
+  const [managedTeams, reports, linked] = await Promise.all([
     prisma.team.findMany({
       where: { ...(await managedByWhere(viewer.id)), isActive: true },
       select: { members: { where: { isActive: true }, select: { userId: true } } },
@@ -737,6 +733,7 @@ export async function visibleUserIds(viewer: {
       where: { reportsToId: viewer.id },
       select: { id: true },
     }),
+    linkedReportIds(viewer.id), // people who have this person as an ADDITIONAL reporting manager
   ]);
 
   return onlyPinnedCompany(
@@ -744,6 +741,7 @@ export async function visibleUserIds(viewer: {
       new Set([
         ...managedTeams.flatMap((t) => t.members.map((m) => m.userId)),
         ...reports.map((r) => r.id),
+        ...linked,
       ])
     )
   );

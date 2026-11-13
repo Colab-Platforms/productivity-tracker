@@ -26,7 +26,9 @@ async function peopleFor(viewerId: string) {
     where = { ...scopeWhere(access), status: { in: ["ACTIVE", "INVITED"] } };
   } else if (role === "MANAGER") {
     const ids = await visibleUserIds({ id: viewerId, role, platformId: access.ownPlatformId });
-    where = { id: { in: [...new Set([...ids, viewerId])] }, platformId: access.ownPlatformId, status: { in: ["ACTIVE", "INVITED"] } };
+    // The manager's own list (people who report to them, teams they run, additional links) is already the whole scope, whatever company they are in:
+    // the live board and Reports behave the same way.
+    where = { id: { in: [...new Set([...ids, viewerId])] }, status: { in: ["ACTIVE", "INVITED"] } };
   } else {
     where = { id: viewerId };
   }

@@ -1,0 +1,19 @@
+// ===========================================================================
+// ADDITIONAL REPORTING MANAGERS - NEW TABLE ONLY, no column added to users.
+// A person's MAIN reporting manager stays `users.reportsToId` (one person, unchanged). This table adds more managers on top: one row per
+// (employee, extra manager). A row gives the extra manager the same view/approval reach a reporting manager has (their people lists, task
+// approval when tagged, notifications) but does NOT change `reportsToId`, leave routing or the hierarchy rules. No row = exactly as before.
+// No relations to existing models; foreign keys live in the migration.
+// ===========================================================================
+
+model ReportingManagerLink {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid // the employee
+  managerId   String   @db.Uuid // the additional manager
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, managerId])
+  @@index([managerId])
+  @@map("reporting_manager_links")
+}

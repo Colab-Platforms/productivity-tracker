@@ -33,6 +33,10 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   TEAM_NOT_FOUND: { status: 404, message: "That team doesn't exist on your platform." },
   MISSING_FIELDS: { status: 400, message: "Please fill in all the required fields." },
   EMAIL_TAKEN: { status: 409, message: "Someone on this platform already uses that email." },
+  BAD_MANAGER_LIST: { status: 400, message: "Send the managers as a list of ids." },
+  TOO_MANY_MANAGERS: { status: 400, message: "A person can have at most 5 additional managers." },
+  MANAGER_IS_SELF: { status: 400, message: "A person cannot be their own manager." },
+  ALREADY_MAIN_MANAGER: { status: 400, message: "That person is already the main reporting manager." },
   HIERARCHY_ADMIN_ONLY: { status: 403, message: "Only an Admin can change who a person reports to." },
   ROLE_NOT_ALLOWED: { status: 403, message: "Only an Admin can create or change HR and Admin accounts." },
   WEAK_PASSWORD: { status: 400, message: "The password must be at least 8 characters." },
@@ -221,6 +225,13 @@ router.get("/employees/companies", async (req, res) => {
 router.get("/employees/dropdowns", async (req, res) => {
   try {
     res.json(await editor.dropdownsFor(req.user!.userId, String(req.query.companyId ?? "")));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+router.put("/employees/:id/additional-managers", async (req, res) => {
+  try {
+    res.json(await editor.setAdditionalManagers(req.user!.userId, id(req.params.id), req.body?.managerIds));
   } catch (e) {
     fail(res, e);
   }

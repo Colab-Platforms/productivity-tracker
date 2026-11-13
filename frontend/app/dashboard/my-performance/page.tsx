@@ -75,7 +75,7 @@ export default function MyPerformancePage() {
   if (!me) return null;
   if (me.role !== "MANAGER") {
     return (
-      <div className="page-4xl p-4 sm:p-8">
+      <div>
         <p className="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-[var(--shadow-card)]">This page is for managers. Your own history is under <b>My History</b>.</p>
       </div>
     );
@@ -86,7 +86,7 @@ export default function MyPerformancePage() {
   const tz = me.platform.timezone ?? "Asia/Kolkata";
 
   return (
-    <div className="page-5xl space-y-5 p-4 sm:p-8">
+    <div className="space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm text-slate-400">Just you, as a manager</p>

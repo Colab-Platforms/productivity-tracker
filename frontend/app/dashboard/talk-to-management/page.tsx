@@ -269,7 +269,7 @@ function Inner() {
   const open = (id: string | null) => router.replace(id ? `/dashboard/talk-to-management?id=${id}` : "/dashboard/talk-to-management");
 
   return (
-    <div className="page-4xl space-y-6 p-4 sm:p-8">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">{isAdmin ? "Management Inbox" : "Talk to Management"}</h1>

@@ -126,7 +126,7 @@ export default function AttendanceCalendarPage() {
   const go = (delta: number) => setRange(monthRange(data?.from ?? new Date().toISOString().slice(0, 10), delta));
 
   return (
-    <div className="mx-auto page-7xl space-y-5 p-4 sm:p-8">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{isStaff ? "Attendance calendar" : "My attendance calendar"}</h1>

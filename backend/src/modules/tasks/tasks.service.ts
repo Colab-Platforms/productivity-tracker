@@ -1,3 +1,4 @@
+import { isLinkedManager, linkedReportIds } from "../../lib/reportingLinks.js";
 import { emitTaskChange } from "../../lib/realtime.js";
 import { taskNotice } from "./tasks.notify.js";
 import { managedByWhere, isTeamManager } from "../../lib/teamManagers.js";
@@ -10,7 +11,7 @@ import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { isFiltering, type HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager, selectableProjects } from "./tasks.entry.js";
-import { mayReview, parseHours, parseProgress, storeProgress } from "./tasks.entry.logic.js";
+import { mayReview, pendingTaskVisibleTo, parseHours, parseProgress, storeProgress } from "./tasks.entry.logic.js";
 import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
 import { checkComment, creditOf, parseRating } from "./tasks.rating.logic.js";
 import { isRated, ratingReady, ratingsFor, withRatings } from "./tasks.rating.js";
@@ -71,6 +72,8 @@ async function assertCanReviewTask(
   const tagged = detail?.taggedManagerId ?? null;
   const taggedActive = detail?.taggedManagerActive ?? false;
   if (strict) {
+    // HR never decides a task, whatever the reporting line says (HR monitors; the tagged manager decides).
+    if (actor.role === "HR") throw new Error("NOT_YOUR_TEAM");
     const legacyOk = tagged && taggedActive ? false : await legacyMayReview(actor, task);
     if (!mayReview({ actorId: actor.id, taggedId: tagged, taggedActive, legacyOk })) throw new Error("NOT_YOUR_TEAM");
     return;
@@ -97,7 +100,7 @@ async function legacyMayReview(actor: { id: string }, task: { userId: string; te
   if (sharedTeam) return true;
 
   const target = await prisma.user.findUnique({ where: { id: task.userId }, select: { reportsToId: true } });
-  return !!target && target.reportsToId === actor.id;
+  return (!!target && target.reportsToId === actor.id) || (await isLinkedManager(actor.id, task.userId));
 }
 
 // For assigning NEW work, where there is no task to read a project from.
@@ -112,7 +115,7 @@ async function assertCanManage(
   });
   if (!target) throw new Error("NOT_YOUR_TEAM");
 
-  if (target.reportsToId === actor.id) return;
+  if (target.reportsToId === actor.id || (await isLinkedManager(actor.id, targetUserId))) return;
   if (
     (actor.role === "ADMIN" || actor.role === "HR") &&
     target.platformId === actor.platformId
@@ -137,14 +140,15 @@ async function assertCanManage(
 // The people this person actually manages: everyone on the teams they run plus their direct reports. (Not the company-wide list HR/Admin
 // are shown: those are people they can SEE, not people whose tasks they review.)
 export async function actingUserIds(actor: { id: string }): Promise<Set<string>> {
-  const [managedTeams, reports] = await Promise.all([
+  const [managedTeams, reports, linked] = await Promise.all([
     prisma.team.findMany({
       where: { ...(await managedByWhere(actor.id)), isActive: true },
       select: { members: { where: { isActive: true }, select: { userId: true } } },
     }),
     prisma.user.findMany({ where: { reportsToId: actor.id }, select: { id: true } }),
+    linkedReportIds(actor.id),
   ]);
-  return new Set<string>([...managedTeams.flatMap((t) => t.members.map((m) => m.userId)), ...reports.map((r) => r.id)]);
+  return new Set<string>([...managedTeams.flatMap((t) => t.members.map((m) => m.userId)), ...reports.map((r) => r.id), ...linked]);
 }
 
 export async function manageableUserIds(actor: {
@@ -154,7 +158,7 @@ export async function manageableUserIds(actor: {
 }): Promise<string[]> {
   // Everyone on the teams they run, plus their direct reports. Both can cross
   // companies - at Avatar one person heads teams in several of them.
-  const [managedTeams, reports] = await Promise.all([
+  const [managedTeams, reports, linked] = await Promise.all([
     prisma.team.findMany({
       where: { ...(await managedByWhere(actor.id)), isActive: true },
       select: {
@@ -165,11 +169,13 @@ export async function manageableUserIds(actor: {
       where: { reportsToId: actor.id },
       select: { id: true },
     }),
+    linkedReportIds(actor.id),
   ]);
 
   const ids = new Set<string>([
     ...managedTeams.flatMap((t) => t.members.map((m) => m.userId)),
     ...reports.map((r) => r.id),
+    ...linked,
   ]);
 
   // An admin or HR also sees every company they act on (company access: their own, the ones assigned to them, or all for top management; a
@@ -309,28 +315,20 @@ export async function listTasks(userId: string) {
 
   // A task a manager reopened keeps its original day, which may be earlier than today, but it is unfinished work again: it is shown with
   // the rest of the person's working tasks, flagged with the day it came from. It does not change today's score.
-  // The same goes for any approved task still IN_PROGRESS from an earlier day: its lifecycle ends when it is completed, not at midnight.
-  const reopenedOld = (await withRatings(await prisma.dailyTask.findMany({
-    where: {
-      userId,
-      approvalStatus: "APPROVED",
-      outcome: null,
-      // Same 30-day window updateMyTask allows for completing, so nothing is shown that can't be finished.
-      date: { lt: date, gte: new Date(date.getTime() - 30 * 86400000) },
-      status: { in: ["PENDING", "IN_PROGRESS"] },
-    },
+  const reopenedOld = await withRatings(await prisma.dailyTask.findMany({
+    where: { userId, approvalStatus: "APPROVED", status: { in: ["PENDING", "IN_PROGRESS"] }, outcome: null, date: { lt: date }, reviewNote: { startsWith: REVERT_MARK_PREFIX } },
     include: { team: { select: { name: true } } },
     orderBy: { date: "asc" },
-  }))).filter((t) => t.rating == null);
-  const selfDetails = await detailsFor([...rows, ...reopenedOld].map((r) => r.id));
-  const entries = await entryDetailsFor([...rows, ...reopenedOld].map((r) => r.id));
+  }));
+  const selfDetails = await detailsFor(rows.map((r) => r.id));
+  const entries = await entryDetailsFor(rows.map((r) => r.id));
   const nowForSelf = new Date();
   const tasks = rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone), ...entryView(String(t.status), entries.get(t.id)) }));
   // True for a manager once the self-managed tables exist: his own tasks need no approval.
   const selfManagedMode = ctx.role === "MANAGER" && (await selfTasksReady());
 
   const working = [
-    ...reopenedOld.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone), ...entryView(String(t.status), entries.get(t.id)), fromEarlierDay: true })),
+    ...reopenedOld.map((t) => ({ ...shape(t, t.team?.name ?? null), selfManaged: false as const, fromEarlierDay: true })),
     ...tasks.filter((t) => t.approvalStatus === "APPROVED" && t.status !== "COMPLETED").map((t) => ({ ...t, fromEarlierDay: false })),
   ];
   const awaiting = tasks.filter((t) => t.approvalStatus === "PENDING");
@@ -826,13 +824,20 @@ export async function listForApproval(
   const rows = rawRows.filter((r) => !selfIds.has(r.id));
 
   const [entries, acting, ratedRows] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatings(rows)]);
-  const all = ratedRows.map((t) => {
+  const deciderIds = [...new Set(ratedRows.map((t) => t.approvedById).filter((x): x is string => !!x))];
+  const deciders = new Map(
+    (deciderIds.length ? await prisma.user.findMany({ where: { id: { in: deciderIds } }, select: { id: true, firstName: true, lastName: true } }) : []).map((u) => [u.id, `${u.firstName} ${u.lastName}`.trim()])
+  );
+  const everyRow = ratedRows.map((t) => {
     const who = `${t.user.firstName} ${t.user.lastName}`.trim();
     const d = entries.get(t.id);
     return {
       ...shape(t, t.team?.name ?? null),
       ...entryView(String(t.status), d),
       // HR and Admin see every task but only the manager it belongs to can act on it.
+      // Approval history: who decided and when (the Admin monitors this; HR sees it once a task is approved).
+      decidedBy: t.approvedById ? deciders.get(t.approvedById) ?? null : null,
+      decidedAt: t.approvedAt ? t.approvedAt.toISOString() : null,
       canAct: mayReview({ actorId: managerId, taggedId: d?.taggedManagerId ?? null, taggedActive: d?.taggedManagerActive ?? false, legacyOk: acting.has(t.userId) }),
       userId: t.userId,
       who,
@@ -843,6 +848,10 @@ export async function listForApproval(
     };
   });
 
+  // A task that is still waiting for its manager must not reach anyone who cannot decide it, except the Admin, who may monitor it:
+  // HR sees it only after approval, and another manager never sees a task tagged to someone else.
+  const all = everyRow.filter((t) => t.approvalStatus !== "PENDING" || pendingTaskVisibleTo(ctx.role, t.canAct));
+
   const roster = people.map((p) => ({
     id: p.id,
     name: `${p.firstName} ${p.lastName}`.trim(),
@@ -852,7 +861,8 @@ export async function listForApproval(
     projects: p.teamMemberships.map((m) => m.team),
   }));
 
-  const proposals = all.filter((t) => t.approvalStatus === "PENDING");
+  // Needs Approval = what THIS person can decide (never merely what they can see).
+  const proposals = all.filter((t) => t.approvalStatus === "PENDING" && t.canAct);
   const toReview = all.filter(
     (t) =>
       t.approvalStatus === "APPROVED" &&

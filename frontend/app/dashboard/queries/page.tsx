@@ -157,7 +157,7 @@ function QueriesInner() {
   const field = "rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-800";
 
   return (
-    <div className="page-fluid space-y-5 p-4 sm:p-8">
+    <div className="space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>

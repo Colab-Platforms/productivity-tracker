@@ -23,6 +23,8 @@ import { plural } from "@/lib/plural";
 import { SearchSelect } from "../_employees/SearchSelect";
 import EmployeeActions from "../_employees/EmployeeActions";
 import Avatar, { PhotoEditor } from "../_photos/Avatar";
+import WarningLettersAdmin from "../_warnings/WarningLettersAdmin";
+import { AdditionalManagers } from "../_employees/AdditionalManagers";
 import { useMe } from "../layout";
 
 const API = API_BASE;
@@ -187,7 +189,7 @@ export default function AdminPage() {
 
   if (me && !allowed) {
     return (
-      <div className="p-8">
+      <div>
         <div className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-8 text-center">
           <p className="text-sm text-slate-600">
             Admin is limited to HR and administrators.
@@ -208,7 +210,7 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="page-fluid p-8 space-y-6">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{me?.role === "ADMIN" ? "Admin" : "Employees"}</h1>
         <p className="mt-1 text-sm text-slate-500">
@@ -216,7 +218,7 @@ export default function AdminPage() {
         </p>
       </div>
 
-      <div className="inline-flex rounded-xl border border-indigo-100 bg-[#F3F7F6] p-0.5">
+      <div className="inline-flex max-w-full flex-wrap rounded-xl border border-indigo-100 bg-[#F3F7F6] p-0.5">
         {tabs.map((t) => (
           <button
             key={t}
@@ -790,6 +792,8 @@ function PersonDrawer({
 // ===========================================================================
 
 type EditModel = {
+  additionalManagers?: { id: string; name: string; employeeCode: string | null; role: string; company: string }[];
+  additionalManagersReady?: boolean;
   person: {
     id: string; firstName: string; lastName: string; email: string; phone: string | null; employeeCode: string | null; role: string; status: string;
     designation: string | null; dateOfJoining: string | null; reportsToId: string | null; shiftId: string | null; trackerAccessEnabled: boolean;
@@ -1002,6 +1006,9 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
           ))}
         </Select>
       </Field>
+      {model.permissions.canEditHierarchy && (
+        <AdditionalManagers userId={p.id} mainManagerId={p.reportsToId} initial={model.additionalManagers ?? []} ready={model.additionalManagersReady === true} />
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Joining date">
@@ -1055,6 +1062,8 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
         </button>
         <button onClick={onClose} className="rounded-xl border border-indigo-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:border-slate-400">Cancel</button>
       </div>
+
+      <WarningLettersAdmin userId={p.id} name={`${f.firstName} ${f.lastName}`.trim()} />
 
       <div className="mt-6 border-t border-indigo-100 pt-5">
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Reset password</p>

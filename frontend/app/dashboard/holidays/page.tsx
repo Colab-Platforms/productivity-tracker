@@ -189,7 +189,7 @@ export default function HolidaysPage() {
   const multiCompany = (data?.companies.length ?? 0) > 1;
 
   return (
-    <div className="p-8 page-4xl">
+    <div>
       <header className="mb-6">
         <p className="text-sm text-slate-400">HR setup</p>
         <h1 className="text-2xl font-semibold text-slate-900 mt-0.5">

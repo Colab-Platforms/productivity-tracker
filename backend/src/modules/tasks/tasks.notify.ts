@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { linkedManagerIdsOf } from "../../lib/reportingLinks.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { managerIdsByTeam } from "../../lib/teamManagers.js";
@@ -36,6 +37,7 @@ async function managersOf(ownerId: string, assignedById: string | null, exclude:
   const ids = new Set<string>();
   if (assignedById) ids.add(assignedById);
   if (owner?.reportsToId) ids.add(owner.reportsToId);
+  for (const m of (await linkedManagerIdsOf([ownerId])).get(ownerId) ?? []) ids.add(m); // additional reporting managers
   // primary manager AND every co-manager of each of the person's teams
   const byTeam = await managerIdsByTeam((owner?.teamMemberships ?? []).map((m) => m.teamId));
   for (const list of byTeam.values()) for (const id of list) ids.add(id);
@@ -46,11 +48,19 @@ async function managersOf(ownerId: string, assignedById: string | null, exclude:
   return onlyPinnedCompany(live.map((u) => u.id));
 }
 
+// HR is told about tasks only after the manager has decided; never asked to approve one.
+async function withoutHr(ids: string[]): Promise<string[]> {
+  if (ids.length === 0) return ids;
+  const hr = await prisma.user.findMany({ where: { id: { in: ids }, role: "HR" }, select: { id: true } });
+  const drop = new Set(hr.map((u) => u.id));
+  return ids.filter((id) => !drop.has(id));
+}
+
 // A task tagged to an active manager is that manager's alone: only they are asked. Otherwise the earlier recipients (reporting manager + team managers).
 async function reviewersOf(taskId: string, ownerId: string, assignedById: string | null, exclude: string[]): Promise<string[]> {
   const d = (await entryDetailsFor([taskId])).get(taskId);
   if (d?.taggedManagerId && d.taggedManagerActive) return exclude.includes(d.taggedManagerId) ? [] : onlyPinnedCompany([d.taggedManagerId]);
-  return managersOf(ownerId, assignedById, exclude);
+  return withoutHr(await managersOf(ownerId, assignedById, exclude));
 }
 
 // A recipient's notification belongs to THEIR company (a manager can sit in another company than the employee).

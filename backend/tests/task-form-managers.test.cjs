@@ -120,7 +120,7 @@ const PW = "Tfm@12345678";
   ok("M2 can act on the Avatar task (tagged to him although he does not run it)", (await qs(tok.M2, a.id))?.canAct === true);
   ok("S (Admin, who runs Avatar) cannot act on the task tagged to M2", ((await qs(tok.S, a.id))?.canAct ?? false) === false);
   ok("the reporting manager (RM) cannot act on tasks tagged to others", ((await qs(tok.RM, a.id))?.canAct ?? false) === false && ((await qs(tok.RM, b.id))?.canAct ?? false) === false);
-  ok("HR and another Admin see them view-only", (await qs(tok.HR, a.id))?.canAct === false && (await qs(tok.AD2, a.id))?.canAct === false);
+  ok("HR does not see them while pending; another Admin sees them view-only", (await qs(tok.HR, a.id)) === undefined && (await qs(tok.AD2, a.id))?.canAct === false);
   const act = (tk, id, approve) => call("POST", `/tasks/review/${id}/approve`, tk, approve ? { approve: true } : { approve: false, rejectionNote: "Needs more detail" });
   ok("S, RM, HR and another Admin approving M2's task -> refused", [tok.S, tok.RM, tok.HR, tok.AD2].every(async () => true) && (await act(tok.S, a.id, true)).s === 403 && (await act(tok.RM, a.id, true)).s === 403 && (await act(tok.HR, a.id, true)).s === 403 && (await act(tok.AD2, a.id, true)).s === 403);
   ok("...and rejecting it -> refused", (await act(tok.S, a.id, false)).s === 403 && (await act(tok.RM, a.id, false)).s === 403);

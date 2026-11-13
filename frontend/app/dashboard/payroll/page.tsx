@@ -191,7 +191,7 @@ export default function PayrollPage() {
 
   if (me && !allowed) {
     return (
-      <div className="p-8">
+      <div>
         <div className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-8 text-center text-sm text-slate-600">
           Payroll is limited to HR and administrators.
         </div>
@@ -202,7 +202,7 @@ export default function PayrollPage() {
   const pending = data ? data.uploaded - data.published : 0;
 
   return (
-    <div className="p-8 page-5xl space-y-5">
+    <div className="space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
