@@ -7,6 +7,7 @@ import { useMe } from "../layout";
 import { MyDocuments } from "../_documents/MyDocuments";
 import Avatar, { PhotoEditor } from "../_photos/Avatar";
 import WarningLettersCard from "../_warnings/WarningLettersCard";
+import AdminProfile from "../_profile/AdminProfile";
 
 // ---------------------------------------------------------------------------
 // MY PROFILE
@@ -79,7 +80,7 @@ function NotStored({ what }: { what: string }) {
   return <p className="rounded-xl bg-[#F3F7F6] px-4 py-6 text-center text-sm text-slate-500">{what} is not recorded in your profile yet. If HR needs it, they will ask you for it.</p>;
 }
 
-export default function ProfilePage() {
+function StaffProfile() {
   const me = useMe();
   const [tab, setTab] = useState<Tab>(() => {
     if (typeof window === "undefined") return "Personal";
@@ -330,4 +331,12 @@ export default function ProfilePage() {
       </section>
     </div>
   );
+}
+
+// Admins are senior management and get their own profile (AdminProfile): no reporting manager, offer or warning letters, payslips, performance or
+// document checklist. Every other role keeps the profile above, unchanged. The split is here, before any staff-only data is requested.
+export default function ProfilePage() {
+  const me = useMe();
+  if (!me) return null;
+  return me.role === "ADMIN" ? <AdminProfile me={me} /> : <StaffProfile />;
 }

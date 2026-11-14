@@ -163,7 +163,7 @@ export async function updateEmployee(viewerId: string, userId: string, data: Edi
         if (next === userId) throw new Error("BAD_MANAGER");
         const m = await prisma.user.findUnique({ where: { id: next }, select: { id: true, platformId: true, role: true, status: true } });
         // Employee -> a Manager, Manager -> an Admin (HR/Admin: a Manager or Admin as before); same company, active, never themselves.
-        const bad = reportingError({ id: userId, role: String(current.role), platformId: current.platformId }, m ? { id: m.id, role: String(m.role), status: String(m.status), platformId: m.platformId } : null);
+        const bad = reportingError({ id: userId, role: String(current.role), platformId: current.platformId }, m ? { id: m.id, role: String(m.role), status: String(m.status), platformId: m.platformId } : null, { anyCompany: true });
         if (bad) throw new Error(bad);
         if (await reachesPerson(next, userId)) throw new Error("MANAGER_CYCLE");
       }

@@ -68,7 +68,7 @@ export async function approverChoices(me: Requester) {
   if (mode === "NONE") return base;
   const self = await prisma.user.findUnique({ where: { id: me.id }, select: { reportsTo: { select: { id: true, role: true, status: true, platformId: true } } } });
   const boss = self?.reportsTo ?? null;
-  const bossOk = boss ? approverOk(me, { id: boss.id, role: String(boss.role), status: String(boss.status), platformId: boss.platformId }) : false;
+  const bossOk = boss ? approverOk(me, { id: boss.id, role: String(boss.role), status: String(boss.status), platformId: boss.platformId }, true, true) : false;
   if (me.role === "HR") {
     const access = await accessFor(me.id);
     const admins = await prisma.user.findMany({ where: { ...scopeWhere(access), role: "ADMIN", status: "ACTIVE", id: { not: me.id } }, select: { id: true, firstName: true, lastName: true, employeeCode: true }, orderBy: [{ firstName: "asc" }] });
@@ -81,7 +81,13 @@ export async function approverChoices(me: Requester) {
     return { ...base, defaultId: boss!.id, options: a ? [{ id: a.id, name: nameOf(a), code: a.employeeCode }] : [] };
   }
   const managers = await prisma.user.findMany({ where: { platformId: me.platformId, role: "MANAGER", status: "ACTIVE", id: { not: me.id } }, select: { id: true, firstName: true, lastName: true, employeeCode: true }, orderBy: [{ firstName: "asc" }] });
-  return { ...base, editable: true, defaultId: bossOk ? boss!.id : null, options: managers.map((m) => ({ id: m.id, name: nameOf(m), code: m.employeeCode })) };
+  const options = managers.map((m) => ({ id: m.id, name: nameOf(m), code: m.employeeCode }));
+  // the reporting manager is always offered (and preselected), even when they are of another company
+  if (bossOk && !options.some((o) => o.id === boss!.id)) {
+    const b = await prisma.user.findUnique({ where: { id: boss!.id }, select: { id: true, firstName: true, lastName: true, employeeCode: true } });
+    if (b) options.unshift({ id: b.id, name: nameOf(b), code: b.employeeCode });
+  }
+  return { ...base, editable: true, defaultId: bossOk ? boss!.id : null, options };
 }
 
 /**
@@ -102,7 +108,7 @@ export async function resolveApprover(me: Requester, taggedId: unknown): Promise
     const self = await prisma.user.findUnique({ where: { id: me.id }, select: { reportsToId: true } });
     const boss = self?.reportsToId ? await lookup(self.reportsToId) : null;
     if (tagged && tagged !== self?.reportsToId) throw new Error("BAD_APPROVER");
-    return boss && approverOk(me, boss) ? boss.id : null;
+    return boss && approverOk(me, boss, true, true) ? boss.id : null;
   }
   if (tagged) {
     const c = await lookup(tagged);
@@ -111,13 +117,14 @@ export async function resolveApprover(me: Requester, taggedId: unknown): Promise
       const access = await accessFor(me.id);
       companyOk = access.all || access.ids.includes(c.platformId);
     }
-    if (!approverOk(me, c, companyOk)) throw new Error("BAD_APPROVER");
+    const own = me.role !== "HR" && tagged === (await prisma.user.findUnique({ where: { id: me.id }, select: { reportsToId: true } }))?.reportsToId;
+    if (!approverOk(me, c, companyOk, own)) throw new Error("BAD_APPROVER");
     return tagged;
   }
   if (me.role === "HR") throw new Error("TAGGED_ADMIN_REQUIRED");
   const self = await prisma.user.findUnique({ where: { id: me.id }, select: { reportsToId: true } });
   const boss = self?.reportsToId ? await lookup(self.reportsToId) : null;
-  return boss && approverOk(me, boss) ? boss.id : null;
+  return boss && approverOk(me, boss, true, true) ? boss.id : null;
 }
 
 // --- projects -----------------------------------------------------------------------------------------------

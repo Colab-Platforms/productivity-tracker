@@ -202,6 +202,7 @@ export default function ApprovalsPage() {
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
   const [tab, setTab] = useState<TabKey>("waiting");
+  const [ratingFilter, setRatingFilter] = useState<"all" | "pending" | "rated">("all");
   const [reload, setReload] = useState(0);
   // The company's "today" (from the server). Until the first answer arrives, the browser's own local date.
   const [today, setToday] = useState<string>(() => todayIso());
@@ -219,7 +220,15 @@ export default function ApprovalsPage() {
   const inScope = person ? rows.filter((t) => t.userId === person) : rows;
   const counts: Record<TabKey, number> = { waiting: 0, todo: 0, inProgress: 0, completed: 0, closed: 0 };
   for (const t of inScope) counts[bucketOf(t)] += 1;
-  const listed = inScope.filter((t) => bucketOf(t) === tab);
+  // Rating status (Completed tab only): based on the saved rating itself (rating null = no rating saved), never on completion.
+  const completedRows = inScope.filter((t) => bucketOf(t) === "completed");
+  const pendingRatingCount = completedRows.filter((t) => t.rating == null).length;
+  const ratedCount = completedRows.length - pendingRatingCount;
+  const listed = inScope.filter((t) => {
+    if (bucketOf(t) !== tab) return false;
+    if (tab !== "completed" || ratingFilter === "all") return true;
+    return ratingFilter === "pending" ? t.rating == null : t.rating != null;
+  });
 
   // The whole reporting team for the dropdown, each with the number of tasks they have in the dates being viewed.
   const pickerPeople = buildPeople(queue?.members ?? [], rows, person);
@@ -373,7 +382,19 @@ export default function ApprovalsPage() {
             ))}
           </div>
 
-          <div className="relative py-2">
+          <div className="relative flex flex-wrap items-center gap-2 py-2">
+            {tab === "completed" && (
+              <select
+                value={ratingFilter}
+                onChange={(e) => setRatingFilter(e.target.value as "all" | "pending" | "rated")}
+                aria-label="Rating status"
+                className="rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-sm text-slate-700"
+              >
+                <option value="all">All Completed Tasks ({completedRows.length})</option>
+                <option value="pending">Pending Rating ({pendingRatingCount})</option>
+                <option value="rated">Rated ({ratedCount})</option>
+              </select>
+            )}
             <select
               value={preset}
               onChange={(e) => setPreset(e.target.value)}
@@ -568,7 +589,7 @@ export default function ApprovalsPage() {
         <ul className="divide-y divide-indigo-50">
           {listed.length === 0 && (
             <li className="px-5 py-8 text-center text-sm text-slate-400">
-              Nothing completed.
+              {ratingFilter === "pending" ? "No tasks are waiting for a rating." : ratingFilter === "rated" ? "No rated tasks." : "Nothing completed."}
             </li>
           )}
 

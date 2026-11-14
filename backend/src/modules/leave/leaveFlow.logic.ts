@@ -56,14 +56,16 @@ export type Candidate = { id: string; role: string; status: string; platformId: 
  * (Manager for an employee, Admin for a manager or HR). Employees and managers need the same company; an HR person may tag an Admin of any
  * company they act on (the caller passes that through `companyOk`).
  */
-export function approverOk(requester: { id: string; role: string; platformId: string }, candidate: Candidate | null, companyOk = true): boolean {
+export function approverOk(requester: { id: string; role: string; platformId: string }, candidate: Candidate | null, companyOk = true, ownLine = false): boolean {
   if (!candidate) return false;
   if (candidate.id === requester.id) return false;
   if (candidate.status !== "ACTIVE") return false;
   const need = firstLevelFor(requester.role);
   if (need === "NONE" || candidate.role !== need) return false;
   if (requester.role === "HR") return companyOk;
-  return candidate.platformId === requester.platformId;
+  // The person's OWN reporting manager (the line an Admin set on purpose, which may cross companies) is accepted whatever company they are in.
+  // Anyone else must be of the requester's company.
+  return ownLine || candidate.platformId === requester.platformId;
 }
 
 /** May this person give the FINAL answer on the request? HR only, and only once the first level has approved (or there was none). */

@@ -7,6 +7,7 @@ import { CARRIED } from "./_filters/useHrFilters";
 import { usePathname, useRouter } from "next/navigation";
 import Bell from "./_notifications/Bell";
 import TopBar from "./_shell/TopBar";
+import { pageTitle } from "./_shell/pageTitle";
 import { NotificationsProvider } from "./_notifications/NotificationsContext";
 import { ThemeProvider } from "./_theme/ThemeContext";
 import { ThemeIconButton, ThemeRow } from "./_theme/ThemeToggle";
@@ -240,7 +241,7 @@ type NavItem = {
 // scan. "Me" is my own day, "My team" is other people, "Setup" is config
 // that HR touches once a month.
 // The HR pages that understand the shared company / project / manager filters. Moving between two of them keeps the choice.
-const CARRY_PAGES = new Set(["/dashboard/team-attendance", "/dashboard/attendance-calendar", "/dashboard/employees", "/dashboard/reports", "/dashboard/leave", "/dashboard/approvals"]);
+const CARRY_PAGES = new Set(["/dashboard/team-attendance", "/dashboard/attendance-calendar", "/dashboard/employees", "/dashboard/employee-overview", "/dashboard/organization-hierarchy", "/dashboard/reports", "/dashboard/leave", "/dashboard/approvals"]);
 
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
@@ -249,19 +250,19 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       // ---- ADMIN: the owner control panel (owner-level modules first; the pages are the existing ones, nothing is duplicated) ----
       { href: "/dashboard/admin", label: "Owner Dashboard", ready: true, roles: ["ADMIN"], icon: I.grid },
       { href: "/dashboard/employees", label: "User Management", ready: true, roles: ["ADMIN"], icon: I.team },
-      { href: "/dashboard/employees?tab=People", label: "Organization Hierarchy", ready: true, roles: ["ADMIN"], icon: I.team },
+      { href: "/dashboard/organization-hierarchy", label: "Organization Hierarchy", ready: true, roles: ["ADMIN"], icon: I.team },
       { href: "/dashboard/companies", label: "Company Management", ready: true, roles: ["ADMIN"], icon: I.building },
       { href: "/dashboard/projects", label: "Project Management", ready: true, roles: ["ADMIN"], icon: I.tasks },
-      { href: "/dashboard/employees?status=ACTIVE", label: "Employee Overview", ready: true, roles: ["ADMIN"], icon: I.list },
+      { href: "/dashboard/employee-overview", label: "Employee Overview", ready: true, roles: ["ADMIN"], icon: I.list },
       { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["ADMIN"], icon: I.pulse },
       { href: "/dashboard/leave", label: "Leave Oversight", ready: true, roles: ["ADMIN"], icon: I.holidays },
       { href: "/dashboard/approvals", label: "Task Monitoring", ready: true, roles: ["ADMIN"], icon: I.approvals },
-      { href: "/dashboard/meetings", label: "Meetings", ready: true, roles: ["ADMIN"], icon: I.huddle },
+      { href: "/dashboard/meetings", label: "Team Huddle", ready: true, roles: ["ADMIN"], icon: I.huddle },
       { href: "/dashboard/reports?tab=productivity", label: "Productivity", ready: true, roles: ["ADMIN"], icon: I.trend },
       { href: "/dashboard/payroll", label: "Payroll Oversight", ready: true, roles: ["ADMIN"], icon: I.payroll },
       { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["ADMIN"], icon: I.folder },
       { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, roles: ["ADMIN"], icon: I.reports },
-      { href: "/dashboard/leave?tab=review", label: "Approval Centre", ready: true, roles: ["ADMIN"], icon: I.approvals },
+      { href: "/dashboard/approval-centre", label: "Approval Centre", ready: true, roles: ["ADMIN"], icon: I.approvals },
       // ---- HR: daily HR operations ----
       { href: "/dashboard/hr", label: "HR Dashboard", ready: true, roles: ["HR"], icon: I.grid },
       { href: "/dashboard/employees", label: "Employees", ready: true, roles: ["HR"], icon: I.team },
@@ -295,7 +296,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/leave", label: "Leave", ready: true, notRoles: ["HR", "ADMIN"], icon: I.holidays },
       { href: "/dashboard/meetings", label: "Team Huddle", ready: true, notRoles: ["ADMIN"], icon: I.huddle },
       { href: "/dashboard/policies", label: "Policies", ready: true, notRoles: ["ADMIN"], icon: I.shield },
-      { href: "/dashboard/payslips", label: "My Payslips", ready: true, icon: I.receipt },
+      { href: "/dashboard/payslips", label: "My Payslips", ready: true, notRoles: ["ADMIN"], icon: I.receipt },
       { href: "/dashboard/queries", label: "Complaint Centre", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/talk-to-management", label: "Talk to Management", ready: true, roles: ["EMPLOYEE", "MANAGER", "HR"], icon: I.lock },
       { href: "/dashboard/talk-to-management", label: "Management Inbox", ready: true, roles: ["ADMIN"], icon: I.mail },
@@ -389,13 +390,26 @@ export default function DashboardLayout({
   }, [router]);
 
   // The tab shows the page you are on, under the product name.
+  // Same rule as the header (pageTitle). Next puts its own default title back after an in-app navigation, so the title is kept while this page is shown.
   useEffect(() => {
     const role = me?.role ?? "";
-    const item = GROUPS.flatMap((g) => g.items).find(
-      (i) => i.href.split("?")[0] === pathname && (!i.roles || i.roles.includes(role)) && !(i.notRoles ?? []).includes(role)
-    );
-    const home = pathname === homeFor(role) ? dashboardTitle(role) : null;
-    document.title = home ? `${home} | Avatar HRMS` : pathname === "/dashboard/profile" ? "My Profile | Avatar HRMS" : pathname === "/dashboard/attendance-calendar" ? "Attendance Calendar | Avatar HRMS" : item ? `${item.label} | Avatar HRMS` : "Avatar HRMS";
+    if (!role) {
+      document.title = "Avatar HRMS";
+      return;
+    }
+    const home = pathname === homeFor(role) ? (dashboardTitle(role) ?? "Today") : null;
+    const name = pathname === "/dashboard/attendance-calendar" ? "Attendance Calendar" : pageTitle(GROUPS.flatMap((g) => g.items), pathname, role, home);
+    const full = `${name} | Avatar HRMS`;
+    const apply = () => {
+      if (document.title !== full) document.title = full;
+    };
+    apply();
+    // The Today pages (the clock) write their own live title (a break / huddle timer in the tab strip); the title is set once there and never enforced.
+    if (pathname === "/dashboard/today" || pathname === "/dashboard/employee" || pathname === "/dashboard/manager") return;
+    // Watch the whole <head>: Next may replace the <title> element itself, not just its text.
+    const watch = new MutationObserver(apply);
+    watch.observe(document.head, { childList: true, characterData: true, subtree: true });
+    return () => watch.disconnect();
   }, [pathname, me?.role]);
 
   // Query Desk / Complaint Centre: how many items are waiting for this person (queries to answer, corrections to decide, information asked of them).
@@ -501,8 +515,7 @@ export default function DashboardLayout({
 
   const fullName = `${me.firstName} ${me.lastName}`.trim();
   // The page title for the header: the sidebar label of the current page, the dashboard name on the person's own home.
-  const navItem = GROUPS.flatMap((g) => g.items).find((i) => i.href.split("?")[0] === pathname && (!i.roles || i.roles.includes(me.role)) && !(i.notRoles ?? []).includes(me.role));
-  const headerTitle = pathname === homeFor(me.role) ? (dashboardTitle(me.role) ?? "Today") : pathname === "/dashboard/profile" ? "My Profile" : (navItem?.label ?? "Dashboard");
+  const headerTitle = pageTitle(GROUPS.flatMap((g) => g.items), pathname, me.role, pathname === homeFor(me.role) ? (dashboardTitle(me.role) ?? "Today") : null);
   const groups = GROUPS.map((g) => ({
     ...g,
     items: g.items.filter(

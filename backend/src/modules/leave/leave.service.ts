@@ -721,8 +721,9 @@ export async function managerDecide(managerId: string, requestId: string, decisi
   if (decision === "REJECT" && (!text || text.length < 3)) throw new Error("COMMENT_REQUIRED");
 
   const r = await prisma.leaveRequest.findFirst({ where: { id: requestId }, include: { user: { select: { firstName: true, lastName: true, employeeCode: true, role: true } } } });
-  // A manager only ever acts inside their own company; an Admin acts on the requests tagged to them.
-  if (!r || (m.role !== "ADMIN" && r.platformId !== m.platformId)) throw new Error("NOT_FOUND");
+  // Only a person tagged on the request may answer it (claimStep below refuses anyone else with NOT_FOUND). The tag can point across companies,
+  // because a reporting line may (an Admin sets it on purpose), so the company of the request is not compared here.
+  if (!r) throw new Error("NOT_FOUND");
   if (r.status !== "PENDING") throw new Error("ALREADY_DECIDED");
   await claimStep({ kind: "LEAVE", requestId: r.id, managerId, requesterId: r.userId, decision, note: text });
 

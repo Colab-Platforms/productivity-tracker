@@ -66,5 +66,20 @@ ok("HR's own leave never reaches an HR final step (the tagged Admin is final)", 
 ok("a legacy request with no first-level step: HR decides, and an Admin may close it", gate("EMPLOYEE", null, "HR") === "OK" && gate("EMPLOYEE", null, "ADMIN") === "OK");
 ok("a manager or employee can never decide at the final stage", gate("EMPLOYEE", "APPROVED", "MANAGER") === "NOT_FINAL_STAGE" && gate("EMPLOYEE", "APPROVED", "EMPLOYEE") === "NOT_FINAL_STAGE");
 
+// ---- Organization Hierarchy editor (Admin): cross-company lines allowed, Admins stay top level ----
+ok("default: a boss from another company is still refused (creating an account keeps the same-company rule)", reportingError(emp, person("m9", "MANAGER", "ACTIVE", "co-2")) === "BAD_MANAGER");
+ok("Admin editor (anyCompany): an employee may report to a Manager of another company", reportingError(emp, person("m9", "MANAGER", "ACTIVE", "co-2"), { anyCompany: true }) === null);
+ok("Admin editor (anyCompany): a Manager may report to an Admin of another company", reportingError(mgr, person("a9", "ADMIN", "ACTIVE", "co-2"), { anyCompany: true }) === null);
+ok("anyCompany still enforces the role rules", reportingError(emp, person("a9", "ADMIN", "ACTIVE", "co-2"), { anyCompany: true }) === "MANAGER_WRONG_ROLE" && reportingError(mgr, person("m8", "MANAGER", "ACTIVE", "co-2"), { anyCompany: true }) === "MANAGER_WRONG_ROLE");
+ok("anyCompany still refuses someone suspended or exited, a missing person and the person themselves", reportingError(emp, person("m3", "MANAGER", "SUSPENDED", "co-2"), { anyCompany: true }) === "BAD_MANAGER" && reportingError(emp, person("m3", "MANAGER", "EXITED", "co-2"), { anyCompany: true }) === "BAD_MANAGER" && reportingError(emp, null, { anyCompany: true }) === "BAD_MANAGER" && reportingError(emp, person("e1", "MANAGER", "ACTIVE", "co-2"), { anyCompany: true }) === "BAD_MANAGER");
+ok("an Admin reports to nobody: no boss is accepted for an Admin, in any mode", reportingError({ id: "a1", role: "ADMIN", platformId: CO }, person("a2", "ADMIN")) === "ADMIN_TOP_LEVEL" && reportingError({ id: "a1", role: "ADMIN", platformId: CO }, person("m1", "MANAGER"), { anyCompany: true }) === "ADMIN_TOP_LEVEL");
+ok("HR is unaffected by the Admin rule", reportingError({ id: "h", role: "HR", platformId: CO }, person("a1", "ADMIN")) === null);
+
+// ---- a person's own reporting manager is accepted as first-level approver whatever company they are in ----
+ok("own line: an employee's reporting Manager of another company is accepted as approver", approverOk(emp, person("m9", "MANAGER", "ACTIVE", "co-2"), true, true));
+ok("not own line: the same Manager of another company is still refused (a free choice stays inside the company)", !approverOk(emp, person("m9", "MANAGER", "ACTIVE", "co-2")));
+ok("own line still needs the right role and an active person", !approverOk(emp, person("a9", "ADMIN", "ACTIVE", "co-2"), true, true) && !approverOk(emp, person("m9", "MANAGER", "SUSPENDED", "co-2"), true, true));
+ok("own line: a Manager's Admin of another company is accepted", approverOk(mgr, person("a9", "ADMIN", "ACTIVE", "co-2"), true, true));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

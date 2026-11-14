@@ -212,7 +212,7 @@ export default function AdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{me?.role === "ADMIN" ? "Admin" : "Employees"}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{me?.role === "ADMIN" ? "User Management" : "Employees"}</h1>
         <p className="mt-1 text-sm text-slate-500">
           {me?.role === "ADMIN" ? "People, teams, shifts and the thresholds every alert is measured against." : "Employee records, teams and leave for the companies you look after."}
         </p>
@@ -997,6 +997,12 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
         )}
       </Field>
 
+      {/* The four Admins are senior management: they sit at the top and have no reporting manager (nothing is changed or cleared here). */}
+      {p.role === "ADMIN" ? (
+        <Field label="Reporting manager" hint="Admins are at the top level of the organization.">
+          <p className="rounded-xl bg-[#F3F7F6] px-3 py-2.5 text-sm text-slate-500">N/A</p>
+        </Field>
+      ) : (<>
       <Field label="Reporting manager" hint={model.permissions.canEditHierarchy ? "Active managers and admins of this company." : "Only an Admin can change who a person reports to."}>
         <Select value={f.reportsToId} onChange={(v) => set("reportsToId", v)} disabled={!model.permissions.canEditHierarchy}>
           <option value="">Nobody: top of the chain</option>
@@ -1009,6 +1015,7 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
       {model.permissions.canEditHierarchy && (
         <AdditionalManagers userId={p.id} mainManagerId={p.reportsToId} initial={model.additionalManagers ?? []} ready={model.additionalManagersReady === true} />
       )}
+      </>)}
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Joining date">
@@ -1063,7 +1070,7 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
         <button onClick={onClose} className="rounded-xl border border-indigo-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:border-slate-400">Cancel</button>
       </div>
 
-      <WarningLettersAdmin userId={p.id} name={`${f.firstName} ${f.lastName}`.trim()} />
+      {p.role !== "ADMIN" && <WarningLettersAdmin userId={p.id} name={`${f.firstName} ${f.lastName}`.trim()} />}
 
       <div className="mt-6 border-t border-indigo-100 pt-5">
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Reset password</p>

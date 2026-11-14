@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
 import { unit } from "@/lib/plural";
 import { useMe } from "../layout";
@@ -108,10 +110,23 @@ function TakenChips({ t }: { t: Taken }) {
 // ---------------------------------------------------------------------------
 export default function LeavePage() {
   const me = useMe();
+  const router = useRouter();
+  // An old link to an Admin's "For my approval" tab now belongs to the Approval Centre. Decided before the page itself mounts, so its own
+  // address handling (the shared filters rewrite the address) cannot cancel the redirect.
+  const toCentre = me?.role === "ADMIN" && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "team";
+  useEffect(() => {
+    if (toCentre) router.replace("/dashboard/approval-centre");
+  }, [toCentre, router]);
+  if (!me || toCentre) return null;
+  return <LeaveContent />;
+}
+
+function LeaveContent() {
+  const me = useMe();
   const isHr = me?.role === "HR" || me?.role === "ADMIN";
   const isManager = me?.role === "MANAGER";
   const isAdmin = me?.role === "ADMIN";
-  const [tab, setTab] = useState<"mine" | "review" | "taken" | "team">("mine");
+  const [tabState, setTab] = useState<"mine" | "review" | "taken" | "team">("mine");
   const [reload, setReload] = useState(0);
   const [asking, setAsking] = useState(false);
   const [notice, setNotice] = useState("");
@@ -126,7 +141,17 @@ export default function LeavePage() {
     if (t === "review" || t === "team" || t === "taken" || t === "mine") setTab(t);
   }, [role]);
 
-  const mine = useApi<Mine>("/leave/mine", reload);
+  // Admins are senior management: they do not ask for leave through the employee workflow, so they have no "My leave" tab and no Request leave
+  // button. This page is their monitoring view (all requests, leave taken). What waits for their answer is in the Approval Centre.
+  const mine = useApi<Mine>(isAdmin ? null : "/leave/mine", reload);
+
+  // The organization flow (tagged approver, projects, history) once the server has switched it on.
+  const formOpts = useApi<FormOptions>("/leave/form-options", reload);
+  const flow = formOpts.data?.ready === true;
+
+  // First-level step: requests tagged to this person (a manager for an employee's leave, an Admin for a manager's or HR's leave).
+  const isApprover = isManager || (isAdmin && flow);
+  const tab: "mine" | "review" | "taken" | "team" = isAdmin && (tabState === "mine" || tabState === "team") ? "review" : tabState;
   const [status, setStatus] = useState("PENDING");
   // The shared HR filters (company, project, reporting manager, name/ID search) plus this page's own: leave type, approval stage and a date range.
   const { filters, update, clear, ready } = useHrFilters();
@@ -145,12 +170,6 @@ export default function LeavePage() {
   const review = useApi<{ requests: Review[]; scope?: PeopleScope; requestCount?: number }>(isHr && tab === "review" && ready && !badRange ? "/leave/requests?" + reviewParams.toString() : null, reload);
   const pendingCount = useApi<{ requests: Review[] }>(isHr ? "/leave/requests?status=PENDING" : null, reload);
 
-  // The organization flow (tagged approver, projects, history) once the server has switched it on.
-  const formOpts = useApi<FormOptions>("/leave/form-options", reload);
-  const flow = formOpts.data?.ready === true;
-
-  // First-level step: requests tagged to this person (a manager for an employee's leave, an Admin for a manager's or HR's leave).
-  const isApprover = isManager || (isAdmin && flow);
   const team = useApi<TeamLeave>(isApprover ? "/leave/manager/requests" : null, reload);
 
   const [year, setYear] = useState(new Date().getFullYear());
@@ -240,7 +259,7 @@ export default function LeavePage() {
   const reviewLabel = `${flow ? "All requests" : "Requests to review"}${hrTurn ? ` (${hrTurn})` : ""}`;
   const teamLabel = isAdmin ? "For my approval" : "Team requests";
   const tabs: [typeof tab, string][] = isHr
-    ? [["mine", "My leave"], ...(isApprover ? ([["team", `${teamLabel}${waitingForMe ? ` (${waitingForMe})` : ""}`]] as [typeof tab, string][]) : []), ["review", reviewLabel], ["taken", "Leave taken"]]
+    ? [...(isAdmin ? [] : ([["mine", "My leave"]] as [typeof tab, string][])), ["review", reviewLabel], ["taken", "Leave taken"]]
     : isManager
       ? [["mine", "My leave"], ["team", `${teamLabel}${waitingForMe ? ` (${waitingForMe})` : ""}`]]
       : [["mine", "My leave"]];
@@ -249,12 +268,14 @@ export default function LeavePage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Leave</h1>
-          <p className="mt-1 text-sm text-slate-500">Ask for leave, track the answer, and see how much has been taken.</p>
+          <h1 className="text-2xl font-semibold text-slate-900">{isAdmin ? "Leave Oversight" : "Leave"}</h1>
+          <p className="mt-1 text-sm text-slate-500">{isAdmin ? "Every leave request in the organization, its status and history, and the leave taken. What waits for your answer is in the Approval Centre." : "Ask for leave, track the answer, and see how much has been taken."}</p>
         </div>
-        <button onClick={() => setAsking(true)} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700">
-          Request leave
-        </button>
+        {!isAdmin && (
+          <button onClick={() => setAsking(true)} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700">
+            Request leave
+          </button>
+        )}
       </div>
 
       {tabs.length > 1 && (
@@ -265,6 +286,13 @@ export default function LeavePage() {
             </button>
           ))}
         </div>
+      )}
+
+      {isAdmin && waitingForMe > 0 && (
+        <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {waitingForMe} leave {waitingForMe === 1 ? "request is" : "requests are"} waiting for your approval.{" "}
+          <Link href="/dashboard/approval-centre" className="font-medium underline">Open the Approval Centre</Link>
+        </p>
       )}
 
       {notice && <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</p>}
@@ -452,7 +480,7 @@ export default function LeavePage() {
       )}
 
       {/* ---------------- Manager: requests from my team ---------------- */}
-      {tab === "team" && isApprover && (
+      {tab === "team" && isManager && (
         <section className={`${card} p-6`}>
           <h2 className="font-semibold text-slate-900">{isAdmin ? "Leave sent to you for approval" : "Requests from your team"}</h2>
           <p className="mt-1 text-sm text-slate-500">{isAdmin ? "Only requests tagged to you appear here. A manager's leave goes to HR for the final decision after you approve; HR's own leave is final with you. A rejection closes it." : "You answer first. If you approve, HR makes the final decision; if you reject, it is closed."}</p>

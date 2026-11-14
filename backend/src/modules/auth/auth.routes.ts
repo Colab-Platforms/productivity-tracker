@@ -4,6 +4,7 @@ import { requireAuth } from "../../middlewares/auth.js";
 import { prisma } from "../../lib/prisma.js";
 import { photoStamps } from "../photos/photos.service.js";
 import { isOwnerAdmin } from "../../lib/owner.js";
+import { accessFor } from "../../lib/companyAccess.js";
 import { loginLimiter, clearLoginAttempts } from "../../middlewares/rateLimit.js";
 
 const router = Router();
@@ -55,7 +56,7 @@ router.get("/me/profile", requireAuth, async (req, res) => {
       where: { id: req.user!.userId },
       select: {
         id: true, firstName: true, lastName: true, email: true, phone: true, employeeCode: true, designation: true, role: true, status: true,
-        dateOfJoining: true, probationEndDate: true,
+        dateOfJoining: true, probationEndDate: true, lastLoginAt: true, createdAt: true,
         platform: { select: { name: true } },
         reportsTo: { select: { firstName: true, lastName: true, designation: true } },
         shift: { select: { name: true, startTime: true, endTime: true } },
@@ -70,7 +71,20 @@ router.get("/me/profile", requireAuth, async (req, res) => {
       /* table not there: not set */
     }
     const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+    // Admins are senior management: their profile shows which companies they act on (read from the same rule every module uses) and when the
+    // account was made / last used. Nobody else gets these fields.
+    let admin: { companies: "ALL" | string[]; lastLoginAt: string | null; createdAt: string } | null = null;
+    if (String(u.role) === "ADMIN") {
+      try {
+        const a = await accessFor(u.id);
+        const names = a.all ? [] : (await prisma.platform.findMany({ where: { id: { in: a.ids } }, select: { name: true }, orderBy: { name: "asc" } })).map((p) => p.name);
+        admin = { companies: a.all ? "ALL" : names, lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null, createdAt: u.createdAt.toISOString() };
+      } catch {
+        admin = null;
+      }
+    }
     return res.json({
+      admin,
       firstName: u.firstName, lastName: u.lastName, email: u.email, phone: u.phone, employeeCode: u.employeeCode, designation: u.designation,
       role: String(u.role), status: String(u.status), company: u.platform.name,
       dateOfJoining: day(u.dateOfJoining), probationEndDate: day(u.probationEndDate), employmentType,

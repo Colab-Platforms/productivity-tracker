@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_BASE } from "@/lib/api";
+import { useRoleGate } from "../_routing/useRoleGate";
 
 const API = API_BASE;
 
@@ -52,7 +53,7 @@ function rupees(value: string | null) {
   return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
-export default function PayslipsPage() {
+function Payslips() {
   const [data, setData] = useState<Payload | null>(null);
   const [year, setYear] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -204,4 +205,10 @@ function Amount({
       </p>
     </div>
   );
+}
+
+// Admins are senior management and have no payslips of their own: anyone who opens this address as an Admin is sent to their own home.
+export default function PayslipsPage() {
+  const { allowed } = useRoleGate(["EMPLOYEE", "MANAGER", "HR"]);
+  return allowed ? <Payslips /> : null;
 }

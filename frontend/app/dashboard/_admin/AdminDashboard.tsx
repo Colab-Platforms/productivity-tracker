@@ -287,7 +287,7 @@ export default function AdminDashboard() {
             {/* 5. pending approvals */}
             <Section title="Pending approvals" hint="What is waiting, and for whom">
               <div className="space-y-0.5">
-                <Row label="Leave sent to you for approval" value={d.leave.awaitingMyApproval} href="/dashboard/leave?tab=team" tone="bg-amber-50 text-amber-700" />
+                <Row label="Leave sent to you for approval" value={d.leave.awaitingMyApproval} href="/dashboard/approval-centre" tone="bg-amber-50 text-amber-700" />
                 <Row label="Leave waiting for HR's final answer" value={d.leave.awaitingHr} href="/dashboard/leave?tab=review" tone="bg-sky-50 text-sky-700" />
                 <Row label="Leave still with its first approver" value={d.leave.awaitingFirstLevel} href="/dashboard/leave?tab=review" />
                 <Row label="Task approvals (managers decide; you can view)" value={proposals} href="/dashboard/approvals" />
