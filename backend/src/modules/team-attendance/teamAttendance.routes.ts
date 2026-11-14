@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import * as svc from "./teamAttendance.service.js";
 import * as productivity from "./productivity.service.js";
+import { getTeamReport } from "./teamReport.service.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -148,6 +149,16 @@ router.get("/attendance", async (req, res) => {
         filters: parseFilters(req.query as Record<string, unknown>),
       })
     );
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+// The complete team productivity report for one period (every sheet of the Manager download comes from this one answer). Same people and
+// filters as the other reports; a manager gets only the people who report to them, an employee is refused by the router guard.
+router.get("/team-report", async (req, res) => {
+  try {
+    res.json(await getTeamReport(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), filters: parseFilters(req.query as Record<string, unknown>) }));
   } catch (error) {
     fail(res, error);
   }

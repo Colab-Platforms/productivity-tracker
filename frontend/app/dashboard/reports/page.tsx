@@ -20,6 +20,7 @@ import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import AttendanceReport from "./_team/AttendanceReport";
 import ShiftBreakdownCard from "./_team/ShiftBreakdownCard";
+import TeamExport from "./_team/TeamExport";
 import ProductivityReport from "./_team/ProductivityReport";
 import FilterBar from "../_filters/FilterBar";
 import { useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
@@ -218,6 +219,7 @@ export default function ReportsPage() {
         show={{ search: true, company: me?.role !== "MANAGER" || (options?.companies.length ?? 0) > 1, project: true, manager: me?.role !== "MANAGER" }}
         counts={scope ? { filtered: scope.filteredTotal, total: scope.orgTotal } : null}
       />
+      <TeamExport filters={filters} ready={ready} />
       {tab === "attendance" ? (
         <AttendanceReport filters={filters} ready={ready} onScope={setScope} />
       ) : tab === "shift" ? (

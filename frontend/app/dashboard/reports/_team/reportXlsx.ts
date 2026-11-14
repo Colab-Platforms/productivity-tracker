@@ -26,7 +26,14 @@ export type Col = {
   // A live Excel formula for this column (instead of a stored value). `letter(header)` gives a column letter, `value(header)` the row's value.
   formula?: (c: { row: number; letter: (header: string) => string; value: (header: string) => Value }) => { formula: string; result: string | number };
 };
-export type SheetSpec = { name: string; cols: Col[]; rows: Value[][] };
+export type SheetSpec = {
+  name: string;
+  cols: Col[];
+  rows: Value[][];
+  // Optional lines shown ABOVE the table (for example an employee sheet: name, ID, reporting manager, period, totals). The table header then sits
+  // below them (after one blank row) and is the frozen, filtered row. Without it the header is row 1, as in every other report.
+  preamble?: [string, string | number][];
+};
 export type InfoSpec = {
   report: string;
   period: string;
@@ -110,12 +117,26 @@ export async function buildReportWorkbook(sheets: SheetSpec[], info: InfoSpec): 
   const border = { top: thin, left: thin, bottom: thin, right: thin };
 
   for (const sheet of sheets) {
-    const ws = wb.addWorksheet(safeSheetName(sheet.name), { views: [{ state: "frozen", ySplit: 1 }] });
-    ws.columns = sheet.cols.map((c) => ({ header: c.header, key: c.header, width: c.width ?? 14 }));
-    const head = ws.getRow(1);
+    const pre = sheet.preamble ?? [];
+    const headNo = pre.length > 0 ? pre.length + 2 : 1; // preamble lines, one blank row, then the header
+    const ws = wb.addWorksheet(safeSheetName(sheet.name), { views: [{ state: "frozen", ySplit: headNo }] });
+    if (pre.length === 0) ws.columns = sheet.cols.map((c) => ({ header: c.header, key: c.header, width: c.width ?? 14 }));
+    else {
+      sheet.cols.forEach((c, i) => { ws.getColumn(i + 1).width = c.width ?? 14; });
+      pre.forEach(([k, v], i) => {
+        const row = ws.getRow(i + 1);
+        row.getCell(1).value = k;
+        row.getCell(2).value = v;
+        row.getCell(1).font = { ...font, bold: true };
+        row.getCell(2).font = font;
+        row.getCell(2).alignment = { horizontal: "left", vertical: "middle", wrapText: false };
+      });
+    }
+    const head = ws.getRow(headNo);
     head.height = 34;
     sheet.cols.forEach((c, i) => {
       const cell = head.getCell(i + 1);
+      cell.value = c.header;
       cell.font = { ...font, bold: true, color: { argb: "FFFFFFFF" } };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: c.accent ? ACCENT : BRAND } };
       cell.alignment = { vertical: "middle", horizontal: c.kind && c.kind !== "text" ? "center" : "left", wrapText: true };
@@ -124,7 +145,7 @@ export async function buildReportWorkbook(sheets: SheetSpec[], info: InfoSpec): 
     });
     const letterOf = (h: string) => columnLetter(sheet.cols.findIndex((c) => c.header === h));
     sheet.rows.forEach((values, idx) => {
-      const r = idx + 2;
+      const r = idx + headNo + 1;
       const row = ws.getRow(r);
       const valueOf = (h: string): Value => values[sheet.cols.findIndex((c) => c.header === h)] ?? null;
       sheet.cols.forEach((c, i) => {
@@ -139,7 +160,7 @@ export async function buildReportWorkbook(sheets: SheetSpec[], info: InfoSpec): 
         cell.alignment = { vertical: "middle", horizontal: kind === "text" ? "left" : "center", wrapText: !!c.wrap };
       });
     });
-    if (sheet.cols.length > 0) ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: sheet.cols.length } };
+    if (sheet.cols.length > 0) ws.autoFilter = { from: { row: headNo, column: 1 }, to: { row: headNo, column: sheet.cols.length } };
   }
 
   // Report info: what this file is, for whom, and what it contains.

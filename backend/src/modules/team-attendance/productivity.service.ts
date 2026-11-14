@@ -13,7 +13,7 @@
 
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds } from "../hr-filters/hrFilters.service.js";
-import { starsFor } from "../tasks/tasks.rating.js";
+import { ratingsFor, starsFor } from "../tasks/tasks.rating.js";
 import { isCompleteRating } from "../tasks/tasks.rating.logic.js";
 import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { selfManagedTaskIdsOf } from "../tasks/tasks.self.js";
@@ -234,14 +234,15 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       id: { notIn: selfIds },
       OR: [{ date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, { ...COUNTED, completedAt: { gte: startUtc, lt: endUtc } }],
     },
-    select: { id: true, userId: true, title: true, description: true, weight: true, status: true, approvalStatus: true, outcome: true, date: true, completedAt: true, team: { select: { name: true } } },
+    select: { id: true, userId: true, title: true, description: true, weight: true, status: true, approvalStatus: true, outcome: true, date: true, completedAt: true, completionNote: true, rejectionNote: true, team: { select: { name: true } } },
     orderBy: [{ date: "asc" }, { createdAt: "asc" }],
   });
   const taskIds = rows.map((r) => r.id);
-  const [details, people2, countedRows] = await Promise.all([
+  const [details, people2, countedRows, ratings] = await Promise.all([
     entryDetailsFor(taskIds),
     projectsAndManagers(ids),
     keepFullyDone(rows.filter((r) => String(r.status) === "COMPLETED" && String(r.approvalStatus) === "APPROVED" && r.completedAt && r.completedAt >= startUtc && r.completedAt < endUtc)),
+    ratingsFor(rows), // the manager's saved star rating and comment per task (an old grade not yet converted reads through, as everywhere else)
   ]);
   const counted = new Set(countedRows.map((r) => r.id));
 
@@ -267,6 +268,10 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       progress: status === "CANCELLED" ? "CANCELLED" : progressOf(status, d?.blocked === true),
       approvalStatus: String(t.approvalStatus),
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+      rating: ratings.get(t.id)?.rating ?? null,
+      ratingComment: ratings.get(t.id)?.comment ?? null,
+      completionNote: t.completionNote ?? null,
+      rejectionNote: t.rejectionNote ?? null,
       counted: counted.has(t.id),
     };
   });

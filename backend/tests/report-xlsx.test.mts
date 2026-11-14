@@ -40,7 +40,7 @@ const names = wb.worksheets.map((w: { name: string }) => w.name);
 ok("worksheets: the data sheet, a safely named second sheet, and Report info last", names[0] === "Attendance" && names[1] === "Tasks   bad  name" && names[names.length - 1] === "Report info", names);
 const ws = wb.getWorksheet("Attendance");
 const head = ws.getRow(1);
-ok("header row 1: bold, white on colour, one heading per column, no title rows above it", head.getCell(1).value === "Employee ID" && head.getCell(1).font.bold === true && head.getCell(2).fill.fgColor.argb === "FF5368ED" && head.getCell(8).fill.fgColor.argb === "FF2F3EB0");
+ok("header row 1: bold, white on colour, one heading per column, no title rows above it", head.getCell(1).value === "Employee ID" && head.getCell(1).font.bold === true && head.getCell(2).fill.fgColor.argb === "FF0D9E76" && head.getCell(8).fill.fgColor.argb === "FF2F3EB0");
 ok("header is frozen and filters are on over every column (easy to sort and filter)", ws.views[0].state === "frozen" && ws.views[0].ySplit === 1 && ws.autoFilter && (typeof ws.autoFilter === "string" ? ws.autoFilter === "A1:L1" : ws.autoFilter.from.row === 1 && ws.autoFilter.to.column === cols.length), [ws.views, ws.autoFilter]);
 ok("column widths are set and readable", ws.getColumn(2).width === 24 && ws.getColumn(1).width >= 10);
 ok("one record per row, in order (3 records in rows 2-4, nothing merged)", ws.rowCount === 4 && Object.keys(ws._merges ?? {}).length === 0 && ws.getRow(4).getCell(1).value === "AI-03");
@@ -84,6 +84,18 @@ const w2 = wb2.getWorksheet("Attendance");
 const idsSeen = new Set<string>();
 for (let r = 2; r <= w2.rowCount; r++) idsSeen.add(String(w2.getRow(r).getCell(1).value));
 ok(`5,000 records: all present, none duplicated (${Date.now() - t0} ms)`, w2.rowCount === 5001 && idsSeen.size === 5000 && Date.now() - t0 < 15000, [w2.rowCount, idsSeen.size]);
+
+// ---- optional preamble above the table (employee sheets) ----
+{
+  const wbP = new ExcelJS.Workbook();
+  await wbP.xlsx.load(await buildReportWorkbook([{ name: "Person", cols: [{ header: "Date", kind: "date" }, { header: "Hours", kind: "duration" }], rows: [["2026-11-02", 3600], ["2026-11-03", null]], preamble: [["Employee", "Ravi Kumar"], ["Employee ID", "E-1"], ["Period", "02 Nov 2026 to 03 Nov 2026"]] }, { name: "Plain", cols: [{ header: "A" }], rows: [["x"]] }], { report: "R", period: "p", filters: [], exportedAt: new Date("2026-11-06T05:00:00Z"), timezone: "Asia/Kolkata" }));
+  const p = wbP.getWorksheet("Person");
+  ok("preamble: the lines sit above the table", p.getRow(1).getCell(1).value === "Employee" && p.getRow(1).getCell(2).value === "Ravi Kumar" && p.getRow(3).getCell(2).value === "02 Nov 2026 to 03 Nov 2026");
+  ok("preamble: one blank row, then the header (row 5), then the data (rows 6 and 7)", p.getRow(4).getCell(1).value === null && p.getRow(5).getCell(1).value === "Date" && p.getRow(5).getCell(1).font.bold === true && (p.getRow(6).getCell(2).value as Date).getTime() === Date.UTC(1899, 11, 30, 1) /* 1 hour, read back as a date by this reader */ && !p.getRow(7).getCell(2).value, [p.getRow(4).getCell(1).value, p.getRow(5).getCell(1).value, p.getRow(6).getCell(2).value, p.getRow(7).getCell(2).value]);
+  ok("preamble: the header row is the frozen, filtered one", p.views[0].ySplit === 5 && /^A5:B5$/.test(typeof p.autoFilter === "string" ? p.autoFilter : `${p.autoFilter?.from?.address ?? ""}:${p.autoFilter?.to?.address ?? ""}`), p.autoFilter);
+  const pl = wbP.getWorksheet("Plain");
+  ok("a sheet without a preamble is unchanged (header row 1, data row 2, frozen at 1)", pl.getRow(1).getCell(1).value === "A" && pl.getRow(2).getCell(1).value === "x" && pl.views[0].ySplit === 1);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
