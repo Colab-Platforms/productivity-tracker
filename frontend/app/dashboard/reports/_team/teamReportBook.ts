@@ -11,7 +11,7 @@ import { dayLabel, hm } from "./format";
 import { dayOf, secondsOfDay, type Col, type InfoSpec, type SheetSpec, type Value } from "./reportXlsx";
 
 // ---------------------------------------------------------------------------------------------- the data
-export type TRPerson = { id: string; name: string; employeeCode: string | null; designation: string | null; company: string | null; reportingManager: string | null; projects: string[] };
+export type TRPerson = { id: string; name: string; employeeCode: string | null; designation: string | null; company: string | null; reportingManager: string | null; projects: string[]; status?: string; joinedOn?: string | null };
 export type TRAttendance = {
   userId: string; date: string; loginAt: string | null; logoutAt: string | null; workedHours: number | null; productiveHours: number | null; breakHours: number | null;
   washroomHours: number | null; huddleHours: number | null; status: string; statusLabel: string; arrival?: string | null; arrivalMinutes?: number | null; arrivalLimit?: string | null;
@@ -20,7 +20,7 @@ export type TRAttendance = {
 };
 export type TRTask = {
   id: string; userId: string; title: string; description: string | null; project: string | null; taggedManager: string | null; date: string; priority: string; hoursSpent: number | null;
-  progress: string; blockedReason?: string | null; approvalStatus: string; completedAt: string | null; rating: number | null; ratingComment: string | null; completionNote: string | null; rejectionNote: string | null; counted: boolean;
+  progress: string; blockedReason?: string | null; submittedAt?: string; late?: { lateByDays: number; outsideWindow: boolean; reason: string | null } | null; approvalStatus: string; completedAt: string | null; rating: number | null; ratingComment: string | null; completionNote: string | null; rejectionNote: string | null; counted: boolean;
 };
 export type TRBreak = { userId: string; date: string; type: string; category: string; countsAsBreak: boolean; startedAt: string; endedAt: string | null; seconds: number | null; running: boolean; autoClosed: boolean; remark: string | null };
 export type TRMeeting = {
@@ -37,20 +37,20 @@ export type TeamReportData = {
 };
 
 // ---------------------------------------------------------------------------------------------- small helpers
-const sec = (hours: number | null | undefined): number | null => (hours === null || hours === undefined ? null : Math.round(hours * 3600));
-const title = (s: string | null | undefined) => (s ? s.toLowerCase().replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : null);
-const APPROVAL: Record<string, string> = { PENDING: "Waiting for approval", APPROVED: "Approved", REJECTED: "Rejected" };
-const LEAVE_STATUS: Record<string, string> = { PENDING: "Pending", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
-const PROGRESS: Record<string, string> = { TODO: "To Do", NOT_STARTED: "To Do", IN_PROGRESS: "In Progress", COMPLETED: "Completed", BLOCKED: "Blocked", CANCELLED: "Cancelled" };
-const CORRECTION_TYPE: Record<string, string> = { MISSING_CHECKIN: "Missing check-in", MISSING_CHECKOUT: "Missing check-out", INCORRECT_TIME: "Incorrect time", BIOMETRIC_FAILURE: "Biometric failure", FORGOT_CLOCK_IN: "Forgot to clock in", OTHER: "Other" };
-const LEAVE_TYPE: Record<string, string> = { CASUAL: "Casual", SICK: "Sick", EARNED: "Earned", UNPAID: "Unpaid", PLANNED: "Planned", COMP_OFF: "Comp-off", OTHER: "Other" };
-const CORR_STATUS: Record<string, string> = { PENDING: "Pending", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
+export const sec = (hours: number | null | undefined): number | null => (hours === null || hours === undefined ? null : Math.round(hours * 3600));
+export const title = (s: string | null | undefined) => (s ? s.toLowerCase().replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : null);
+export const APPROVAL: Record<string, string> = { PENDING: "Waiting for approval", APPROVED: "Approved", REJECTED: "Rejected" };
+export const LEAVE_STATUS: Record<string, string> = { PENDING: "Pending", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
+export const PROGRESS: Record<string, string> = { TODO: "To Do", NOT_STARTED: "To Do", IN_PROGRESS: "In Progress", COMPLETED: "Completed", BLOCKED: "Blocked", CANCELLED: "Cancelled" };
+export const CORRECTION_TYPE: Record<string, string> = { MISSING_CHECKIN: "Missing check-in", MISSING_CHECKOUT: "Missing check-out", INCORRECT_TIME: "Incorrect time", BIOMETRIC_FAILURE: "Biometric failure", FORGOT_CLOCK_IN: "Forgot to clock in", OTHER: "Other" };
+export const LEAVE_TYPE: Record<string, string> = { CASUAL: "Casual", SICK: "Sick", EARNED: "Earned", UNPAID: "Unpaid", PLANNED: "Planned", COMP_OFF: "Comp-off", OTHER: "Other" };
+export const CORR_STATUS: Record<string, string> = { PENDING: "Pending", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
 
-const clockOf = (iso: string | null, tz: string) => (iso ? new Intl.DateTimeFormat("en-IN", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: true }).format(new Date(iso)) : "");
-const t = (iso: string | null, tz: string): Value => secondsOfDay(iso, tz);
-const d = (iso: string | null, tz: string): Value => dayOf(iso, tz);
-const sum = (xs: (number | null | undefined)[]) => xs.reduce<number>((n, x) => n + (typeof x === "number" ? x : 0), 0);
-const hhmm = (seconds: number) => `${Math.floor(seconds / 3600)}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}`;
+export const clockOf = (iso: string | null, tz: string) => (iso ? new Intl.DateTimeFormat("en-IN", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: true }).format(new Date(iso)) : "");
+export const t = (iso: string | null, tz: string): Value => secondsOfDay(iso, tz);
+export const d = (iso: string | null, tz: string): Value => dayOf(iso, tz);
+export const sum = (xs: (number | null | undefined)[]) => xs.reduce<number>((n, x) => n + (typeof x === "number" ? x : 0), 0);
+export const hhmm = (seconds: number) => `${Math.floor(seconds / 3600)}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}`;
 
 /** Every calendar day from `from` to `to` (YYYY-MM-DD), inclusive. */
 export function daysBetween(from: string, to: string): string[] {
@@ -62,7 +62,7 @@ export function daysBetween(from: string, to: string): string[] {
 }
 export const dayName = (iso: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "short" }).format(new Date(`${iso}T00:00:00Z`));
 
-type Index = {
+export type Index = {
   person: Map<string, TRPerson>;
   att: Map<string, TRAttendance[]>; tasks: Map<string, TRTask[]>; breaks: Map<string, TRBreak[]>; meetings: Map<string, TRMeeting[]>; live: Map<string, TRLive[]>;
   leave: Map<string, TRLeave[]>; leaveDays: Map<string, TRLeaveDay[]>; corrections: Map<string, TRCorrection[]>;
@@ -330,7 +330,7 @@ export const categorySheet = (data: TeamReportData, key: CategoryKey): SheetSpec
 // ---------------------------------------------------------------------------------------------- one employee: the full day-by-day record
 export const periodLabel = (data: TeamReportData) => `${dayLabel(data.from)} to ${dayLabel(data.to)} (${data.days} ${data.days === 1 ? "day" : "days"})`;
 
-function employeeSheetName(p: TRPerson, taken: Set<string>): string {
+export function employeeSheetName(p: TRPerson, taken: Set<string>): string {
   const base = `${p.employeeCode ? p.employeeCode + " " : ""}${p.name}`.replace(/[\[\]:*?/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31) || "Employee";
   let name = base;
   for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${base.slice(0, 31 - String(i).length - 1)} ${i}`;

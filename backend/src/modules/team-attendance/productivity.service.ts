@@ -24,6 +24,7 @@ import { projectsAndManagers } from "./peopleDetails.js";
 import { entryDetailsFor } from "../tasks/tasks.entry.js";
 import { progressOf, pendingTaskVisibleTo } from "../tasks/tasks.entry.logic.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
+import { lateDetailsFor } from "../tasks/tasks.late.js";
 
 const MAX_RANGE_DAYS = 93;
 const MAX_TARGET = 1000;
@@ -236,15 +237,16 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       ...(await activeTasks()),
       OR: [{ date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, { ...COUNTED, completedAt: { gte: startUtc, lt: endUtc } }],
     },
-    select: { id: true, userId: true, title: true, description: true, weight: true, status: true, approvalStatus: true, outcome: true, date: true, completedAt: true, completionNote: true, rejectionNote: true, team: { select: { name: true } } },
+    select: { id: true, userId: true, title: true, description: true, weight: true, status: true, approvalStatus: true, outcome: true, date: true, completedAt: true, completionNote: true, rejectionNote: true, createdAt: true, team: { select: { name: true } } },
     orderBy: [{ date: "asc" }, { createdAt: "asc" }],
   });
   const taskIds = rows.map((r) => r.id);
-  const [details, people2, countedRows, ratings] = await Promise.all([
+  const [details, people2, countedRows, ratings, lates] = await Promise.all([
     entryDetailsFor(taskIds),
     projectsAndManagers(ids),
     keepFullyDone(rows.filter((r) => String(r.status) === "COMPLETED" && String(r.approvalStatus) === "APPROVED" && r.completedAt && r.completedAt >= startUtc && r.completedAt < endUtc)),
     ratingsFor(rows), // the manager's saved star rating and comment per task (an old grade not yet converted reads through, as everywhere else)
+    lateDetailsFor(taskIds), // tasks submitted for an earlier day: how late and why
   ]);
   const counted = new Set(countedRows.map((r) => r.id));
 
@@ -272,6 +274,9 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       blockedReason: status !== "CANCELLED" && progressOf(status, d?.blocked === true) === "BLOCKED" ? d?.blockedNote ?? null : null,
       approvalStatus: String(t.approvalStatus),
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+      // The real moment the task was sent, and (only for a previous-day submission) how late it was and the reason given.
+      submittedAt: t.createdAt.toISOString(),
+      late: lates.get(t.id) ? { lateByDays: lates.get(t.id)!.lateByDays, outsideWindow: lates.get(t.id)!.outsideWindow, reason: lates.get(t.id)!.reason } : null,
       rating: ratings.get(t.id)?.rating ?? null,
       ratingComment: ratings.get(t.id)?.comment ?? null,
       completionNote: t.completionNote ?? null,

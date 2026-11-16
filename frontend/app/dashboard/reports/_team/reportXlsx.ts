@@ -45,10 +45,10 @@ export type InfoSpec = {
   totals?: [string, string | number][]; // report totals that match the screen
 };
 
-const BRAND = "FF0D9E76";
+export const BRAND = "FF0D9E76";
 const ACCENT = "FF2F3EB0";
-const BORDER = "FFD9DCF0";
-const FORMAT: Record<Kind, string | undefined> = { text: undefined, date: "dd mmm yyyy", time: "h:mm AM/PM", duration: "[h]:mm", int: "0", decimal: "0.00", percent: "0.0%" };
+export const BORDER = "FFD9DCF0";
+export const FORMAT: Record<Kind, string | undefined> = { text: undefined, date: "dd mmm yyyy", time: "h:mm AM/PM", duration: "[h]:mm", int: "0", decimal: "0.00", percent: "0.0%" };
 
 export function columnLetter(index: number): string {
   let n = index + 1;
@@ -82,7 +82,7 @@ export function stampLabel(d: Date, tz: string): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone: tz, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }).format(d);
 }
 
-function cellValue(v: Value, kind: Kind): string | number | Date | null {
+export function cellValue(v: Value, kind: Kind): string | number | Date | null {
   if (v === null || v === "") return null;
   switch (kind) {
     case "date": {

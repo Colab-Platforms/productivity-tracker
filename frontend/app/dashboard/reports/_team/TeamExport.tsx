@@ -9,6 +9,7 @@ import { filterQuery, type Filters } from "../../_filters/useHrFilters";
 import { describeFilters } from "./exportMeta";
 import { dayLabel, downloadCsv } from "./format";
 import { downloadReportXlsx } from "./reportXlsx";
+import { downloadDashboardWorkbook } from "./dashboardWorkbook";
 import { addDays } from "./ranges";
 import { allSheets, categorySheet, CATEGORIES, csvLines, oneEmployeeSheet, periodLabel, reportInfo, type CategoryKey, type TeamReportData } from "./teamReportBook";
 
@@ -141,7 +142,11 @@ export default function TeamExport({ filters, ready }: { filters: Filters; ready
         <button type="button" disabled={!!busy || !!problem || nothing} aria-busy={busy === "full"} onClick={() => run("full", async (d) => { await downloadReportXlsx(`team-productivity-report_${stamp}.xlsx`, allSheets(d), await info(d)); })} className={`${btn} bg-indigo-600 text-white hover:bg-indigo-700`}>
           {busy === "full" ? "Preparing the workbook…" : "Download complete team report (.xlsx)"}
         </button>
+        <button type="button" disabled={!!busy || !!problem || nothing} aria-busy={busy === "dashboard"} onClick={() => run("dashboard", async (d) => { await downloadDashboardWorkbook(`employee-dashboard_${stamp}.xlsx`, d, { reportName: "Employee dashboard workbook", exportedAt: new Date(), exportedBy: who, filters: await describeFilters(filters) }); })} className={`${btn} bg-indigo-600 text-white hover:bg-indigo-700`}>
+          {busy === "dashboard" ? "Preparing the dashboard…" : "Download dashboard workbook (.xlsx)"}
+        </button>
       </div>
+      <p className="mt-2 text-xs text-slate-500">The dashboard workbook opens on an overview of everyone with charts; click a name to jump to that employee&apos;s own sheet.</p>
 
       <div className="mt-5 border-t border-indigo-50 pt-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Download one report</p>

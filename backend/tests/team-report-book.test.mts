@@ -82,7 +82,7 @@ ok("a day lists its breaks with start, end and length, washroom named separately
 const tinaS = wb.getWorksheet("E-3 Tina Nodata");
 ok("an employee with nothing still gets a sheet with every day listed", tinaS.getRow(hdr + 1).getCell(1).value instanceof Date && tinaS.getRow(hdr + 5).getCell(1).value instanceof Date);
 const tasksWs = wb.getWorksheet("Team Task Performance");
-ok("task sheet: 3 tasks, with the rating, feedback and rejection reason", tasksWs.rowCount === 4 && tasksWs.getRow(2).getCell(16).value === 5 && tasksWs.getRow(2).getCell(17).value === "Great", tasksWs.rowCount);
+ok("task sheet: 3 tasks, with the rating, feedback and rejection reason", tasksWs.rowCount === 4 && tasksWs.getRow(2).getCell(17).value === 5 && tasksWs.getRow(2).getCell(18).value === "Great", tasksWs.rowCount);
 const mw = wb.getWorksheet("Meetings and Huddles");
 ok("meetings sheet: Ravi joined (12 min), Tina 'Not joined' with no duration", mw.rowCount === 3 && String(mw.getRow(2).getCell(12).value) === "Joined" && mw.getRow(2).getCell(15).value instanceof Date && String(mw.getRow(3).getCell(12).value) === "Not joined" && mw.getRow(3).getCell(15).value === null, [mw.rowCount]);
 const lw = wb.getWorksheet("Leave and Late Remarks");
