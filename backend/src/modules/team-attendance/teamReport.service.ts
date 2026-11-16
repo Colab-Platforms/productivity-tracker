@@ -76,7 +76,7 @@ export async function getTeamReport(viewerId: string, q: { from?: string; to?: s
   // ---- 3. the rest, limited to those ids ----
   const [details, users, breaks, live, leave, leaveDays, corrections, attendees, participation] = await Promise.all([
     projectsAndManagers(ids),
-    prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, designation: true, platform: { select: { name: true } } } }),
+    prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, designation: true, status: true, dateOfJoining: true, platform: { select: { name: true } } } }),
     prisma.trackerBreak.findMany({
       where: { workSession: { userId: { in: ids }, date: { gte: dayFrom, lte: dayTo } } },
       select: { id: true, breakType: true, reason: true, startedAt: true, endedAt: true, durationSeconds: true, autoClosed: true, correctedDurationSeconds: true, correctionReason: true, correctedAt: true, workSession: { select: { userId: true, date: true } } },
@@ -148,7 +148,7 @@ export async function getTeamReport(viewerId: string, q: { from?: string; to?: s
   const day = (d: Date) => d.toISOString().slice(0, 10);
   return {
     generatedAt: new Date().toISOString(), timezone: tz, today, from: fromIso, to: toRaw, days, scope: attendance.scope,
-    people: opt.map((p) => ({ id: p.id, name: p.name, employeeCode: p.code, designation: users.find((u) => u.id === p.id)?.designation ?? null, company: users.find((u) => u.id === p.id)?.platform.name ?? null, reportingManager: details.get(p.id)?.reportingManager ?? null, projects: details.get(p.id)?.projects ?? [] })),
+    people: opt.map((p) => ({ id: p.id, name: p.name, employeeCode: p.code, designation: users.find((u) => u.id === p.id)?.designation ?? null, company: users.find((u) => u.id === p.id)?.platform.name ?? null, reportingManager: details.get(p.id)?.reportingManager ?? null, projects: details.get(p.id)?.projects ?? [], status: String(users.find((u) => u.id === p.id)?.status ?? ""), joinedOn: users.find((u) => u.id === p.id)?.dateOfJoining ? users.find((u) => u.id === p.id)!.dateOfJoining!.toISOString().slice(0, 10) : null })),
     attendance: attendance.rows,
     tasks,
     breaks: breaks.map((b) => {
