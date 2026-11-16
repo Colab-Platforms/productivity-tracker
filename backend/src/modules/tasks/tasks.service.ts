@@ -10,13 +10,13 @@ import { auditNote } from "../../lib/auditContext.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { isFiltering, type HrFilters } from "../hr-filters/hrFilters.logic.js";
-import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager, selectableProjects } from "./tasks.entry.js";
+import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager, selectableProjects, type EntryDetail } from "./tasks.entry.js";
 import { sameTaskKey } from "./tasks.bulk.logic.js";
 import { allowedDaysFor, lateDetailsFor, lateReady } from "./tasks.late.js";
 import { activeTasks, deletionsReady, isTaskDeleted } from "./tasks.deleted.js";
 import { checkDeletion, reasonLabel } from "./tasks.delete.logic.js";
 import { checkBackdate } from "./tasks.late.logic.js";
-import { mayReview, pendingTaskVisibleTo, parseHours, parseProgress, storeProgress } from "./tasks.entry.logic.js";
+import { mayReview, pendingTaskVisibleTo, parseHours, parseProgress, storeProgress, progressOf, checkBlockedReason, PROGRESS_LABEL } from "./tasks.entry.logic.js";
 import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
 import { checkComment, creditOf, parseRating } from "./tasks.rating.logic.js";
 import { isRated, ratingReady, ratingsFor, withRatings } from "./tasks.rating.js";
@@ -348,7 +348,7 @@ export async function listTasks(userId: string) {
 
   // The new entry form (hours, progress, tagged manager). Not offered to a manager's own self-managed tasks.
   const entryReadyNow = !selfManagedMode && (await entryReady());
-  const entryForm = entryReadyNow ? { ready: true, ...(await entryFormChoices(userId, ctx.platformId)) } : { ready: false, projects: [], managers: [] };
+  const entryForm = entryReadyNow ? { ready: true, ...(await entryFormChoices(userId, ctx.platformId)) } : { ready: false, projects: [], managers: [], defaults: { projectId: null, managerId: null, projectSource: null, managerSource: null } };
 
   return {
     date: date.toISOString().slice(0, 10),
@@ -400,11 +400,12 @@ export async function listMyRange(userId: string, from: unknown, to: unknown) {
     orderBy: [{ date: "desc" }, { title: "asc" }],
   }));
   const lates = await lateDetailsFor(rows.map((r) => r.id));
+  const entries = await entryDetailsFor(rows.map((r) => r.id));
   return {
     from: start.toISOString().slice(0, 10),
     to: end.toISOString().slice(0, 10),
     score: scoreOf(rows),
-    tasks: rows.map((t) => ({ ...shape(t, t.team?.name ?? null), late: lates.get(t.id) ?? null })),
+    tasks: rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...entryView(String(t.status), entries.get(t.id)), late: lates.get(t.id) ?? null })),
   };
 }
 
@@ -478,6 +479,8 @@ export async function createProposedTask(userId: string, body: Record<string, un
     taggedManagerId = await resolveTaggedManager({ id: userId, platformId: ctx.platformId }, body.taggedManagerId);
   }
   const stored = progress ? storeProgress(progress) : null;
+  // A Blocked task always says why (3-500 characters); the other progress values carry no reason.
+  const blockedReason = stored?.blocked ? checkBlockedReason(body.blockedNote) : null;
   // Self-approval only when nobody can approve: no tagged manager AND no reporting manager. A task tagged to a manager always waits for
   // THAT manager, even when the employee has no reporting manager set.
   const selfApprove = selfManaged || (!ctx.user.reportsToId && !taggedManagerId);
@@ -532,7 +535,7 @@ export async function createProposedTask(userId: string, body: Record<string, un
     });
     if (entry && (stored || hours !== null || taggedManagerId)) {
       await tx.taskEntryDetail.create({
-        data: { taskId: t.id, platformId: ctx.platformId, hoursSpent: typeof hours === "number" ? hours : null, taggedManagerId, blocked: stored?.blocked === true, blockedNote: stored?.blocked && body.blockedNote ? String(body.blockedNote).trim().slice(0, 500) : null },
+        data: { taskId: t.id, platformId: ctx.platformId, hoursSpent: typeof hours === "number" ? hours : null, taggedManagerId, blocked: stored?.blocked === true, blockedNote: blockedReason },
       });
     }
     if (late) {
@@ -542,6 +545,8 @@ export async function createProposedTask(userId: string, body: Record<string, un
     return t;
   });
   if (selfManaged) await recordEvent({ taskId: created.id, platformId: ctx.platformId, actorId: userId, kind: "CREATED", note: due ? `Due ${due.toISOString().slice(0, 10)}` : null });
+  // History of an employee's task starts with the progress it was sent with (and the reason, if it was sent Blocked).
+  else if (progress) await recordEvent({ taskId: created.id, platformId: ctx.platformId, actorId: userId, kind: "CREATED", note: `Submitted as ${PROGRESS_LABEL[progress]}${blockedReason ? `. Blocked reason: ${blockedReason}` : ""}` });
   emitTaskChange({ taskId: created.id, ownerId: userId, action: "created" }); // after the write succeeded
   if (!selfApprove) await taskNotice("proposed", created.id, userId, late ? { lateDate: date.toISOString().slice(0, 10) } : {});
 
@@ -595,11 +600,14 @@ export async function updateMyTask(
   // Progress (Completed / In Progress / Blocked), hours spent and the blocked note. Progress is NOT approval: it can change while the
   // approval is still pending, and never touches the approval. Not for a manager's own self-managed task.
   let entryPatch: { hoursSpent?: number | null; blocked?: boolean; blockedNote?: string | null; taggedManagerId?: string | null } | null = null;
+  let beforeEntry: EntryDetail | undefined;
   if (body.progress !== undefined || body.hoursSpent !== undefined || body.blockedNote !== undefined) {
     if (selfManaged) throw new Error("SELF_MANAGED_ONLY");
     if (!(await entryReady())) throw new Error("FEATURES_NOT_READY");
     if (await isRated(task)) throw new Error("ALREADY_REVIEWED");
     entryPatch = {};
+    beforeEntry = (await entryDetailsFor([taskId])).get(taskId);
+    const wasBlocked = beforeEntry?.blocked === true && String(task.status) !== "COMPLETED";
     if (body.progress !== undefined) {
       const pr = parseProgress(body.progress);
       if (pr === null || pr === "BAD") throw new Error("BAD_PROGRESS");
@@ -608,14 +616,17 @@ export async function updateMyTask(
       if (st.status === "COMPLETED" && String(task.status) !== "COMPLETED") data.completedAt = new Date();
       if (st.status !== "COMPLETED" && String(task.status) === "COMPLETED") data.completedAt = null;
       entryPatch.blocked = st.blocked;
-      if (!st.blocked) entryPatch.blockedNote = null;
+      // Blocked always keeps a reason: the one just given, or the one the task already has. Any other progress clears it.
+      entryPatch.blockedNote = st.blocked ? checkBlockedReason(body.blockedNote !== undefined ? body.blockedNote : beforeEntry?.blockedNote) : null;
+    } else if (body.blockedNote !== undefined && wasBlocked) {
+      // Only the reason changed on a task that is already Blocked: it still has to be a real reason.
+      entryPatch.blockedNote = checkBlockedReason(body.blockedNote);
     }
     if (body.hoursSpent !== undefined) {
       const h = parseHours(body.hoursSpent);
       if (h === "BAD") throw new Error("BAD_HOURS");
       entryPatch.hoursSpent = h;
     }
-    if (body.blockedNote !== undefined) entryPatch.blockedNote = body.blockedNote ? String(body.blockedNote).trim().slice(0, 500) : null;
   }
 
   if (body.dueDate !== undefined) {
@@ -705,6 +716,18 @@ export async function updateMyTask(
       }
       if (selfManaged && Object.keys(detailPatch).length > 0) await tx.taskSelfDetail.update({ where: { taskId }, data: detailPatch });
     });
+  }
+  // Progress history (To Do / In Progress / Completed / Blocked): every change, and the blocked reason, is kept in the task's history and in the audit log.
+  if (entryPatch && !selfManaged && (body.progress !== undefined || body.blockedNote !== undefined)) {
+    const oldP = progressOf(String(task.status), beforeEntry?.blocked === true);
+    const newP = progressOf(String(data.status ?? task.status), entryPatch.blocked !== undefined ? entryPatch.blocked : beforeEntry?.blocked === true);
+    const oldReason = oldP === "BLOCKED" ? beforeEntry?.blockedNote ?? null : null;
+    const newReason = newP === "BLOCKED" ? entryPatch.blockedNote ?? beforeEntry?.blockedNote ?? null : null;
+    if (oldP !== newP || oldReason !== newReason) {
+      const what = `${PROGRESS_LABEL[oldP]} -> ${PROGRESS_LABEL[newP]}${newReason ? `. Blocked reason: ${newReason}` : ""}`;
+      events.push({ kind: "UPDATE", note: `Progress: ${what}` });
+      auditNote({ summary: `Changed the progress of "${task.title.slice(0, 80)}": ${what}`, targetUserId: task.userId, before: { progress: oldP, blockedReason: oldReason }, after: { progress: newP, blockedReason: newReason } });
+    }
   }
   for (const e of events) await recordEvent({ taskId, platformId: task.platformId, actorId: userId, kind: e.kind, note: e.note ?? null });
   emitTaskChange({ taskId, ownerId: userId, action: body.status !== undefined ? "status" : "updated" });

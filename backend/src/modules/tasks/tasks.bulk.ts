@@ -61,11 +61,23 @@ export async function saveDrafts(userId: string, raw: unknown) {
   ]);
   const okTeam = new Set(teams.map((t) => t.id));
   const okMgr = new Set(mgrs.map((m) => m.id));
+  // The drafts table was created allowing three progress values; "To Do" needs migration 20261117100000_task_drafts_allow_todo. Until it is
+  // applied, a draft holding a To Do task is refused with a clear message (the saved draft is untouched, the transaction rolls back).
+  try {
+    await saveDraftRows(userId, user.platformId, rows, okTeam, okMgr);
+  } catch (e) {
+    if (/task_drafts_progress_check/.test(e instanceof Error ? e.message : String(e))) throw new Error("DRAFT_TODO_NOT_READY");
+    throw e;
+  }
+  return listDrafts(userId);
+}
+
+async function saveDraftRows(userId: string, platformId: string, rows: DraftRow[], okTeam: Set<string>, okMgr: Set<string>) {
   await prisma.$transaction([
     prisma.taskDraft.deleteMany({ where: { userId } }),
     prisma.taskDraft.createMany({
       data: rows.map((r, i) => ({
-        platformId: user.platformId,
+        platformId,
         userId,
         sortOrder: i,
         title: r.title,
@@ -78,7 +90,6 @@ export async function saveDrafts(userId: string, raw: unknown) {
       })),
     }),
   ]);
-  return listDrafts(userId);
 }
 
 /** Submit all: each row on its own. Returns a result per row (never throws for a single bad row). */

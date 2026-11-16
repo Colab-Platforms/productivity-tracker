@@ -20,7 +20,7 @@ export type TRAttendance = {
 };
 export type TRTask = {
   id: string; userId: string; title: string; description: string | null; project: string | null; taggedManager: string | null; date: string; priority: string; hoursSpent: number | null;
-  progress: string; approvalStatus: string; completedAt: string | null; rating: number | null; ratingComment: string | null; completionNote: string | null; rejectionNote: string | null; counted: boolean;
+  progress: string; blockedReason?: string | null; approvalStatus: string; completedAt: string | null; rating: number | null; ratingComment: string | null; completionNote: string | null; rejectionNote: string | null; counted: boolean;
 };
 export type TRBreak = { userId: string; date: string; type: string; category: string; countsAsBreak: boolean; startedAt: string; endedAt: string | null; seconds: number | null; running: boolean; autoClosed: boolean; remark: string | null };
 export type TRMeeting = {
@@ -41,7 +41,7 @@ const sec = (hours: number | null | undefined): number | null => (hours === null
 const title = (s: string | null | undefined) => (s ? s.toLowerCase().replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : null);
 const APPROVAL: Record<string, string> = { PENDING: "Waiting for approval", APPROVED: "Approved", REJECTED: "Rejected" };
 const LEAVE_STATUS: Record<string, string> = { PENDING: "Pending", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
-const PROGRESS: Record<string, string> = { COMPLETED: "Completed", IN_PROGRESS: "In progress", BLOCKED: "Blocked", NOT_STARTED: "Not started", CANCELLED: "Cancelled" };
+const PROGRESS: Record<string, string> = { TODO: "To Do", NOT_STARTED: "To Do", IN_PROGRESS: "In Progress", COMPLETED: "Completed", BLOCKED: "Blocked", CANCELLED: "Cancelled" };
 const CORRECTION_TYPE: Record<string, string> = { MISSING_CHECKIN: "Missing check-in", MISSING_CHECKOUT: "Missing check-out", INCORRECT_TIME: "Incorrect time", BIOMETRIC_FAILURE: "Biometric failure", FORGOT_CLOCK_IN: "Forgot to clock in", OTHER: "Other" };
 const LEAVE_TYPE: Record<string, string> = { CASUAL: "Casual", SICK: "Sick", EARNED: "Earned", UNPAID: "Unpaid", PLANNED: "Planned", COMP_OFF: "Comp-off", OTHER: "Other" };
 const CORR_STATUS: Record<string, string> = { PENDING: "Pending", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
@@ -90,7 +90,7 @@ export function indexOf(data: TeamReportData): Index {
 export type Summary = {
   daysInPeriod: number; present: number; halfDays: number; absent: number; leaveDays: number; holidays: number; weekOffs: number; notTracked: number;
   lateLogins: number; lateRemarks: number; workedSec: number; productiveSec: number; breakSec: number; washroomSec: number; huddleSec: number;
-  meetingsJoined: number; meetingSec: number; submitted: number; waiting: number; approved: number; rejected: number; inProgress: number; blocked: number; completed: number; counted: number;
+  meetingsJoined: number; meetingSec: number; submitted: number; waiting: number; approved: number; rejected: number; todo: number; inProgress: number; blocked: number; completed: number; counted: number;
   rated: number; ratings: string; taskHours: number; leaveTaken: number; leavePending: number; leaveRejected: number; corrections: number;
 };
 export function summaryOf(data: TeamReportData, ix: Index, id: string): Summary {
@@ -111,7 +111,7 @@ export function summaryOf(data: TeamReportData, ix: Index, id: string): Summary 
     washroomSec: sum(att.map((r) => sec(r.washroomHours))), huddleSec: sum(att.map((r) => sec(r.huddleHours))),
     meetingsJoined: mt.length, meetingSec: sum(mt.map((m) => m.participationSeconds)),
     submitted: tasks.length, waiting: tasks.filter((k) => k.approvalStatus === "PENDING").length, approved: tasks.filter((k) => k.approvalStatus === "APPROVED").length,
-    rejected: tasks.filter((k) => k.approvalStatus === "REJECTED").length, inProgress: tasks.filter((k) => k.progress === "IN_PROGRESS").length, blocked: tasks.filter((k) => k.progress === "BLOCKED").length,
+    rejected: tasks.filter((k) => k.approvalStatus === "REJECTED").length, todo: tasks.filter((k) => k.progress === "TODO" || k.progress === "NOT_STARTED").length, inProgress: tasks.filter((k) => k.progress === "IN_PROGRESS").length, blocked: tasks.filter((k) => k.progress === "BLOCKED").length,
     completed: tasks.filter((k) => k.progress === "COMPLETED").length, counted: tasks.filter((k) => k.counted).length,
     rated: tasks.filter((k) => k.rating !== null).length,
     ratings: [...stars.entries()].sort((a, b) => b[0] - a[0]).map(([s, n]) => `${s}★ ×${n}`).join(", "),
@@ -151,7 +151,7 @@ function summarySheet(data: TeamReportData, ix: Index): SheetSpec {
     { header: "Total washroom time", kind: "duration", width: 12 }, { header: "Team Huddle time (inside productive)", kind: "duration", width: 15, note: "A label inside productive hours, never added to them." },
     { header: "Meetings joined", kind: "int", width: 10 }, { header: "Meeting participation recorded", kind: "duration", width: 13, note: "The recorded join-to-leave time of scheduled meetings. Shown for information; productive hours already follow the HRMS rule." },
     { header: "Tasks submitted", kind: "int", width: 10 }, { header: "Waiting for approval", kind: "int", width: 10 }, { header: "Approved", kind: "int", width: 9 }, { header: "Rejected", kind: "int", width: 9 },
-    { header: "In progress", kind: "int", width: 9 }, { header: "Blocked", kind: "int", width: 9 }, { header: "Completed", kind: "int", width: 10 }, { header: "Counted as completed", kind: "int", width: 11, note: "Completed, approved and not rated below the completed star: the number the Task productivity report counts." },
+    { header: "To Do", kind: "int", width: 8 }, { header: "In progress", kind: "int", width: 9 }, { header: "Blocked", kind: "int", width: 9 }, { header: "Completed", kind: "int", width: 10 }, { header: "Counted as completed", kind: "int", width: 11, note: "Completed, approved and not rated below the completed star: the number the Task productivity report counts." },
     { header: "Tasks rated", kind: "int", width: 9 }, { header: "Ratings given", width: 18 }, { header: "Task hours recorded", kind: "duration", width: 11 },
     { header: "Leave days taken", kind: "decimal", width: 10 }, { header: "Leave requests pending", kind: "int", width: 10 }, { header: "Leave requests rejected", kind: "int", width: 10 }, { header: "Attendance corrections", kind: "int", width: 11 },
   ];
@@ -163,7 +163,7 @@ function summarySheet(data: TeamReportData, ix: Index): SheetSpec {
       s.daysInPeriod, s.present, s.halfDays, s.absent, s.leaveDays, s.holidays, s.weekOffs, s.notTracked,
       s.lateLogins, s.lateRemarks, s.workedSec, s.productiveSec, s.breakSec, s.washroomSec, s.huddleSec,
       s.meetingsJoined, s.meetingSec,
-      s.submitted, s.waiting, s.approved, s.rejected, s.inProgress, s.blocked, s.completed, s.counted, s.rated, s.ratings || null, Math.round(s.taskHours * 3600),
+      s.submitted, s.waiting, s.approved, s.rejected, s.todo, s.inProgress, s.blocked, s.completed, s.counted, s.rated, s.ratings || null, Math.round(s.taskHours * 3600),
       s.leaveTaken, s.leavePending, s.leaveRejected, s.corrections,
     ] as Value[];
   });
@@ -195,7 +195,7 @@ function tasksSheet(data: TeamReportData, ix: Index): SheetSpec {
   const tz = data.timezone;
   const cols: Col[] = [
     ...WHO, { header: "Task date", kind: "date", width: 13 }, { header: "Project", width: 22 }, { header: "Task", width: 34, wrap: true }, { header: "Description", width: 44, wrap: true },
-    { header: "Priority", width: 10 }, { header: "Progress", width: 12 }, { header: "Hours recorded", kind: "duration", width: 10 }, { header: "Approval status", width: 18 }, { header: "Approver (tagged manager)", width: 22 },
+    { header: "Priority", width: 10 }, { header: "Progress", width: 12 }, { header: "Blocked reason", width: 34, wrap: true }, { header: "Hours recorded", kind: "duration", width: 10 }, { header: "Approval status", width: 18 }, { header: "Approver (tagged manager)", width: 22 },
     { header: "Completed on", kind: "date", width: 13 }, { header: "Completed at", kind: "time", width: 11 }, { header: "Counted as completed", width: 11 },
     { header: "Rating (stars)", kind: "int", width: 9 }, { header: "Manager feedback", width: 36, wrap: true }, { header: "Employee note on completion", width: 30, wrap: true }, { header: "Reason sent back", width: 30, wrap: true },
   ];
@@ -203,7 +203,7 @@ function tasksSheet(data: TeamReportData, ix: Index): SheetSpec {
   for (const id of byPerson(data)) {
     for (const k of ix.tasks.get(id) ?? []) {
       rows.push([
-        ...who(ix, id), k.date, k.project, k.title, k.description, title(k.priority), PROGRESS[k.progress] ?? title(k.progress), k.hoursSpent === null ? null : Math.round(k.hoursSpent * 3600),
+        ...who(ix, id), k.date, k.project, k.title, k.description, title(k.priority), PROGRESS[k.progress] ?? title(k.progress), k.progress === "BLOCKED" ? k.blockedReason ?? null : null, k.hoursSpent === null ? null : Math.round(k.hoursSpent * 3600),
         APPROVAL[k.approvalStatus] ?? title(k.approvalStatus), k.taggedManager, d(k.completedAt, tz), t(k.completedAt, tz), k.counted ? "Yes" : "No",
         k.rating, k.ratingComment, k.completionNote, k.rejectionNote,
       ]);
@@ -361,7 +361,7 @@ export function employeeSheet(data: TeamReportData, ix: Index, id: string, name:
   for (const day of daysBetween(data.from, last)) {
     const r = att.get(day);
     const dayTasks = tasks.filter((k) => k.date === day);
-    const taskLines = dayTasks.map((k) => `• ${k.title}${k.project ? ` [${k.project}]` : ""} — ${PROGRESS[k.progress] ?? k.progress}, ${APPROVAL[k.approvalStatus] ?? k.approvalStatus}${k.hoursSpent !== null ? `, ${k.hoursSpent}h` : ""}${k.rating !== null ? `, ${k.rating}★${k.ratingComment ? ` "${k.ratingComment}"` : ""}` : ""}${k.rejectionNote ? ` (sent back: ${k.rejectionNote})` : ""}`);
+    const taskLines = dayTasks.map((k) => `• ${k.title}${k.project ? ` [${k.project}]` : ""} — ${PROGRESS[k.progress] ?? k.progress}${k.progress === "BLOCKED" && k.blockedReason ? ` (${k.blockedReason})` : ""}, ${APPROVAL[k.approvalStatus] ?? k.approvalStatus}${k.hoursSpent !== null ? `, ${k.hoursSpent}h` : ""}${k.rating !== null ? `, ${k.rating}★${k.ratingComment ? ` "${k.ratingComment}"` : ""}` : ""}${k.rejectionNote ? ` (sent back: ${k.rejectionNote})` : ""}`);
     const meetLines = [
       ...mt.filter((m) => dayOf(m.scheduledStart, tz) === day).map((m) => `• ${m.kind}: ${m.title} ${clockOf(m.scheduledStart, tz)}–${clockOf(m.scheduledEnd, tz)}, ${m.status}${m.joinedAt ? `, joined ${clockOf(m.joinedAt, tz)}${m.leftAt ? `, left ${clockOf(m.leftAt, tz)}` : ", not ended"}${m.participationSeconds !== null ? ` (${hm(m.participationSeconds)})` : ""}` : ""}`),
       ...live.filter((m) => m.date === day).map((m) => `• Live meeting: ${m.title ?? title(m.type)}, ${title(m.approvalStatus)}${m.seconds !== null ? ` (${hm(m.seconds)})` : ""}`),

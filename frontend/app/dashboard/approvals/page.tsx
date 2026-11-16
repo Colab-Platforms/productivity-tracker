@@ -24,6 +24,7 @@ import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFi
 import { buildPeople } from "./people";
 import { LateNote, type LateInfo } from "../_late/Late";
 import { DeleteTaskModal } from "./DeleteTaskModal";
+import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL, PROGRESS_OPTIONS, normalProgress } from "../_progress/progress";
 import { DeletedTasks } from "./DeletedTasks";
 
 const API = API_BASE;
@@ -63,7 +64,7 @@ type Task = {
   isCarriedOver: boolean;
   createdAt: string;
   // Daily task entry: progress is separate from approval. canAct is false for HR/Admin and for managers the task is not tagged to.
-  progress?: "COMPLETED" | "IN_PROGRESS" | "BLOCKED" | "NOT_STARTED";
+  progress?: "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED" | "NOT_STARTED";
   hoursSpent?: number | null;
   taggedManager?: string | null;
   blockedNote?: string | null;
@@ -213,6 +214,8 @@ export default function ApprovalsPage() {
   const [tab, setTab] = useState<TabKey>("waiting");
   const [ratingFilter, setRatingFilter] = useState<"all" | "pending" | "rated">("all");
   const [submission, setSubmission] = useState<"all" | "normal" | "late">("all");
+  // Progress filter (To Do / In Progress / Completed / Blocked). Progress is the work; approval is the manager's decision, a separate thing.
+  const [progressFilter, setProgressFilter] = useState<"all" | "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED">("all");
   const [reload, setReload] = useState(0);
   // The company's "today" (from the server). Until the first answer arrives, the browser's own local date.
   const [today, setToday] = useState<string>(() => todayIso());
@@ -230,7 +233,10 @@ export default function ApprovalsPage() {
   const ofPerson = person ? rows.filter((t) => t.userId === person) : rows;
   const lateCount = ofPerson.filter((t) => !!t.late).length;
   // Normal / Late submissions: narrows the tabs, their counts and the list together, so they still add up.
-  const inScope = submission === "all" ? ofPerson : ofPerson.filter((t) => (submission === "late" ? !!t.late : !t.late));
+  const afterSubmission = submission === "all" ? ofPerson : ofPerson.filter((t) => (submission === "late" ? !!t.late : !t.late));
+  // Progress filter: narrows the tabs, their counts and the list together; the counts per progress follow the other filters.
+  const progressCount = (p: string) => afterSubmission.filter((t) => normalProgress(t.progress) === p).length;
+  const inScope = progressFilter === "all" ? afterSubmission : afterSubmission.filter((t) => normalProgress(t.progress) === progressFilter);
   const counts: Record<TabKey, number> = { waiting: 0, todo: 0, inProgress: 0, completed: 0, closed: 0, deleted: 0 };
   for (const t of inScope) counts[bucketOf(t)] += 1;
   // Rating status (Completed tab only): based on the saved rating itself (rating null = no rating saved), never on completion.
@@ -443,6 +449,17 @@ export default function ApprovalsPage() {
               <option value="normal">Normal submissions ({ofPerson.length - lateCount})</option>
               <option value="late">Late submissions ({lateCount})</option>
             </select>
+            <select
+              value={progressFilter}
+              onChange={(e) => setProgressFilter(e.target.value as typeof progressFilter)}
+              aria-label="Progress"
+              className="rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-sm text-slate-700"
+            >
+              <option value="all">All progress ({afterSubmission.length})</option>
+              {PROGRESS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label} ({progressCount(o.value)})</option>
+              ))}
+            </select>
             {tab === "completed" && (
               <select
                 value={ratingFilter}
@@ -517,6 +534,7 @@ export default function ApprovalsPage() {
                     {t.isCarriedOver && " · carried over"}
                   </p>
                   <LateNote date={t.date} late={t.late} forManager />
+                <BlockedCallout t={t} />
                   {t.canAct && (
                     <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
                       Delete task
@@ -630,6 +648,7 @@ export default function ApprovalsPage() {
                 <p className="text-sm text-slate-900">{t.title}</p>
                 <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
                 <LateNote date={t.date} late={t.late} forManager />
+                <BlockedCallout t={t} />
                 {t.canAct && (
                   <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
                     Delete task
@@ -672,6 +691,7 @@ export default function ApprovalsPage() {
                 <p className="text-sm font-medium text-slate-900">{t.title}</p>
                 <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
                 <LateNote date={t.date} late={t.late} forManager />
+                <BlockedCallout t={t} />
                 {t.canAct && (
                   <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
                     Delete task
@@ -742,6 +762,7 @@ export default function ApprovalsPage() {
                   <p className="text-sm text-slate-900">{t.title}</p>
                   <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
                 <LateNote date={t.date} late={t.late} forManager />
+                <BlockedCallout t={t} />
                 {t.canAct && (
                   <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
                     Delete task
@@ -761,24 +782,26 @@ export default function ApprovalsPage() {
     </div>
   );
 }
-const PROGRESS_LABEL: Record<string, { label: string; cls: string }> = {
-  COMPLETED: { label: "Completed", cls: "bg-emerald-50 text-emerald-700" },
-  IN_PROGRESS: { label: "In Progress", cls: "bg-sky-50 text-sky-700" },
-  BLOCKED: { label: "Blocked", cls: "bg-rose-50 text-rose-700" },
-  NOT_STARTED: { label: "Not started", cls: "bg-slate-100 text-slate-500" },
-};
+// Why a Blocked task cannot go on, in the employee's own words: shown to the manager on every row, in every tab.
+function BlockedCallout({ t }: { t: { progress?: string; blockedNote?: string | null } }) {
+  if (t.progress !== "BLOCKED") return null;
+  return (
+    <p className="mt-1 break-words rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900 [overflow-wrap:anywhere]">
+      <span className="font-medium">Blocked:</span> {t.blockedNote ? t.blockedNote : "No reason was written (this task was blocked before a reason was required)."}
+    </p>
+  );
+}
 
 // The task's progress (is the work done?) next to its project, hours and tagged manager. Approval is what this screen decides.
 function TaskMeta({ t }: { t: Task }) {
   if (!t.progress) return null;
-  const p = PROGRESS_LABEL[t.progress];
+  const p = { label: PROGRESS_LABEL[t.progress] ?? t.progress, cls: PROGRESS_CHIP_CLASS[t.progress] ?? "bg-slate-100 text-slate-600" };
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
       <span className={`rounded-full px-2 py-0.5 font-medium ${p.cls}`}>{p.label}</span>
       {t.hoursSpent != null && <span className="text-slate-500">{t.hoursSpent} h</span>}
       {t.project && <span className="text-slate-500">· {t.project}</span>}
       {t.taggedManager && <span className="text-slate-500">· Tagged to {t.taggedManager}</span>}
-      {t.progress === "BLOCKED" && t.blockedNote && <span className="text-rose-600">· {t.blockedNote}</span>}
     </div>
   );
 }

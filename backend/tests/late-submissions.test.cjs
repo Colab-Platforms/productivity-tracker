@@ -64,7 +64,7 @@ const addDays = (s, n) => new Date(Date.parse(s + "T00:00:00Z") + n * 86400000).
   const attendance = async () => JSON.stringify([await q(`select count(*)::int n from work_sessions where "userId" = any($1)`, [[E, E2]]), await q(`select count(*)::int n from tracker_breaks where "sessionId" in (select id from work_sessions where "userId" = any($1))`, [[E, E2]]).catch(() => []), await q(`select count(*)::int n from attendance_correction_requests where "userId" = any($1)`, [[E, E2]]).catch(() => [])]);
   const beforeTasks = await outsideTasks(), beforeRatings = await outsideRatings(), beforeAtt = await attendance();
 
-  const row = (n, project, mgr, extra = {}) => ({ key: "k" + n, title: `Late task ${n}`, description: `detail ${n}`, teamId: project, taggedManagerId: mgr, hoursSpent: 1 + (n % 3), weight: ["LOW", "MEDIUM", "HIGH"][n % 3], progress: ["IN_PROGRESS", "COMPLETED", "BLOCKED"][n % 3], ...extra });
+  const row = (n, project, mgr, extra = {}) => ({ key: "k" + n, title: `Late task ${n}`, description: `detail ${n}`, teamId: project, taggedManagerId: mgr, hoursSpent: 1 + (n % 3), weight: ["LOW", "MEDIUM", "HIGH"][n % 3], progress: ["IN_PROGRESS", "COMPLETED", "BLOCKED"][n % 3], blockedNote: "Waiting for access", ...extra });
   const bulk = (tok, rows, forDate, lateReason) => call("POST", "/tasks/bulk", tok, { rows, ...(forDate !== undefined ? { forDate } : {}), ...(lateReason !== undefined ? { lateReason } : {}) });
   const count = async (like, uid = E) => Number((await q(`select count(*)::int n from daily_tasks where "userId"=$1 and title like $2`, [uid, like]))[0].n);
   const noteCount = async (uid) => Number((await q(`select count(*)::int n from notifications where "userId"=$1 and type::text ilike '%TASK%'`, [uid]))[0].n);

@@ -10,6 +10,7 @@ import ExportButtons from "./ExportButtons";
 import { useMe } from "../../layout";
 import { PRESETS, rangeFor, type Preset } from "./ranges";
 import TargetsPanel from "./TargetsPanel";
+import { PROGRESS_LABEL } from "../../_progress/progress";
 
 // Task productivity: tasks completed ÷ the daily target set by HR/Admin.
 // Data: GET /team-attendance/productivity and /productivity/hourly. A task counts once, in the day and hour it was
@@ -27,7 +28,7 @@ type Productivity = { generatedAt: string; timezone: string; today: string; from
 // The tasks behind the report (GET /team-attendance/productivity/tasks), fetched when Excel is exported.
 type TaskRow = {
   id: string; userId: string; employee: string; employeeCode: string | null; project: string | null; reportingManager: string | null; taggedManager: string | null;
-  title: string; description: string | null; date: string; priority: string; hoursSpent: number | null; progress: string; approvalStatus: string; completedAt: string | null; counted: boolean;
+  title: string; description: string | null; date: string; priority: string; hoursSpent: number | null; progress: string; blockedReason?: string | null; approvalStatus: string; completedAt: string | null; counted: boolean;
 };
 type Hourly = { date: string; people: { userId: string; name: string; employeeCode: string | null; teamName: string | null; hours: number[]; total: number }[] };
 
@@ -169,13 +170,13 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
       { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Project", width: 24 }, { header: "Reporting manager", width: 22 },
       { header: "Tagged manager (approver)", width: 24, note: "The manager this task was sent to for approval." },
       { header: "Task", width: 40, wrap: true }, { header: "Details", width: 40, wrap: true }, { header: "Task date", kind: "date", width: 13 },
-      { header: "Priority", width: 11 }, { header: "Hours spent", kind: "decimal", width: 12 }, { header: "Progress", width: 13 }, { header: "Approval status", width: 14 },
+      { header: "Priority", width: 11 }, { header: "Hours spent", kind: "decimal", width: 12 }, { header: "Progress", width: 13 }, { header: "Blocked reason", width: 34, wrap: true }, { header: "Approval status", width: 14 },
       { header: "Completed on", kind: "date", width: 13 }, { header: "Completed at", kind: "time", width: 12 },
       { header: "Counted in productivity", width: 14, note: "Yes = the report counts it: completed, approved, finished inside these dates and not rated below the completed threshold." },
     ];
     const taskRows = tasks.tasks.map((t) => [
       t.employeeCode, t.employee, t.project, t.reportingManager, t.taggedManager, t.title, t.description, t.date,
-      titleCase(t.priority), t.hoursSpent, titleCase(t.progress), titleCase(t.approvalStatus), dayOf(t.completedAt, tz), secondsOfDay(t.completedAt, tz), t.counted ? "Yes" : "No",
+      titleCase(t.priority), t.hoursSpent, PROGRESS_LABEL[t.progress] ?? titleCase(t.progress), t.progress === "BLOCKED" ? t.blockedReason ?? null : null, titleCase(t.approvalStatus), dayOf(t.completedAt, tz), secondsOfDay(t.completedAt, tz), t.counted ? "Yes" : "No",
     ]);
 
     await downloadReportXlsx(`task-productivity-${data.from}_to_${data.to}.xlsx`, [

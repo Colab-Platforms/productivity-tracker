@@ -58,7 +58,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const form = (await call("GET", "/tasks", tE)).b.entryForm;
   const mgrs = form.managers.map((m) => m.id);
   ok("setup: the form offers both managers and the projects", mgrs.includes(M1) && mgrs.includes(M2) && [P1, P2, P3].every((p) => form.projects.some((x) => x.id === p)), form);
-  const row = (n, project, mgr, extra = {}) => ({ key: "k" + n, title: `Quick task ${n}`, description: `detail ${n}`, teamId: project, taggedManagerId: mgr, hoursSpent: 0.5 + (n % 4), weight: ["LOW", "MEDIUM", "HIGH", "CRITICAL"][n % 4], progress: ["IN_PROGRESS", "COMPLETED", "BLOCKED"][n % 3], ...extra });
+  const row = (n, project, mgr, extra = {}) => ({ key: "k" + n, title: `Quick task ${n}`, description: `detail ${n}`, teamId: project, taggedManagerId: mgr, hoursSpent: 0.5 + (n % 4), weight: ["LOW", "MEDIUM", "HIGH", "CRITICAL"][n % 4], progress: ["IN_PROGRESS", "COMPLETED", "BLOCKED"][n % 3], blockedNote: "Waiting for access", ...extra });
 
   console.log("\n## before the drafts table exists");
   const g0 = await call("GET", "/tasks/drafts", tE);
@@ -188,7 +188,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("a draft stays editable (saving replaces it)", edit.b.drafts.length === 1 && edit.b.drafts[0].title === "Draft one (edited)", edit.b);
   const tooMany = await call("PUT", "/tasks/drafts", tE, { rows: Array.from({ length: 31 }, (_, i) => ({ title: "t" + i })) });
   ok("31 draft rows are refused, the saved draft is untouched", tooMany.s === 400 && (await call("GET", "/tasks/drafts", tE)).b.drafts.length === 1, tooMany);
-  const sendDraft = await call("POST", "/tasks/bulk", tE, { rows: [{ ...edit.b.drafts[0], key: "fromDraft", hoursSpent: 1.5 }] });
+  const sendDraft = await call("POST", "/tasks/bulk", tE, { rows: [{ ...edit.b.drafts[0], key: "fromDraft", hoursSpent: 1.5, blockedNote: "Waiting for access" }] });
   ok("a draft can be submitted later like any row (becomes a real, pending task)", sendDraft.b.submitted === 1 && Number((await q(`select count(*)::int n from daily_tasks where "userId"=$1 and title='Draft one (edited)'`, [E]))[0].n) === 1, sendDraft.b);
   await call("PUT", "/tasks/drafts", tE, { rows: [] });
   ok("clearing the draft leaves none", (await call("GET", "/tasks/drafts", tE)).b.drafts.length === 0 && Number((await q(`select count(*)::int n from task_drafts where "userId"=$1`, [E]))[0].n) === 0, 0);
