@@ -1,0 +1,14 @@
+// Early Logout Policy (2nd and 4th Saturday): ONE organisation-wide row. NEW TABLE ONLY; no existing table or column is touched.
+// No row (or the table missing) = the policy is off and attendance behaves exactly as before.
+model EarlyLogoutPolicy {
+  id          String   @id @default("global")
+  enabled     Boolean  @default(false)
+  logoutTime  String   @default("16:00")
+  startDate   DateTime? @db.Date
+  targetHours Float?
+  updatedById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("early_logout_policy")
+}

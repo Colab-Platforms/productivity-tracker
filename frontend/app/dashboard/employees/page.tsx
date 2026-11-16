@@ -27,6 +27,7 @@ import WarningLettersAdmin from "../_warnings/WarningLettersAdmin";
 import { AdditionalManagers } from "../_employees/AdditionalManagers";
 import { useMe } from "../layout";
 import LatePolicyCard from "../_late/LatePolicyCard";
+import EarlyLogoutCard from "../_attendance/EarlyLogoutCard";
 
 const API = API_BASE;
 
@@ -1664,6 +1665,7 @@ function ThresholdsTab({ onError, onDone }: TabProps) {
         </div>
       )}
 
+      <EarlyLogoutCard onError={onError} onDone={onDone} />
       <LatePolicyCard onError={onError} onDone={onDone} />
     </div>
   );
