@@ -79,7 +79,7 @@ export async function getTeamReport(viewerId: string, q: { from?: string; to?: s
     prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, designation: true, platform: { select: { name: true } } } }),
     prisma.trackerBreak.findMany({
       where: { workSession: { userId: { in: ids }, date: { gte: dayFrom, lte: dayTo } } },
-      select: { id: true, breakType: true, reason: true, startedAt: true, endedAt: true, durationSeconds: true, autoClosed: true, workSession: { select: { userId: true, date: true } } },
+      select: { id: true, breakType: true, reason: true, startedAt: true, endedAt: true, durationSeconds: true, autoClosed: true, correctedDurationSeconds: true, correctionReason: true, correctedAt: true, workSession: { select: { userId: true, date: true } } },
       orderBy: [{ startedAt: "asc" }],
     }),
     prisma.trackerMeeting.findMany({
@@ -153,8 +153,10 @@ export async function getTeamReport(viewerId: string, q: { from?: string; to?: s
     tasks,
     breaks: breaks.map((b) => {
       const c = classOfRow(b);
-      const secs = b.durationSeconds ?? (b.endedAt ? Math.max(0, Math.floor((b.endedAt.getTime() - b.startedAt.getTime()) / 1000)) : null);
+      const recorded = b.durationSeconds ?? (b.endedAt ? Math.max(0, Math.floor((b.endedAt.getTime() - b.startedAt.getTime()) / 1000)) : null);
+      const secs = b.endedAt && b.correctedDurationSeconds != null ? b.correctedDurationSeconds : recorded;
       return {
+        recordedSeconds: recorded, corrected: b.correctedDurationSeconds != null, correctionReason: b.correctionReason ?? null, correctedAt: b.correctedAt ? b.correctedAt.toISOString() : null,
         userId: b.workSession.userId, date: day(b.workSession.date), type: String(b.breakType), category: c === "BREAK" ? "Break" : c === "NEUTRAL" ? "Washroom (not a break)" : "Discussion (productive time)",
         countsAsBreak: c === "BREAK", startedAt: b.startedAt.toISOString(), endedAt: b.endedAt ? b.endedAt.toISOString() : null, seconds: secs, running: b.endedAt === null,
         autoClosed: b.autoClosed, remark: discussionRemark(b) ?? (b.reason ?? null),

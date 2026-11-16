@@ -159,6 +159,8 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/policies\/:id\/restore$/, module: "Policies", action: "UPDATE", summary: "Restored a policy document", recordType: "InductionDocument" },
 
   { method: "POST", re: /^\/api\/attendance-corrections$/, module: "Attendance", action: "SUBMIT", summary: "Requested an attendance correction" },
+  { method: "POST", re: /^\/api\/break-corrections\/:id\/correct$/, module: "Attendance", action: "UPDATE", summary: "Admin corrected a break duration", recordType: "TrackerBreak" },
+  { method: "POST", re: /^\/api\/break-corrections\/:id\/revert$/, module: "Attendance", action: "UPDATE", summary: "Admin reverted a break correction", recordType: "TrackerBreak" },
   { method: "POST", re: /^\/api\/attendance-corrections\/:id\/cancel$/, module: "Attendance", action: "CANCEL", summary: "Cancelled an attendance correction request", recordType: "AttendanceCorrection" },
   { method: "POST", re: /^\/api\/leave\/manager\/requests\/:id\/decide$/, module: "Leave", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Manager rejected a leave request" : "Manager approved a leave request"), recordType: "LeaveRequest" },
   { method: "POST", re: /^\/api\/attendance-corrections\/manager\/requests\/:id\/decide$/, module: "Attendance", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Manager rejected an attendance correction" : "Manager approved an attendance correction"), recordType: "AttendanceCorrection" },

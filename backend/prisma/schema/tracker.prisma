@@ -69,10 +69,42 @@ model TrackerBreak {
   autoClosed Boolean @default(false)
   reason     String?
 
+  // ADMIN CORRECTION. startedAt, endedAt and durationSeconds above are NEVER edited by a correction: they stay as recorded.
+  // When correctedDurationSeconds is set it is the duration every total uses (see breakRowSeconds in activityClass.ts).
+  // Reverting sets all four back to null. Every apply and revert is also written to break_correction_log.
+  correctedDurationSeconds Int?
+  correctionReason         String?
+  correctedById            String?   @db.Uuid
+  correctedAt              DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([workSessionId])
   @@map("tracker_breaks")
+}
+
+// Append-only history of break corrections: one row per apply and per revert. Never updated or deleted by the app.
+model BreakCorrectionLog {
+  id            String  @id @default(uuid()) @db.Uuid
+  platformId    String  @db.Uuid
+  breakId       String  @db.Uuid
+  workSessionId String  @db.Uuid
+  userId        String  @db.Uuid // the employee whose break it is
+  action        String // "APPLIED" | "REVERTED"
+
+  // Durations in seconds. before/after are the EFFECTIVE duration the totals used before and after this action.
+  originalSeconds Int
+  beforeSeconds   Int
+  afterSeconds    Int
+  reason          String
+
+  actedById String   @db.Uuid
+  actedAt   DateTime @default(now())
+
+  @@index([breakId, actedAt])
+  @@index([userId, actedAt])
+  @@index([platformId, actedAt])
+  @@map("break_correction_log")
 }
 
 model TrackerMeeting {

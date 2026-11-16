@@ -71,7 +71,7 @@ type SessionWithParts = {
   wasLateLogin: boolean;
   lateRemark?: string | null;
   lateByMinutes: number;
-  breaks: { breakType: string; startedAt: Date; endedAt: Date | null; durationSeconds: number | null }[];
+  breaks: { breakType: string; startedAt: Date; endedAt: Date | null; durationSeconds: number | null; correctedDurationSeconds?: number | null }[];
   meetings: { approvalStatus: string; startedAt: Date | null; endedAt: Date | null; durationSeconds: number | null }[];
 };
 
@@ -310,7 +310,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string, filt
 
     const per = { TEA: 0, LUNCH: 0, BIO: 0, OTHER: 0 };
     for (const b of awayRows(s.breaks)) {
-      const secs = b.endedAt ? (b.durationSeconds ?? secondsBetween(b.startedAt, b.endedAt)) : s.status === "ACTIVE" && isToday ? secondsBetween(b.startedAt, now) : 0;
+      const secs = b.endedAt ? (b.correctedDurationSeconds ?? b.durationSeconds ?? secondsBetween(b.startedAt, b.endedAt)) : s.status === "ACTIVE" && isToday ? secondsBetween(b.startedAt, now) : 0;
       per[BREAK_GROUP[b.breakType] ?? "OTHER"] += secs;
     }
 
@@ -565,6 +565,8 @@ export async function getAttendanceReport(
         workedHours: hasWork ? worked : null,
         productiveHours: hasWork ? productive : null,
         breakHours: hasWork ? breakH : null,
+        breakRecordedHours: hasWork && d.breakCorrected ? d.breakRecordedHours : null,
+        breakCorrected: hasWork && d.breakCorrected,
         washroomHours: hasWork ? washroomH : null,
         arrival, // ON_TIME | LATE | HALF_DAY | ABSENT | LEAVE | HOLIDAY | WEEK_OFF | NOT_TRACKED | NOT_CLOCKED_IN
         arrivalMinutes: arrivalAt ? minutesAfterLimit(arrivalAt, who.tz) : null, // minutes after the Present limit

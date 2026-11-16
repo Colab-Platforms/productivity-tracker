@@ -19,7 +19,7 @@
 
 import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
-import { awayOf, awayRows } from "./activityClass.js";
+import { awayOf, awayRows, breakRowSeconds } from "./activityClass.js";
 import { getTeamReport } from "../reports/reports.service.js";
 import { getContext } from "./tracker.service.js";
 import { remarksBySession } from "./lateRemarks.js";
@@ -75,6 +75,12 @@ export async function getTimesheet(userId: string, fromStr?: string, toStr?: str
   for (const c of corrections) {
     if (c.workSessionId && !correctedBy.has(c.workSessionId)) correctedBy.set(c.workSessionId, { at: c.createdAt, by: `${c.actedBy.firstName} ${c.actedBy.lastName}`.trim() });
   }
+
+  // Who corrected each break, by name, for the "Corrected" line in the history.
+  const correctorIds = [...new Set(sessions.flatMap((s) => s.breaks.map((b) => b.correctedById).filter((x): x is string => !!x)))];
+  const correctorName = new Map(
+    (correctorIds.length ? await prisma.user.findMany({ where: { id: { in: correctorIds } }, select: { id: true, firstName: true, lastName: true } }) : []).map((u) => [u.id, `${u.firstName} ${u.lastName}`.trim()])
+  );
 
   const sessionByDay = new Map(sessions.map((s) => [iso(s.date), s]));
   const remarkOf = await remarksBySession(sessions.map((s) => s.id));
@@ -157,9 +163,15 @@ export async function getTimesheet(userId: string, fromStr?: string, toStr?: str
               breakType: String(b.breakType),
               startedAt: b.startedAt,
               endedAt: b.endedAt,
+              // The recorded duration, exactly as the timer saved it. Never overwritten by a correction.
               durationSeconds: b.durationSeconds,
               autoClosed: b.autoClosed,
               reason: b.reason,
+              // Present only when an Admin corrected this break. effectiveSeconds is what the day's totals used.
+              correction: b.correctedDurationSeconds != null
+                ? { seconds: b.correctedDurationSeconds, reason: b.correctionReason, at: b.correctedAt, by: b.correctedById ? correctorName.get(b.correctedById) ?? null : null }
+                : null,
+              effectiveSeconds: b.endedAt ? breakRowSeconds(b, nowDate) : null,
             })),
             meetings: s.meetings.map((m) => ({
               id: m.id,
