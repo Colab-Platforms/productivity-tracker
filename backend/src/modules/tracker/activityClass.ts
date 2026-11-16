@@ -23,7 +23,7 @@ export const REMARK_MIN = 3;
 export const REMARK_MAX = 300;
 
 type Row = { breakType: string; reason?: string | null };
-type BreakLike = Row & { startedAt: Date; endedAt: Date | null };
+type BreakLike = Row & { startedAt: Date; endedAt: Date | null; correctedDurationSeconds?: number | null };
 
 export const isDiscussion = (b: Row) => String(b.breakType) === "OTHER" && String(b.reason ?? "").startsWith(DISCUSSION_PREFIX);
 export const discussionRemark = (b: Row) => (isDiscussion(b) ? String(b.reason).slice(DISCUSSION_PREFIX.length) : null);
@@ -44,9 +44,16 @@ export const isWashroom = (b: string | Row) => (typeof b === "string" ? classOfB
 /** The rows that come out of the day (breaks and washroom). Discussion rows stay in productive time, so this drops them. */
 export const awayRows = <T extends Row>(rows: T[]): T[] => rows.filter((r) => !isDiscussion(r));
 
-/** Seconds of one row; an open row runs until `now`. */
-export const breakRowSeconds = (b: { startedAt: Date; endedAt: Date | null }, now: Date) =>
+/** Seconds actually recorded for one row, as the timestamps say; an open row runs until `now`. Ignores any admin correction. */
+export const recordedRowSeconds = (b: { startedAt: Date; endedAt: Date | null }, now: Date) =>
   Math.max(0, Math.floor(((b.endedAt ?? now).getTime() - b.startedAt.getTime()) / 1000));
+
+/**
+ * Seconds of one row that every total uses. An admin correction (correctedDurationSeconds) wins over the recorded timestamps, which are
+ * never edited. A running row cannot be corrected, so an open row always uses its live time.
+ */
+export const breakRowSeconds = (b: { startedAt: Date; endedAt: Date | null; correctedDurationSeconds?: number | null }, now: Date) =>
+  b.endedAt && b.correctedDurationSeconds != null ? Math.max(0, b.correctedDurationSeconds) : recordedRowSeconds(b, now);
 
 /** Split a session's rows into counted break seconds, washroom seconds and discussion seconds (the last is inside productive time). */
 export function splitAwayTime(breaks: BreakLike[], now: Date): { breakSeconds: number; washroomSeconds: number; discussionSeconds: number } {

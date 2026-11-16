@@ -20,6 +20,7 @@ import { remarksBySession } from "../tracker/lateRemarks.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
+import { scheduledEndMinutes } from "../attendance/earlyLogout.logic.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
 
 // Where no team config exists these match what Live Team already assumes.
@@ -71,7 +72,7 @@ type SessionWithParts = {
   wasLateLogin: boolean;
   lateRemark?: string | null;
   lateByMinutes: number;
-  breaks: { breakType: string; startedAt: Date; endedAt: Date | null; durationSeconds: number | null }[];
+  breaks: { breakType: string; startedAt: Date; endedAt: Date | null; durationSeconds: number | null; correctedDurationSeconds?: number | null }[];
   meetings: { approvalStatus: string; startedAt: Date | null; endedAt: Date | null; durationSeconds: number | null }[];
 };
 
@@ -310,7 +311,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string, filt
 
     const per = { TEA: 0, LUNCH: 0, BIO: 0, OTHER: 0 };
     for (const b of awayRows(s.breaks)) {
-      const secs = b.endedAt ? (b.durationSeconds ?? secondsBetween(b.startedAt, b.endedAt)) : s.status === "ACTIVE" && isToday ? secondsBetween(b.startedAt, now) : 0;
+      const secs = b.endedAt ? (b.correctedDurationSeconds ?? b.durationSeconds ?? secondsBetween(b.startedAt, b.endedAt)) : s.status === "ACTIVE" && isToday ? secondsBetween(b.startedAt, now) : 0;
       per[BREAK_GROUP[b.breakType] ?? "OTHER"] += secs;
     }
 
@@ -346,6 +347,9 @@ const STATUS_VALUES = new Set(["PRESENT", "HALF_DAY", "ABSENT", "LEAVE", "HOLIDA
 const IST_OFFSET_MS = 330 * 60 * 1000;
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
+function minutesToHHMM(m: number | null): string | null {
+  return m === null ? null : `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
 
 // "19:00" in IST on `dateIso`, as an instant. Used only for early departure (companies here run on IST).
 function istInstant(dateIso: string, hhmm: string): Date | null {
@@ -543,8 +547,10 @@ export async function getAttendanceReport(
 
       // Early departure: only for a finished day on a shift that ends the same day.
       let earlyMinutes: number | null = null;
+      // On a 2nd/4th Saturday the scheduled end is the early-logout time (or the shift end if that is earlier), so leaving then is not early.
       if (d.logoutAt && who.shift && !who.shift.spansMidnight) {
-        const end = istInstant(d.date, who.shift.endTime);
+        const endAt = d.earlyLogoutTime ? minutesToHHMM(scheduledEndMinutes(who.shift.endTime, d.earlyLogoutTime)) ?? who.shift.endTime : who.shift.endTime;
+        const end = istInstant(d.date, endAt);
         if (end) earlyMinutes = Math.max(0, Math.round((end.getTime() - new Date(d.logoutAt).getTime()) / 60000));
       }
       const hasWork = d.loginAt !== null;
@@ -559,12 +565,16 @@ export async function getAttendanceReport(
         date: d.date,
         shiftName: who.shift?.name ?? null,
         shiftStart: who.shift?.startTime ?? null,
-        shiftEnd: who.shift?.endTime ?? null,
+        shiftEnd: d.earlyLogoutTime ? minutesToHHMM(scheduledEndMinutes(who.shift?.endTime, d.earlyLogoutTime)) ?? who.shift?.endTime ?? null : who.shift?.endTime ?? null,
+        earlyLogoutDay: d.earlyLogoutDay,
+        earlyLogoutLabel: d.earlyLogoutLabel,
         loginAt: d.loginAt,
         logoutAt: d.logoutAt,
         workedHours: hasWork ? worked : null,
         productiveHours: hasWork ? productive : null,
         breakHours: hasWork ? breakH : null,
+        breakRecordedHours: hasWork && d.breakCorrected ? d.breakRecordedHours : null,
+        breakCorrected: hasWork && d.breakCorrected,
         washroomHours: hasWork ? washroomH : null,
         arrival, // ON_TIME | LATE | HALF_DAY | ABSENT | LEAVE | HOLIDAY | WEEK_OFF | NOT_TRACKED | NOT_CLOCKED_IN
         arrivalMinutes: arrivalAt ? minutesAfterLimit(arrivalAt, who.tz) : null, // minutes after the Present limit

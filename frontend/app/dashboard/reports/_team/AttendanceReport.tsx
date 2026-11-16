@@ -19,13 +19,14 @@ import { ARRIVAL_CHIP, ARRIVAL_LABEL, lateDetail, lateRemarkText } from "./lateR
 type Row = {
   userId: string; name: string; employeeCode: string | null; teamName: string | null; date: string;
   shiftName: string | null; shiftStart: string | null; shiftEnd: string | null;
-  loginAt: string | null; logoutAt: string | null; workedHours: number | null; productiveHours: number | null; breakHours: number | null; washroomHours?: number | null; breakBudgetSeconds: number;
+  loginAt: string | null; logoutAt: string | null; workedHours: number | null; productiveHours: number | null; breakHours: number | null; breakRecordedHours?: number | null; breakCorrected?: boolean; washroomHours?: number | null; breakBudgetSeconds: number;
   stillWorking: boolean; autoClosed: boolean; note: string | null;
   status: string; statusLabel: string; leaveType: string | null; holidayName: string | null;
   lateMinutes: number | null; earlyDepartureMinutes: number | null; tasksCompleted: number;
   tasksPlanned: number | null; tasksApproved: number | null; // null = no tasks that day (exported blank)
   // Late Remark: the first check-in against the 09:45 / 10:15 arrival rule, the late duration, and the reason the person gave
   projects: string[]; reportingManager: string | null; huddleHours: number | null; // added for the Excel export
+  earlyLogoutDay?: boolean; earlyLogoutLabel?: string | null; // 2nd/4th Saturday early-logout policy
   arrival?: string; arrivalMinutes?: number | null; arrivalLimit?: string; lateReason?: string | null; correctedBy?: string | null;
 };
 type Report = {
@@ -59,6 +60,8 @@ function remarks(r: Row): string {
   if (r.autoClosed) out.push("Auto clocked out");
   if (r.status === "LEAVE") out.push(r.leaveType ? `${r.leaveType.toLowerCase()} leave` : "On leave");
   if (r.status === "HOLIDAY" && r.holidayName) out.push(r.holidayName);
+  // 2nd/4th Saturday: the scheduled early-logout day (a shorter working day, not a week-off). The day's note already says it when hours were short.
+  if (r.earlyLogoutDay && r.earlyLogoutLabel && !(r.note ?? "").includes(r.earlyLogoutLabel)) out.push(r.earlyLogoutLabel);
   if (r.note && !r.stillWorking && r.status !== "LEAVE" && r.status !== "HOLIDAY") out.push(r.note);
   if (r.lateMinutes && r.lateMinutes > 0) out.push(`Late ${hmFromMinutes(r.lateMinutes)}`);
   if (r.earlyDepartureMinutes && r.earlyDepartureMinutes > 0) out.push(`Left ${hmFromMinutes(r.earlyDepartureMinutes)} early`);
@@ -394,6 +397,11 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
                             <span className="font-medium text-red-600">{hmFromHours(r.breakHours)}<span className="block text-[11px]">over by {hmFromHours((r.breakHours ?? 0) - r.breakBudgetSeconds / 3600)}</span></span>
                           ) : (
                             <span className="text-slate-600">{hmFromHours(r.breakHours)}</span>
+                          )}
+                          {r.breakCorrected && (
+                            <span className="block text-[11px] font-normal text-amber-700" title="An Admin corrected this break. The recorded value is kept and can be restored.">
+                              Corrected · recorded {hmFromHours(r.breakRecordedHours ?? null)}
+                            </span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-600">{r.washroomHours ? hmFromHours(r.washroomHours) : <span className="text-slate-300">—</span>}</td>
