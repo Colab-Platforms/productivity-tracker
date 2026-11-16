@@ -10,8 +10,13 @@ import { auditNote } from "../../lib/auditContext.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { isFiltering, type HrFilters } from "../hr-filters/hrFilters.logic.js";
-import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager, selectableProjects } from "./tasks.entry.js";
-import { mayReview, pendingTaskVisibleTo, parseHours, parseProgress, storeProgress } from "./tasks.entry.logic.js";
+import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager, selectableProjects, type EntryDetail } from "./tasks.entry.js";
+import { sameTaskKey } from "./tasks.bulk.logic.js";
+import { allowedDaysFor, lateDetailsFor, lateReady } from "./tasks.late.js";
+import { activeTasks, deletionsReady, isTaskDeleted } from "./tasks.deleted.js";
+import { checkDeletion, reasonLabel } from "./tasks.delete.logic.js";
+import { checkBackdate } from "./tasks.late.logic.js";
+import { mayReview, pendingTaskVisibleTo, parseHours, parseProgress, storeProgress, progressOf, checkBlockedReason, PROGRESS_LABEL } from "./tasks.entry.logic.js";
 import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
 import { checkComment, creditOf, parseRating } from "./tasks.rating.logic.js";
 import { isRated, ratingReady, ratingsFor, withRatings } from "./tasks.rating.js";
@@ -304,11 +309,11 @@ export async function listTasks(userId: string) {
   const date = platformToday(ctx.timezone);
 
   const [rawRows, projects] = await Promise.all([
-    prisma.dailyTask.findMany({
-      where: { userId, date },
+    activeTasks().then((live) => prisma.dailyTask.findMany({
+      where: { userId, date, ...live },
       include: { team: { select: { name: true } } },
       orderBy: { title: "asc" },
-    }),
+    })),
     myProjects(userId),
   ]);
   const rows = await withRatings(rawRows);
@@ -316,7 +321,7 @@ export async function listTasks(userId: string) {
   // A task a manager reopened keeps its original day, which may be earlier than today, but it is unfinished work again: it is shown with
   // the rest of the person's working tasks, flagged with the day it came from. It does not change today's score.
   const reopenedOld = await withRatings(await prisma.dailyTask.findMany({
-    where: { userId, approvalStatus: "APPROVED", status: { in: ["PENDING", "IN_PROGRESS"] }, outcome: null, date: { lt: date }, reviewNote: { startsWith: REVERT_MARK_PREFIX } },
+    where: { userId, approvalStatus: "APPROVED", status: { in: ["PENDING", "IN_PROGRESS"] }, outcome: null, date: { lt: date }, reviewNote: { startsWith: REVERT_MARK_PREFIX }, ...(await activeTasks()) },
     include: { team: { select: { name: true } } },
     orderBy: { date: "asc" },
   }));
@@ -343,7 +348,7 @@ export async function listTasks(userId: string) {
 
   // The new entry form (hours, progress, tagged manager). Not offered to a manager's own self-managed tasks.
   const entryReadyNow = !selfManagedMode && (await entryReady());
-  const entryForm = entryReadyNow ? { ready: true, ...(await entryFormChoices(userId, ctx.platformId)) } : { ready: false, projects: [], managers: [] };
+  const entryForm = entryReadyNow ? { ready: true, ...(await entryFormChoices(userId, ctx.platformId)) } : { ready: false, projects: [], managers: [], defaults: { projectId: null, managerId: null, projectSource: null, managerSource: null } };
 
   return {
     date: date.toISOString().slice(0, 10),
@@ -372,7 +377,7 @@ export async function listTasks(userId: string) {
 export async function listMyDay(userId: string, day: unknown) {
   const date = parseIsoDay(day);
   const rows = await withRatings(await prisma.dailyTask.findMany({
-    where: { userId, date },
+    where: { userId, date, ...(await activeTasks()) },
     include: { team: { select: { name: true } } },
     orderBy: { title: "asc" },
   }));
@@ -390,15 +395,17 @@ export async function listMyRange(userId: string, from: unknown, to: unknown) {
   if (end.getTime() < start.getTime()) throw new Error("BAD_RANGE");
   if ((end.getTime() - start.getTime()) / 86400000 > 92) throw new Error("RANGE_TOO_LONG");
   const rows = await withRatings(await prisma.dailyTask.findMany({
-    where: { userId, date: { gte: start, lte: end } },
+    where: { userId, date: { gte: start, lte: end }, ...(await activeTasks()) },
     include: { team: { select: { name: true } } },
     orderBy: [{ date: "desc" }, { title: "asc" }],
   }));
+  const lates = await lateDetailsFor(rows.map((r) => r.id));
+  const entries = await entryDetailsFor(rows.map((r) => r.id));
   return {
     from: start.toISOString().slice(0, 10),
     to: end.toISOString().slice(0, 10),
     score: scoreOf(rows),
-    tasks: rows.map((t) => shape(t, t.team?.name ?? null)),
+    tasks: rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...entryView(String(t.status), entries.get(t.id)), late: lates.get(t.id) ?? null })),
   };
 }
 
@@ -428,6 +435,17 @@ async function resolveProject(
 }
 
 export async function proposeTask(userId: string, body: Record<string, unknown>) {
+  await createProposedTask(userId, body);
+  return listTasks(userId);
+}
+
+/**
+ * Creates ONE proposed task (the single-task form and every Quick Add row both come through here, so they follow the same rules).
+ * `rejectDuplicate` (Quick Add only): refuses a task the person already sent for the same day with the same words, project and manager.
+ * `forDate` (Add Previous Day's Tasks): the task is saved on that earlier day (never today), flagged as a late submission, and always waits for a
+ * manager; outside the company's allowed window a written reason is required. Attendance is never touched.
+ */
+export async function createProposedTask(userId: string, body: Record<string, unknown>, opts: { rejectDuplicate?: boolean; forDate?: Date; lateReason?: unknown } = {}): Promise<{ id: string }> {
   const ctx = await userContext(userId);
 
   const title = String(body.title ?? "").trim();
@@ -441,7 +459,8 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
   const weightIn = String(body.weight ?? "MEDIUM");
   const weight = WEIGHTS.includes(weightIn) ? weightIn : "MEDIUM";
 
-  const date = platformToday(ctx.timezone);
+  const today = platformToday(ctx.timezone);
+  const date = opts.forDate ?? today;
   // A MANAGER's own tasks are self-managed: approved when created, no approval step, nobody notified, no review queue. (Employee
   // tasks keep the approval workflow. Before the migration nothing is self-managed and a manager's task waits as it always did.)
   const selfManaged = ctx.role === "MANAGER" && (await selfTasksReady());
@@ -460,9 +479,22 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
     taggedManagerId = await resolveTaggedManager({ id: userId, platformId: ctx.platformId }, body.taggedManagerId);
   }
   const stored = progress ? storeProgress(progress) : null;
+  // A Blocked task always says why (3-500 characters); the other progress values carry no reason.
+  const blockedReason = stored?.blocked ? checkBlockedReason(body.blockedNote) : null;
   // Self-approval only when nobody can approve: no tagged manager AND no reporting manager. A task tagged to a manager always waits for
   // THAT manager, even when the employee has no reporting manager set.
   const selfApprove = selfManaged || (!ctx.user.reportsToId && !taggedManagerId);
+
+  // A previous-day task is checked against the company window; it is never accepted silently and never approves itself.
+  let late: ReturnType<typeof checkBackdate> | null = null;
+  let lateAllowedDays = 0;
+  if (opts.forDate) {
+    if (selfManaged) throw new Error("BULK_NOT_AVAILABLE");
+    if (!(await lateReady())) throw new Error("FEATURES_NOT_READY");
+    lateAllowedDays = await allowedDaysFor(ctx.platformId);
+    late = checkBackdate({ forDate: opts.forDate, today, allowedDays: lateAllowedDays, reason: opts.lateReason });
+    if (selfApprove) throw new Error("NO_APPROVER_FOR_LATE");
+  }
 
   let due: Date | null = null;
   if (selfManaged && body.dueDate !== undefined && body.dueDate !== null && body.dueDate !== "") {
@@ -471,6 +503,19 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
   }
 
   const created = await prisma.$transaction(async (tx) => {
+    if (opts.rejectDuplicate) {
+      // One person's Quick Add submissions are checked one at a time, so two identical requests at the same moment cannot both pass.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"quickadd:" + userId}))`;
+      const same = await tx.dailyTask.findMany({ where: { userId, date, teamId, approvalStatus: { not: "REJECTED" as never }, status: { not: "CANCELLED" as never }, ...(await activeTasks()) }, select: { id: true, title: true } });
+      const key = sameTaskKey({ title, teamId, taggedManagerId });
+      const dupIds = same.filter((x) => sameTaskKey({ title: x.title, teamId, taggedManagerId }) === key).map((x) => x.id);
+      if (dupIds.length) {
+        if (!entry) throw new Error("DUPLICATE_TASK");
+        const details = await tx.taskEntryDetail.findMany({ where: { taskId: { in: dupIds } }, select: { taskId: true, taggedManagerId: true } });
+        const managerOf = new Map(details.map((d) => [d.taskId, d.taggedManagerId]));
+        if (dupIds.some((id) => (managerOf.get(id) ?? null) === taggedManagerId)) throw new Error("DUPLICATE_TASK");
+      }
+    }
     const t = await tx.dailyTask.create({
       data: {
         platformId: ctx.platformId,
@@ -490,17 +535,22 @@ export async function proposeTask(userId: string, body: Record<string, unknown>)
     });
     if (entry && (stored || hours !== null || taggedManagerId)) {
       await tx.taskEntryDetail.create({
-        data: { taskId: t.id, platformId: ctx.platformId, hoursSpent: typeof hours === "number" ? hours : null, taggedManagerId, blocked: stored?.blocked === true, blockedNote: stored?.blocked && body.blockedNote ? String(body.blockedNote).trim().slice(0, 500) : null },
+        data: { taskId: t.id, platformId: ctx.platformId, hoursSpent: typeof hours === "number" ? hours : null, taggedManagerId, blocked: stored?.blocked === true, blockedNote: blockedReason },
       });
+    }
+    if (late) {
+      await tx.taskLateDetail.create({ data: { platformId: ctx.platformId, taskId: t.id, userId, lateByDays: late.lateByDays, outsideWindow: late.outsideWindow, allowedDays: lateAllowedDays, reason: late.reason } });
     }
     if (selfManaged) await tx.taskSelfDetail.create({ data: { taskId: t.id, platformId: ctx.platformId, userId, dueDate: due } });
     return t;
   });
   if (selfManaged) await recordEvent({ taskId: created.id, platformId: ctx.platformId, actorId: userId, kind: "CREATED", note: due ? `Due ${due.toISOString().slice(0, 10)}` : null });
+  // History of an employee's task starts with the progress it was sent with (and the reason, if it was sent Blocked).
+  else if (progress) await recordEvent({ taskId: created.id, platformId: ctx.platformId, actorId: userId, kind: "CREATED", note: `Submitted as ${PROGRESS_LABEL[progress]}${blockedReason ? `. Blocked reason: ${blockedReason}` : ""}` });
   emitTaskChange({ taskId: created.id, ownerId: userId, action: "created" }); // after the write succeeded
-  if (!selfApprove) await taskNotice("proposed", created.id, userId);
+  if (!selfApprove) await taskNotice("proposed", created.id, userId, late ? { lateDate: date.toISOString().slice(0, 10) } : {});
 
-  return listTasks(userId);
+  return { id: created.id };
 }
 
 export async function updateMyTask(
@@ -508,7 +558,7 @@ export async function updateMyTask(
   taskId: string,
   body: Record<string, unknown>
 ) {
-  const task = await prisma.dailyTask.findUnique({ where: { id: taskId } });
+  const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
   if (!task || task.userId !== userId) throw new Error("NOT_FOUND");
 
   const sd = (await detailsFor([taskId])).get(taskId);
@@ -550,11 +600,14 @@ export async function updateMyTask(
   // Progress (Completed / In Progress / Blocked), hours spent and the blocked note. Progress is NOT approval: it can change while the
   // approval is still pending, and never touches the approval. Not for a manager's own self-managed task.
   let entryPatch: { hoursSpent?: number | null; blocked?: boolean; blockedNote?: string | null; taggedManagerId?: string | null } | null = null;
+  let beforeEntry: EntryDetail | undefined;
   if (body.progress !== undefined || body.hoursSpent !== undefined || body.blockedNote !== undefined) {
     if (selfManaged) throw new Error("SELF_MANAGED_ONLY");
     if (!(await entryReady())) throw new Error("FEATURES_NOT_READY");
     if (await isRated(task)) throw new Error("ALREADY_REVIEWED");
     entryPatch = {};
+    beforeEntry = (await entryDetailsFor([taskId])).get(taskId);
+    const wasBlocked = beforeEntry?.blocked === true && String(task.status) !== "COMPLETED";
     if (body.progress !== undefined) {
       const pr = parseProgress(body.progress);
       if (pr === null || pr === "BAD") throw new Error("BAD_PROGRESS");
@@ -563,14 +616,17 @@ export async function updateMyTask(
       if (st.status === "COMPLETED" && String(task.status) !== "COMPLETED") data.completedAt = new Date();
       if (st.status !== "COMPLETED" && String(task.status) === "COMPLETED") data.completedAt = null;
       entryPatch.blocked = st.blocked;
-      if (!st.blocked) entryPatch.blockedNote = null;
+      // Blocked always keeps a reason: the one just given, or the one the task already has. Any other progress clears it.
+      entryPatch.blockedNote = st.blocked ? checkBlockedReason(body.blockedNote !== undefined ? body.blockedNote : beforeEntry?.blockedNote) : null;
+    } else if (body.blockedNote !== undefined && wasBlocked) {
+      // Only the reason changed on a task that is already Blocked: it still has to be a real reason.
+      entryPatch.blockedNote = checkBlockedReason(body.blockedNote);
     }
     if (body.hoursSpent !== undefined) {
       const h = parseHours(body.hoursSpent);
       if (h === "BAD") throw new Error("BAD_HOURS");
       entryPatch.hoursSpent = h;
     }
-    if (body.blockedNote !== undefined) entryPatch.blockedNote = body.blockedNote ? String(body.blockedNote).trim().slice(0, 500) : null;
   }
 
   if (body.dueDate !== undefined) {
@@ -661,6 +717,18 @@ export async function updateMyTask(
       if (selfManaged && Object.keys(detailPatch).length > 0) await tx.taskSelfDetail.update({ where: { taskId }, data: detailPatch });
     });
   }
+  // Progress history (To Do / In Progress / Completed / Blocked): every change, and the blocked reason, is kept in the task's history and in the audit log.
+  if (entryPatch && !selfManaged && (body.progress !== undefined || body.blockedNote !== undefined)) {
+    const oldP = progressOf(String(task.status), beforeEntry?.blocked === true);
+    const newP = progressOf(String(data.status ?? task.status), entryPatch.blocked !== undefined ? entryPatch.blocked : beforeEntry?.blocked === true);
+    const oldReason = oldP === "BLOCKED" ? beforeEntry?.blockedNote ?? null : null;
+    const newReason = newP === "BLOCKED" ? entryPatch.blockedNote ?? beforeEntry?.blockedNote ?? null : null;
+    if (oldP !== newP || oldReason !== newReason) {
+      const what = `${PROGRESS_LABEL[oldP]} -> ${PROGRESS_LABEL[newP]}${newReason ? `. Blocked reason: ${newReason}` : ""}`;
+      events.push({ kind: "UPDATE", note: `Progress: ${what}` });
+      auditNote({ summary: `Changed the progress of "${task.title.slice(0, 80)}": ${what}`, targetUserId: task.userId, before: { progress: oldP, blockedReason: oldReason }, after: { progress: newP, blockedReason: newReason } });
+    }
+  }
   for (const e of events) await recordEvent({ taskId, platformId: task.platformId, actorId: userId, kind: e.kind, note: e.note ?? null });
   emitTaskChange({ taskId, ownerId: userId, action: body.status !== undefined ? "status" : "updated" });
   // A manager's own completed task is not "submitted" to anyone: there is nobody to review it.
@@ -671,7 +739,7 @@ export async function updateMyTask(
 }
 
 export async function deleteMyTask(userId: string, taskId: string) {
-  const task = await prisma.dailyTask.findUnique({ where: { id: taskId } });
+  const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
   if (!task || task.userId !== userId) throw new Error("NOT_FOUND");
 
   if (task.assignedById) throw new Error("ASSIGNED_CANNOT_DELETE");
@@ -749,7 +817,7 @@ export async function listForApproval(
     const tagged = await prisma.taskEntryDetail.findMany({ where: { taggedManagerId: managerId }, select: { taskId: true } });
     if (tagged.length > 0) {
       const outside = await prisma.dailyTask.findMany({
-        where: { AND: [{ id: { in: tagged.map((t) => t.taskId) } }, { userId: { notIn: userIds } }, dateFilter] },
+        where: { AND: [{ id: { in: tagged.map((t) => t.taskId) } }, { userId: { notIn: userIds } }, dateFilter, await activeTasks()] },
         select: { id: true, userId: true },
       });
       extraTaskIds = outside.map((r) => r.id);
@@ -794,6 +862,7 @@ export async function listForApproval(
     }),
     prisma.dailyTask.findMany({
       where: {
+        ...(await activeTasks()),
         OR: [{ AND: [{ userId: { in: userIds } }, dateFilter] }, { id: { in: extraTaskIds } }],
       },
       include: {
@@ -823,7 +892,7 @@ export async function listForApproval(
   const selfIds = new Set((await detailsFor(rawRows.map((r) => r.id))).keys());
   const rows = rawRows.filter((r) => !selfIds.has(r.id));
 
-  const [entries, acting, ratedRows] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatings(rows)]);
+  const [entries, acting, ratedRows, lates] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatings(rows), lateDetailsFor(rows.map((r) => r.id))]);
   const deciderIds = [...new Set(ratedRows.map((t) => t.approvedById).filter((x): x is string => !!x))];
   const deciders = new Map(
     (deciderIds.length ? await prisma.user.findMany({ where: { id: { in: deciderIds } }, select: { id: true, firstName: true, lastName: true } }) : []).map((u) => [u.id, `${u.firstName} ${u.lastName}`.trim()])
@@ -834,6 +903,8 @@ export async function listForApproval(
     return {
       ...shape(t, t.team?.name ?? null),
       ...entryView(String(t.status), d),
+      // Set when this was submitted for an earlier day: how late, the reason, and the real submission time (`createdAt`); `date` is the original task day.
+      late: lates.get(t.id) ?? null,
       // HR and Admin see every task but only the manager it belongs to can act on it.
       // Approval history: who decided and when (the Admin monitors this; HR sees it once a task is approved).
       decidedBy: t.approvedById ? deciders.get(t.approvedById) ?? null : null,
@@ -974,7 +1045,7 @@ export async function approveTask(
   // Whoever proposed the task deserves to know why it was turned down.
   if (!approve && !String(note ?? "").trim()) throw new Error("REASON_REQUIRED");
 
-  const task = await prisma.dailyTask.findUnique({ where: { id: taskId } });
+  const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
   if (!task) throw new Error("NOT_FOUND");
   await assertCanReviewTask(actor, task, true);
   if ((await detailsFor([taskId])).has(taskId)) throw new Error("SELF_MANAGED");
@@ -1030,7 +1101,7 @@ export async function reviewTask(
   if ("error" in comment) throw new Error(comment.error);
   if (!(await ratingReady())) throw new Error("FEATURES_NOT_READY");
 
-  const task = await prisma.dailyTask.findUnique({ where: { id: taskId } });
+  const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
   if (!task) throw new Error("NOT_FOUND");
   // Nobody rates their own work, whatever their role.
   if (task.userId === managerId) throw new Error("NOT_YOUR_OWN_TASK");
@@ -1090,7 +1161,7 @@ export async function revertTask(managerId: string, taskId: string, typeIn: unkn
   const remark = checkRemark(remarkIn);
   if ("error" in remark) throw new Error(remark.error);
 
-  const task = await prisma.dailyTask.findUnique({ where: { id: taskId } });
+  const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
   if (!task) throw new Error("NOT_FOUND");
   // Nobody reverts their own task, whatever their role.
   if (task.userId === managerId) throw new Error("NOT_ALLOWED");
@@ -1138,7 +1209,137 @@ export async function revertTask(managerId: string, taskId: string, typeIn: unkn
 
 /** The task, only if it belongs to this person (used by routes that read one of your own tasks). */
 export async function ownTaskOrThrow(userId: string, taskId: string) {
-  const task = await prisma.dailyTask.findUnique({ where: { id: taskId }, select: { id: true, userId: true } });
+  const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) }, select: { id: true, userId: true } });
   if (!task || task.userId !== userId) throw new Error("NOT_FOUND");
   return task;
+}
+
+// ---------------------------------------------------------------------------
+// DELETE A TASK (soft delete, by its tagged manager)
+//
+// The task row is never changed or removed. A row in task_deletions says who deleted it (name, role), when and why; from then on every list,
+// count, rating average and report skips the task (see tasks.deleted.ts). The audit log keeps a full copy of what the task looked like.
+// Who may delete: exactly who may approve it (the tagged manager; an old task with no usable tag keeps its project/reporting-line reviewer).
+// HR never, another manager never, nobody their own task, nobody a manager's own self-managed task.
+// ---------------------------------------------------------------------------
+export async function deleteTaskAsManager(managerId: string, taskId: string, input: { reasonCode?: unknown; note?: unknown }) {
+  if (!(await deletionsReady())) throw new Error("FEATURES_NOT_READY");
+  const reason = checkDeletion(input);
+  const ctx = await userContext(managerId);
+  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
+
+  const task = await prisma.dailyTask.findUnique({
+    where: { id: taskId },
+    include: { team: { select: { name: true } }, user: { select: { firstName: true, lastName: true, employeeCode: true } } },
+  });
+  if (!task) throw new Error("NOT_FOUND");
+  if (task.userId === managerId) throw new Error("NOT_ALLOWED"); // nobody deletes their own task from the manager screen
+  if ((await detailsFor([taskId])).has(taskId)) throw new Error("SELF_MANAGED");
+  await assertCanReviewTask(actor, task, true);
+  if (await isTaskDeleted(taskId)) throw new Error("ALREADY_DELETED");
+
+  const [rated] = await withRatings([task]);
+  const entry = (await entryDetailsFor([taskId])).get(taskId);
+  const who = `${task.user.firstName} ${task.user.lastName}`.trim();
+  const me = await prisma.user.findUnique({ where: { id: managerId }, select: { firstName: true, lastName: true } });
+  const byName = `${me?.firstName ?? ""} ${me?.lastName ?? ""}`.trim();
+  const snapshot = {
+    employee: who,
+    employeeCode: task.user.employeeCode,
+    title: task.title,
+    description: task.description,
+    date: task.date.toISOString().slice(0, 10),
+    project: task.team?.name ?? null,
+    status: String(task.status),
+    approvalStatus: String(task.approvalStatus),
+    rating: rated.rating,
+    ratingComment: rated.ratingComment,
+    managerComments: { reviewNote: task.reviewNote, rejectionNote: task.rejectionNote, approvalNote: entry?.approvalNote ?? null },
+    completionNote: task.completionNote,
+    taggedManager: entry?.taggedManagerName ?? null,
+  };
+
+  let deletedAt: Date;
+  try {
+    const row = await prisma.taskDeletion.create({
+      data: { platformId: task.platformId, taskId, deletedById: managerId, deletedByName: byName, deletedByRole: ctx.role, reasonCode: reason.reasonCode, reasonNote: reason.reasonNote },
+      select: { deletedAt: true },
+    });
+    deletedAt = row.deletedAt;
+  } catch (e) {
+    if ((e as { code?: string })?.code === "P2002") throw new Error("ALREADY_DELETED"); // two presses at once: only one wins
+    throw e;
+  }
+
+  auditNote({
+    module: "Tasks",
+    action: "DELETE",
+    platformId: task.platformId,
+    recordType: "Task",
+    recordId: taskId,
+    targetUserId: task.userId,
+    summary: `Deleted the task "${task.title.slice(0, 80)}" of ${who}: ${reasonLabel(reason.reasonCode)}${reason.reasonNote ? ` (${reason.reasonNote})` : ""}`,
+    before: snapshot,
+    after: { deleted: true, deletedBy: byName, deletedByRole: ctx.role, reasonCode: reason.reasonCode, reasonNote: reason.reasonNote },
+  });
+  emitTaskChange({ taskId, ownerId: task.userId, action: "deleted" });
+  await taskNotice("deleted", taskId, managerId, { note: `${reasonLabel(reason.reasonCode)}${reason.reasonNote ? `: ${reason.reasonNote}` : ""}` });
+  return { ok: true, taskId, deletedAt: deletedAt.toISOString() };
+}
+
+/**
+ * The deleted tasks the viewer may see: HR and Admin for the companies they act on; a manager only the ones he deleted himself.
+ * Everything the task had is shown (employee, project, dates, rating, comments) together with who deleted it, when and why.
+ */
+export async function listDeletedTasks(viewerId: string) {
+  if (!(await deletionsReady())) return { ready: false, tasks: [] as unknown[] };
+  const ctx = await userContext(viewerId);
+  let where: { platformId?: { in: string[] }; deletedById?: string };
+  if (ctx.role === "HR" || ctx.role === "ADMIN") where = scopeWhere(await accessFor(viewerId));
+  else if (ctx.role === "MANAGER") where = { deletedById: viewerId };
+  else throw new Error("NOT_ALLOWED");
+
+  const rows = await prisma.taskDeletion.findMany({
+    where,
+    orderBy: { deletedAt: "desc" },
+    take: 300,
+    include: { task: { include: { team: { select: { name: true } }, user: { select: { firstName: true, lastName: true, employeeCode: true, platform: { select: { name: true } } } } } } },
+  });
+  const rated = await withRatings(rows.map((r) => r.task));
+  const ratedById = new Map(rated.map((t) => [t.id, t]));
+  const entries = await entryDetailsFor(rows.map((r) => r.taskId));
+  return {
+    ready: true,
+    tasks: rows.map((r) => {
+      const t = ratedById.get(r.taskId)!;
+      const d = entries.get(r.taskId);
+      return {
+        id: r.taskId,
+        employee: `${r.task.user.firstName} ${r.task.user.lastName}`.trim(),
+        employeeCode: r.task.user.employeeCode,
+        company: r.task.user.platform?.name ?? null,
+        title: r.task.title,
+        description: r.task.description,
+        date: r.task.date.toISOString().slice(0, 10),
+        project: r.task.team?.name ?? null,
+        status: String(r.task.status),
+        approvalStatus: String(r.task.approvalStatus),
+        rating: t.rating,
+        ratingComment: t.ratingComment,
+        completionNote: r.task.completionNote,
+        reviewNote: r.task.reviewNote,
+        rejectionNote: r.task.rejectionNote,
+        approvalNote: d?.approvalNote ?? null,
+        taggedManager: d?.taggedManagerName ?? null,
+        hoursSpent: d?.hoursSpent ?? null,
+        deletedBy: r.deletedByName,
+        deletedByRole: r.deletedByRole,
+        deletedAt: r.deletedAt.toISOString(),
+        reasonCode: r.reasonCode,
+        reason: reasonLabel(r.reasonCode),
+        note: r.reasonNote,
+      };
+    }),
+  };
 }

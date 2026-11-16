@@ -20,7 +20,7 @@ import { entryDetailsFor } from "./tasks.entry.js";
 // Posting a notification must never break the task action that caused it: everything here is caught and logged.
 // ---------------------------------------------------------------------------
 
-export type TaskEvent = "assigned" | "proposed" | "submitted" | "proposalApproved" | "proposalReturned" | "approved" | "notAccepted" | "rated" | "reverted";
+export type TaskEvent = "assigned" | "proposed" | "submitted" | "proposalApproved" | "proposalReturned" | "approved" | "notAccepted" | "rated" | "reverted" | "deleted";
 
 const MANAGER_LINK = "/dashboard/approvals";
 const EMPLOYEE_LINK = "/dashboard/tasks";
@@ -72,7 +72,7 @@ async function send(recipients: string[], base: { type: string; title: string; b
   for (const [platformId, userIds] of byPlatform) await notifyUsers({ platformId, userIds, ...base });
 }
 
-export async function taskNotice(event: TaskEvent, taskId: string, actorId: string, extra: { note?: string | null; partial?: boolean; stamp?: number; label?: string; stars?: number } = {}): Promise<void> {
+export async function taskNotice(event: TaskEvent, taskId: string, actorId: string, extra: { note?: string | null; partial?: boolean; stamp?: number; label?: string; stars?: number; lateDate?: string } = {}): Promise<void> {
   try {
     const task = await prisma.dailyTask.findUnique({
       where: { id: taskId },
@@ -90,7 +90,7 @@ export async function taskNotice(event: TaskEvent, taskId: string, actorId: stri
       return send([task.userId], { type: "TASK_ASSIGNED", title: "New task assigned", body: `${by} assigned you: ${task.title}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:assigned`, data });
     }
     if (event === "proposed") {
-      return send(await reviewersOf(task.id, task.userId, null, [actorId, task.userId]), { type: "TASK_PROPOSED", title: "Task needs your approval", body: `${owner} proposed: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:proposed`, data });
+      return send(await reviewersOf(task.id, task.userId, null, [actorId, task.userId]), { type: "TASK_PROPOSED", title: extra.lateDate ? "Late task needs your approval" : "Task needs your approval", body: extra.lateDate ? `${owner} submitted late for ${extra.lateDate}: ${task.title}` : `${owner} proposed: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:proposed`, data });
     }
     if (event === "submitted") {
       return send(await reviewersOf(task.id, task.userId, task.assignedById, [actorId, task.userId]), { type: "TASK_SUBMITTED", title: "Work submitted for review", body: `${owner} marked done: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:submitted:${stamp}`, data });
@@ -109,6 +109,10 @@ export async function taskNotice(event: TaskEvent, taskId: string, actorId: stri
     if (event === "rated") {
       // Same notification type as before ("TASK_APPROVED") so the existing popup and inbox handling keep working.
       return send([task.userId], { type: "TASK_APPROVED", title: "Your work was rated", body: `${by} rated "${task.title}" ${extra.stars ?? "?"}/5${clip(extra.note)}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:graded:${stamp}`, data });
+    }
+    if (event === "deleted") {
+      // The task is gone from the employee's list; this tells them who removed it and why.
+      return send([task.userId], { type: "TASK_DELETED", title: "A task was removed", body: `${by} removed: ${task.title}${clip(extra.note, 200)}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:deleted`, data });
     }
     if (event === "reverted") {
       // Every revert is its own event (a task can be reopened more than once), so the key carries the moment.

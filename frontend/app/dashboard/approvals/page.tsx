@@ -22,6 +22,10 @@ import { EmployeePicker } from "./EmployeePicker";
 import FilterBar from "../_filters/FilterBar";
 import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 import { buildPeople } from "./people";
+import { LateNote, type LateInfo } from "../_late/Late";
+import { DeleteTaskModal } from "./DeleteTaskModal";
+import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL, PROGRESS_OPTIONS, normalProgress } from "../_progress/progress";
+import { DeletedTasks } from "./DeletedTasks";
 
 const API = API_BASE;
 
@@ -60,13 +64,15 @@ type Task = {
   isCarriedOver: boolean;
   createdAt: string;
   // Daily task entry: progress is separate from approval. canAct is false for HR/Admin and for managers the task is not tagged to.
-  progress?: "COMPLETED" | "IN_PROGRESS" | "BLOCKED" | "NOT_STARTED";
+  progress?: "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED" | "NOT_STARTED";
   hoursSpent?: number | null;
   taggedManager?: string | null;
   blockedNote?: string | null;
   approvalNote?: string | null;
   project?: string | null;
   canAct?: boolean;
+  // Set when it was submitted for an earlier day: `date` is the original task day, `createdAt` the real submission time.
+  late?: LateInfo | null;
   date?: string;
   completedAt?: string | null;
 };
@@ -92,7 +98,7 @@ type Queue = {
 };
 
 // Every task belongs to exactly ONE of these, so the tab counts always add up to the total in view.
-type TabKey = "waiting" | "todo" | "inProgress" | "completed" | "closed";
+type TabKey = "waiting" | "todo" | "inProgress" | "completed" | "closed" | "deleted";
 
 function bucketOf(t: { approvalStatus?: string | null; status?: string | null }): TabKey {
   const a = String(t.approvalStatus ?? "");
@@ -185,6 +191,10 @@ export default function ApprovalsPage() {
   const [rejecting, setRejecting] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [revertFor, setRevertFor] = useState<Row | null>(null);
+  // Delete task (soft delete by the tagged manager): the task being deleted, the server's error, and a confirmation line afterwards.
+  const [deleteFor, setDeleteFor] = useState<Row | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deletedNotice, setDeletedNotice] = useState("");
   const [ratingEdit, setRatingEdit] = useState<string | null>(null); // the task whose saved rating is being changed
   const [comments, setComments] = useState<Record<string, string>>({});
   const [revertError, setRevertError] = useState("");
@@ -203,6 +213,9 @@ export default function ApprovalsPage() {
   const [customTo, setCustomTo] = useState<string>("");
   const [tab, setTab] = useState<TabKey>("waiting");
   const [ratingFilter, setRatingFilter] = useState<"all" | "pending" | "rated">("all");
+  const [submission, setSubmission] = useState<"all" | "normal" | "late">("all");
+  // Progress filter (To Do / In Progress / Completed / Blocked). Progress is the work; approval is the manager's decision, a separate thing.
+  const [progressFilter, setProgressFilter] = useState<"all" | "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED">("all");
   const [reload, setReload] = useState(0);
   // The company's "today" (from the server). Until the first answer arrives, the browser's own local date.
   const [today, setToday] = useState<string>(() => todayIso());
@@ -217,8 +230,14 @@ export default function ApprovalsPage() {
   });
 
   const rows: Row[] = queue?.all ?? [];
-  const inScope = person ? rows.filter((t) => t.userId === person) : rows;
-  const counts: Record<TabKey, number> = { waiting: 0, todo: 0, inProgress: 0, completed: 0, closed: 0 };
+  const ofPerson = person ? rows.filter((t) => t.userId === person) : rows;
+  const lateCount = ofPerson.filter((t) => !!t.late).length;
+  // Normal / Late submissions: narrows the tabs, their counts and the list together, so they still add up.
+  const afterSubmission = submission === "all" ? ofPerson : ofPerson.filter((t) => (submission === "late" ? !!t.late : !t.late));
+  // Progress filter: narrows the tabs, their counts and the list together; the counts per progress follow the other filters.
+  const progressCount = (p: string) => afterSubmission.filter((t) => normalProgress(t.progress) === p).length;
+  const inScope = progressFilter === "all" ? afterSubmission : afterSubmission.filter((t) => normalProgress(t.progress) === progressFilter);
+  const counts: Record<TabKey, number> = { waiting: 0, todo: 0, inProgress: 0, completed: 0, closed: 0, deleted: 0 };
   for (const t of inScope) counts[bucketOf(t)] += 1;
   // Rating status (Completed tab only): based on the saved rating itself (rating null = no rating saved), never on completion.
   const completedRows = inScope.filter((t) => bucketOf(t) === "completed");
@@ -294,6 +313,22 @@ export default function ApprovalsPage() {
     }
   }
 
+  async function sendDelete(reasonCode: string, note: string) {
+    if (!deleteFor) return;
+    setBusy(true);
+    setDeleteError("");
+    try {
+      await call<{ ok: boolean }>(`/tasks/review/${deleteFor.id}/delete`, "POST", { reasonCode, note });
+      setDeletedNotice(`Deleted "${deleteFor.title}". It is out of the active records and is listed under Deleted tasks.`);
+      setDeleteFor(null);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "That didn't work");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const allowed = ["MANAGER", "HR", "ADMIN"].includes(me?.role ?? "");
 
   if (me && !allowed) {
@@ -323,6 +358,26 @@ export default function ApprovalsPage() {
       {error && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           {error}
+        </div>
+      )}
+
+      {deleteFor && (
+        <DeleteTaskModal
+          who={deleteFor.who || personLabel(deleteFor as RowLike)}
+          title={deleteFor.title}
+          date={deleteFor.date ?? null}
+          project={deleteFor.project ?? null}
+          rated={deleteFor.rating != null}
+          busy={busy}
+          error={deleteError}
+          onSubmit={(code, note) => void sendDelete(code, note)}
+          onCancel={() => setDeleteFor(null)}
+        />
+      )}
+      {deletedNotice && (
+        <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <span className="break-words">{deletedNotice}</span>
+          <button type="button" onClick={() => setDeletedNotice("")} className="shrink-0 text-xs underline">Dismiss</button>
         </div>
       )}
 
@@ -358,7 +413,8 @@ export default function ApprovalsPage() {
               { key: "inProgress", label: "In progress", n: counts.inProgress },
               { key: "completed", label: "Completed", n: counts.completed },
               { key: "closed", label: "Closed", n: counts.closed },
-            ] as { key: TabKey; label: string; n: number }[]).map((o) => (
+              { key: "deleted", label: "Deleted tasks", n: null },
+            ] as { key: TabKey; label: string; n: number | null }[]).map((o) => (
               <button
                 key={o.key}
                 onClick={() => setTab(o.key)}
@@ -369,7 +425,7 @@ export default function ApprovalsPage() {
                 }`}
               >
                 {o.label}
-                <span
+                {o.n !== null && <span
                   className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${
                     tab === o.key
                       ? "bg-indigo-100 text-indigo-700"
@@ -377,12 +433,33 @@ export default function ApprovalsPage() {
                   }`}
                 >
                   {o.n}
-                </span>
+                </span>}
               </button>
             ))}
           </div>
 
-          <div className="relative flex flex-wrap items-center gap-2 py-2">
+          <div className={`relative flex flex-wrap items-center gap-2 py-2 ${tab === "deleted" ? "hidden" : ""}`}>
+            <select
+              value={submission}
+              onChange={(e) => setSubmission(e.target.value as "all" | "normal" | "late")}
+              aria-label="Submission type"
+              className="rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-sm text-slate-700"
+            >
+              <option value="all">All submissions ({ofPerson.length})</option>
+              <option value="normal">Normal submissions ({ofPerson.length - lateCount})</option>
+              <option value="late">Late submissions ({lateCount})</option>
+            </select>
+            <select
+              value={progressFilter}
+              onChange={(e) => setProgressFilter(e.target.value as typeof progressFilter)}
+              aria-label="Progress"
+              className="rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-sm text-slate-700"
+            >
+              <option value="all">All progress ({afterSubmission.length})</option>
+              {PROGRESS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label} ({progressCount(o.value)})</option>
+              ))}
+            </select>
             {tab === "completed" && (
               <select
                 value={ratingFilter}
@@ -431,6 +508,7 @@ export default function ApprovalsPage() {
 
       {/* --- who and when ------------------------------------------------ */}
       {/* --- proposals ---------------------------------------------------- */}
+      {tab === "deleted" && <DeletedTasks />}
       {tab === "waiting" && (
       <section className="overflow-hidden rounded-2xl rounded-t-none bg-white shadow-[var(--shadow-card)]">
         <div className="border-b border-indigo-50 px-5 py-3.5">
@@ -455,6 +533,13 @@ export default function ApprovalsPage() {
                     {personLabel(t as RowLike)}
                     {t.isCarriedOver && " · carried over"}
                   </p>
+                  <LateNote date={t.date} late={t.late} forManager />
+                <BlockedCallout t={t} />
+                  {t.canAct && (
+                    <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
+                      Delete task
+                    </button>
+                  )}
                   {t.description && (
                     <p className="mt-1 text-xs text-slate-500">{t.description}</p>
                   )}
@@ -562,6 +647,13 @@ export default function ApprovalsPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-slate-900">{t.title}</p>
                 <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
+                <LateNote date={t.date} late={t.late} forManager />
+                <BlockedCallout t={t} />
+                {t.canAct && (
+                  <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
+                    Delete task
+                  </button>
+                )}
                 {t.reopened && !t.reopened.resubmitted && (
                   <p className="mt-1 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-900"><span className="font-medium">Reopened · {t.reopened.label}:</span> {t.reopened.remark}</p>
                 )}
@@ -598,6 +690,13 @@ export default function ApprovalsPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-slate-900">{t.title}</p>
                 <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
+                <LateNote date={t.date} late={t.late} forManager />
+                <BlockedCallout t={t} />
+                {t.canAct && (
+                  <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
+                    Delete task
+                  </button>
+                )}
                 {t.completionNote && (
                   <p className="mt-1 text-xs text-slate-500">
                     Their note: {t.completionNote}
@@ -662,6 +761,13 @@ export default function ApprovalsPage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-slate-900">{t.title}</p>
                   <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
+                <LateNote date={t.date} late={t.late} forManager />
+                <BlockedCallout t={t} />
+                {t.canAct && (
+                  <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
+                    Delete task
+                  </button>
+                )}
                   {t.rejectionNote && <p className="mt-1 text-xs text-slate-500">Sent back: {t.rejectionNote}</p>}
                 </div>
                 <span className="shrink-0 rounded px-2 py-0.5 text-xs font-medium bg-rose-50 text-rose-700">
@@ -676,24 +782,26 @@ export default function ApprovalsPage() {
     </div>
   );
 }
-const PROGRESS_LABEL: Record<string, { label: string; cls: string }> = {
-  COMPLETED: { label: "Completed", cls: "bg-emerald-50 text-emerald-700" },
-  IN_PROGRESS: { label: "In Progress", cls: "bg-sky-50 text-sky-700" },
-  BLOCKED: { label: "Blocked", cls: "bg-rose-50 text-rose-700" },
-  NOT_STARTED: { label: "Not started", cls: "bg-slate-100 text-slate-500" },
-};
+// Why a Blocked task cannot go on, in the employee's own words: shown to the manager on every row, in every tab.
+function BlockedCallout({ t }: { t: { progress?: string; blockedNote?: string | null } }) {
+  if (t.progress !== "BLOCKED") return null;
+  return (
+    <p className="mt-1 break-words rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900 [overflow-wrap:anywhere]">
+      <span className="font-medium">Blocked:</span> {t.blockedNote ? t.blockedNote : "No reason was written (this task was blocked before a reason was required)."}
+    </p>
+  );
+}
 
 // The task's progress (is the work done?) next to its project, hours and tagged manager. Approval is what this screen decides.
 function TaskMeta({ t }: { t: Task }) {
   if (!t.progress) return null;
-  const p = PROGRESS_LABEL[t.progress];
+  const p = { label: PROGRESS_LABEL[t.progress] ?? t.progress, cls: PROGRESS_CHIP_CLASS[t.progress] ?? "bg-slate-100 text-slate-600" };
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
       <span className={`rounded-full px-2 py-0.5 font-medium ${p.cls}`}>{p.label}</span>
       {t.hoursSpent != null && <span className="text-slate-500">{t.hoursSpent} h</span>}
       {t.project && <span className="text-slate-500">· {t.project}</span>}
       {t.taggedManager && <span className="text-slate-500">· Tagged to {t.taggedManager}</span>}
-      {t.progress === "BLOCKED" && t.blockedNote && <span className="text-rose-600">· {t.blockedNote}</span>}
     </div>
   );
 }

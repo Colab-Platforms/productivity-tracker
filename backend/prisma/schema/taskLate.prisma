@@ -1,0 +1,29 @@
+// Late (previous-day) task submissions. NEW TABLES ONLY; daily_tasks is untouched (its `date` is the original task date and its
+// `createdAt` is the real submission time). A row in task_late_details marks a task as a late submission and keeps the reason.
+// No Prisma relations: the foreign keys live in the migration.
+model TaskLateDetail {
+  id            String   @id @default(uuid()) @db.Uuid
+  platformId    String   @db.Uuid
+  taskId        String   @unique @db.Uuid
+  userId        String   @db.Uuid
+  lateByDays    Int
+  outsideWindow Boolean  @default(false)
+  allowedDays   Int
+  reason        String?
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@map("task_late_details")
+}
+
+// How many previous days an employee may add tasks for WITHOUT giving a reason, per company. No row = the default (3).
+model TaskLatePolicy {
+  id          String   @id @default(uuid()) @db.Uuid
+  platformId  String   @unique @db.Uuid
+  allowedDays Int      @default(3)
+  updatedById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("task_late_policies")
+}

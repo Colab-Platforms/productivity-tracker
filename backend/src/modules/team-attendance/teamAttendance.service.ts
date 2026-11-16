@@ -20,6 +20,7 @@ import { remarksBySession } from "../tracker/lateRemarks.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
+import { activeTasks } from "../tasks/tasks.deleted.js";
 
 // Where no team config exists these match what Live Team already assumes.
 const DEFAULT_PRODUCTIVE_HOURS = 8;
@@ -440,11 +441,11 @@ export async function getAttendanceReport(
     Promise.all(months.map(([yy, mm]) => getMonthAttendanceBulk(ids, yy, mm))),
     // Every task of the day that still stands (not cancelled), counted by status, so completed / approved / planned
     // all come from the same rows.
-    prisma.dailyTask.groupBy({
+    activeTasks().then((live) => prisma.dailyTask.groupBy({
       by: ["userId", "date", "status", "approvalStatus"],
-      where: { userId: { in: ids }, date: { gte: from, lte: to }, status: { not: "CANCELLED" } },
+      where: { userId: { in: ids }, date: { gte: from, lte: to }, status: { not: "CANCELLED" }, ...live },
       _count: { _all: true },
-    }),
+    })),
   ]);
   // What explains a late arrival: the reason the person typed at clock-in, and whether HR corrected the day. Batched, optional tables degrade to nothing.
   const sessionRows = await prisma.workSession.findMany({ where: { userId: { in: ids }, date: { gte: from, lte: to } }, select: { id: true, userId: true, date: true } });

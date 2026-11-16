@@ -10,6 +10,7 @@ import { getPinnedCompany } from "../../lib/deployment.js";
 import { actorOf, approverChoices, decorate, flowReady, hrIdsFor, myProjects, recordEvent, resolveApprover, validProjectIds } from "./leaveFlow.js";
 import { finalGate } from "./leaveFlow.logic.js";
 import { needsManualMapping } from "../admin/hierarchy.logic.js";
+import { activeTasks } from "../tasks/tasks.deleted.js";
 
 // ---------------------------------------------------------------------------
 // LEAVE REQUESTS
@@ -344,7 +345,7 @@ export async function overview(userId: string) {
     const reports = await prisma.user.findMany({ where: { reportsToId: userId, status: { in: ["ACTIVE", "INVITED"] } }, select: { id: true } });
     const mine = await prisma.taskEntryDetail.findMany({ where: { taggedManagerId: userId }, select: { taskId: true } }).catch(() => [] as { taskId: string }[]);
     const pendingTasks = await prisma.dailyTask.count({
-      where: { approvalStatus: "PENDING", status: { not: "CANCELLED" }, OR: [{ userId: { in: reports.map((r) => r.id) } }, { id: { in: mine.map((m) => m.taskId) } }] },
+      where: { approvalStatus: "PENDING", status: { not: "CANCELLED" }, ...(await activeTasks()), OR: [{ userId: { in: reports.map((r) => r.id) } }, { id: { in: mine.map((m) => m.taskId) } }] },
     });
     out.teamSize = reports.length;
     out.pendingTaskApprovals = pendingTasks;
@@ -354,7 +355,7 @@ export async function overview(userId: string) {
     const dec = await decorate(own);
     out.myPendingLeave = own.map((r) => ({ id: r.id, stage: dec.get(r.id)!.stage, label: dec.get(r.id)!.stageLabel }));
     const today = platformToday(me.timezone);
-    const tasks = await prisma.dailyTask.groupBy({ by: ["approvalStatus"], where: { userId, date: today, status: { not: "CANCELLED" } }, _count: { _all: true } });
+    const tasks = await prisma.dailyTask.groupBy({ by: ["approvalStatus"], where: { userId, date: today, status: { not: "CANCELLED" }, ...(await activeTasks()) }, _count: { _all: true } });
     out.myTasksToday = Object.fromEntries(tasks.map((t) => [String(t.approvalStatus), t._count._all]));
   }
   return out;

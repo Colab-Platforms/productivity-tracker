@@ -200,6 +200,9 @@ model DailyTask {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Virtual (no column): set when a manager soft-deleted this task. See task_deletions.
+  deletion TaskDeletion?
+
   @@index([userId, date])
   @@index([platformId, date])
   @@index([userId, status])

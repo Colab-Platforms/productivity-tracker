@@ -27,6 +27,7 @@ import { visibleUserIds } from "../tracker/tracker.service.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
 import { awayOf } from "../tracker/activityClass.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
+import { activeTasks } from "../tasks/tasks.deleted.js";
 
 export type GroupBy = "person" | "day" | "week" | "month" | "year";
 
@@ -201,10 +202,10 @@ export async function getTeamReport(
         select: { userId: true, date: true, isHalfDay: true },
       }),
 
-      prisma.dailyTask.findMany({
-        where: { userId: { in: userIds }, date: dateFilter },
+      activeTasks().then((live) => prisma.dailyTask.findMany({
+        where: { userId: { in: userIds }, date: dateFilter, ...live },
         select: { id: true, userId: true, date: true, weight: true, status: true, approvalStatus: true, outcome: true },
-      }),
+      })),
 
       prisma.alert.findMany({
         where: { userId: { in: userIds }, date: dateFilter },

@@ -62,11 +62,14 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/tracker\/alerts\/:id\/ack$/, module: "Attendance", action: "UPDATE", summary: "Acknowledged an alert", recordType: "Alert" },
 
   { method: "POST", re: /^\/api\/tasks$/, module: "Tasks", action: "CREATE", summary: "Proposed a task" },
+  { method: "POST", re: /^\/api\/tasks\/bulk$/, module: "Tasks", action: "CREATE", summary: "Sent several tasks for approval (Quick Add)" },
+  { method: "PUT", re: /^\/api\/tasks\/late-policy$/, module: "Tasks", action: "UPDATE", summary: "Changed the previous-day task window" },
   { method: "PATCH", re: /^\/api\/tasks\/:id$/, module: "Tasks", action: "UPDATE", summary: "Updated a task", recordType: "Task" },
   { method: "DELETE", re: /^\/api\/tasks\/:id$/, module: "Tasks", action: "DELETE", summary: "Deleted a task", recordType: "Task" },
   { method: "POST", re: /^\/api\/tasks\/review\/assign$/, module: "Tasks", action: "CREATE", summary: "Assigned a task" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/approve$/, module: "Tasks", action: (b) => verdict(b, "approve", [false], "REJECT", "APPROVE"), summary: (b) => (b?.approve === false ? "Sent a task proposal back" : "Approved a task proposal"), recordType: "Task" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/(outcome|rating)$/, module: "Tasks", action: "UPDATE", summary: "Rated a task", recordType: "Task" },
+  { method: "POST", re: /^\/api\/tasks\/review\/:id\/delete$/, module: "Tasks", action: "DELETE", summary: "Deleted a task", recordType: "Task" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/revert$/, module: "Tasks", action: "UPDATE", summary: "Reopened a completed task", recordType: "Task" },
 
   { method: "POST", re: /^\/api\/admin\/employees\/(parse|preview|update\/preview)$/, module: "Employees", action: "OTHER", summary: "Previewed an employee file", skip: true },

@@ -15,8 +15,11 @@ import { apiGet, apiPost , API_BASE } from "@/lib/api";
 import { useTaskRealtime } from "@/lib/realtime";
 import { formatDate, isoDaysAgo } from "@/lib/time";
 import { DateFilter, RangeTasks, rangeFor, type RangeKey } from "./_range/RangeTasks";
+import QuickAdd from "./_quick/QuickAdd";
 import SelfManagedTasks, { type SelfPayload } from "./_self/SelfManagedTasks";
 import { Stars } from "../_ratings/Stars";
+import { BlockedReasonModal } from "../_progress/BlockedReasonModal";
+import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL, PROGRESS_OPTIONS, blockedReasonProblem, normalProgress, BLOCKED_REASON_MAX } from "../_progress/progress";
 
 const API = API_BASE;
 
@@ -58,7 +61,7 @@ type Task = {
   approvedBy: string | null;
   reviewedBy: string | null;
   // Daily task entry (present once the server has it switched on): progress is separate from approval.
-  progress?: "COMPLETED" | "IN_PROGRESS" | "BLOCKED" | "NOT_STARTED";
+  progress?: "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED" | "NOT_STARTED";
   hoursSpent?: number | null;
   taggedManager?: string | null;
   blockedNote?: string | null;
@@ -73,6 +76,8 @@ type EntryForm = {
   ready: boolean;
   projects: { id: string; name: string; label: string; company: string | null; ownCompany: boolean }[];
   managers: { id: string; name: string; code: string | null; role: string }[];
+  // Worked out by the server from the person's team allocation and reporting line (null = the records give no single answer).
+  defaults?: { projectId: string | null; managerId: string | null; projectSource: string | null; managerSource: string | null };
 };
 
 type Score = {
@@ -115,14 +120,25 @@ export default function TasksPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [weight, setWeight] = useState("MEDIUM");
-  const [projectId, setProjectId] = useState("");
-  const [taggedId, setTaggedId] = useState<string | null>(null);
+  // null = the person has not chosen: the project / manager follow the default worked out from their records. "" = they chose "none".
+  const [projectPick, setProjectPick] = useState<string | null>(null);
+  const [taggedPick, setTaggedPick] = useState<string | null>(null);
   const [hours, setHours] = useState("");
   const [progress, setProgress] = useState("IN_PROGRESS");
+  const [blockedNote, setBlockedNote] = useState("");
+  // A task being switched to Blocked in the list: asks for the reason first.
+  const [blockFor, setBlockFor] = useState<Task | null>(null);
+  const [blockError, setBlockError] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [rangeKey, setRangeKey] = useState<RangeKey>("today");
   const [picked, setPicked] = useState(isoDaysAgo(1));
+  const [entryMode, setEntryMode] = useState<"single" | "quick" | "previous">("single");
+  // How many previous days may be added without a reason (company setting); `ready` is false until the server has the feature.
+  const [latePolicy, setLatePolicy] = useState<{ ready: boolean; allowedDays: number; maxDays: number } | null>(null);
+  useEffect(() => {
+    apiGet<{ ready: boolean; allowedDays: number; maxDays: number }>("/tasks/late-policy").then(setLatePolicy).catch(() => setLatePolicy(null));
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -166,7 +182,7 @@ export default function TasksPage() {
           title,
           description,
           weight,
-          ...(entry ? { progress, ...(hours.trim() ? { hoursSpent: Number(hours) } : {}), ...(projectId ? { teamId: projectId } : {}), ...(tagged ? { taggedManagerId: tagged } : {}) } : {}),
+          ...(entry ? { progress, ...(progress === "BLOCKED" ? { blockedNote: blockedNote.trim() } : {}), ...(hours.trim() ? { hoursSpent: Number(hours) } : {}), ...(projectId ? { teamId: projectId } : {}), ...(tagged ? { taggedManagerId: tagged } : {}) } : {}),
         })
       );
       setTitle("");
@@ -174,8 +190,9 @@ export default function TasksPage() {
       setWeight("MEDIUM");
       setHours("");
       setProgress("IN_PROGRESS");
-      setProjectId("");
-      setTaggedId(null);
+      setBlockedNote("");
+      setProjectPick(null); // back to the default for the next task
+      setTaggedPick(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add that");
     } finally {
@@ -195,13 +212,23 @@ export default function TasksPage() {
     }
   }
 
-  async function changeProgress(task: Task, next: string) {
+  // Switching to Blocked first asks why (the reporting manager sees the reason); every other progress is saved straight away.
+  async function changeProgress(task: Task, next: string, reason?: string) {
+    if (next === "BLOCKED" && reason === undefined) {
+      setBlockError("");
+      setBlockFor(task);
+      return;
+    }
     setBusy(true);
     setError("");
+    setBlockError("");
     try {
-      setData(await call<Payload>(`/tasks/${task.id}`, "PATCH", { progress: next }));
+      setData(await call<Payload>(`/tasks/${task.id}`, "PATCH", { progress: next, ...(next === "BLOCKED" ? { blockedNote: reason } : {}) }));
+      setBlockFor(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update that");
+      const msg = err instanceof Error ? err.message : "Could not update that";
+      if (next === "BLOCKED") setBlockError(msg);
+      else setError(msg);
     } finally {
       setBusy(false);
     }
@@ -225,6 +252,12 @@ export default function TasksPage() {
   const managerList = data?.entryForm?.managers ?? [];
   const needProject = projectList.length > 0;
   const needManager = managerList.length > 0;
+  // What the form shows: the person's own choice once they make one, otherwise the default from their team allocation and reporting line.
+  const formDefaults = data?.entryForm?.ready ? data.entryForm.defaults : undefined;
+  const projectId = projectPick ?? formDefaults?.projectId ?? "";
+  const taggedId: string | null = taggedPick === null ? formDefaults?.managerId ?? null : taggedPick || null;
+  const projectIsDefault = !!projectId && projectId === formDefaults?.projectId;
+  const managerIsDefault = !!taggedId && taggedId === formDefaults?.managerId;
 
   // A manager's own work: self-managed, no approval. Employees (and everyone else) keep the screen below.
   if (data?.selfManagedMode) {
@@ -233,6 +266,16 @@ export default function TasksPage() {
 
   return (
     <div className="space-y-5">
+      {blockFor && (
+        <BlockedReasonModal
+          title={blockFor.title}
+          initial={blockFor.progress === "BLOCKED" ? blockFor.blockedNote ?? "" : ""}
+          busy={busy}
+          error={blockError}
+          onSubmit={(reason) => void changeProgress(blockFor, "BLOCKED", reason)}
+          onCancel={() => setBlockFor(null)}
+        />
+      )}
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
           Daily tasks
@@ -287,7 +330,33 @@ export default function TasksPage() {
       )}
 
       {/* --- propose ------------------------------------------------------ */}
-      <form
+      {data?.entryForm?.ready && (
+        <div role="tablist" aria-label="How do you want to add tasks?" className="flex w-full flex-col gap-1 rounded-xl bg-white p-1 shadow-[var(--shadow-card)] sm:inline-flex sm:w-auto sm:flex-row sm:gap-0">
+          {([["single", "Add Single Task"], ["quick", "Quick Add (Multiple Tasks)"], ["previous", "Add Previous Day's Tasks"]] as const).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={entryMode === k}
+              onClick={() => setEntryMode(k)}
+              className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${entryMode === k ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-indigo-50"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {data?.entryForm?.ready && entryMode === "quick" && (
+        <QuickAdd key="today" projects={data.entryForm.projects} managers={data.entryForm.managers} defaults={data.entryForm.defaults} onSent={() => void load()} />
+      )}
+      {data?.entryForm?.ready && entryMode === "previous" && (
+        latePolicy?.ready ? (
+          <QuickAdd key="previous" previous={{ allowedDays: latePolicy.allowedDays, maxDays: latePolicy.maxDays }} projects={data.entryForm.projects} managers={data.entryForm.managers} defaults={data.entryForm.defaults} onSent={() => void load()} />
+        ) : (
+          <p className="rounded-2xl bg-white p-5 text-sm text-slate-600 shadow-[var(--shadow-card)]">Adding tasks for a previous day is not switched on yet. Please ask your Admin.</p>
+        )
+      )}
+      {!(data?.entryForm?.ready && entryMode !== "single") && <form
         onSubmit={propose}
         className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-5 space-y-4"
       >
@@ -315,21 +384,23 @@ export default function TasksPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="min-w-0 text-xs text-slate-500">
               Select Project{needProject && <span className="text-rose-500"> *</span>}
-              <select value={projectId} required={needProject} disabled={!needProject} onChange={(e) => setProjectId(e.target.value)} title={projectList.find((p) => p.id === projectId)?.label} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500 truncate">
+              <select value={projectId} required={needProject} disabled={!needProject} onChange={(e) => setProjectPick(e.target.value)} title={projectList.find((p) => p.id === projectId)?.label} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500 truncate">
                 <option value="">{needProject ? "Select a project" : "No project available"}</option>
                 {projectList.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
+              {projectIsDefault && <span className="mt-1 block text-[11px] text-emerald-700">{formDefaults?.projectSource === "PRIMARY_TEAM" ? "Your main team" : "Your team"} (you can change it)</span>}
             </label>
             <label className="min-w-0 text-xs text-slate-500">
               Tag Reporting Manager{needManager && <span className="text-rose-500"> *</span>}
-              <select value={taggedId ?? ""} required={needManager} disabled={!needManager} onChange={(e) => setTaggedId(e.target.value || null)} title={managerList.find((m) => m.id === taggedId)?.name} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500 truncate">
+              <select value={taggedId ?? ""} required={needManager} disabled={!needManager} onChange={(e) => setTaggedPick(e.target.value)} title={managerList.find((m) => m.id === taggedId)?.name} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500 truncate">
                 <option value="">{needManager ? "Select a manager" : "No manager available"}</option>
                 {managerList.map((o) => (
                   <option key={o.id} value={o.id}>{o.name}{o.code ? ` (${o.code})` : ""}{o.role === "ADMIN" ? " \u00b7 Admin" : ""}</option>
                 ))}
               </select>
+              {managerIsDefault && <span className="mt-1 block text-[11px] text-emerald-700">{formDefaults?.managerSource === "REPORTING_MANAGER" ? "Your reporting manager" : "Your additional reporting manager"} (you can change it)</span>}
               {!needManager && <span className="mt-1 block text-[11px] text-amber-600">No manager is available. Ask HR or your Admin.</span>}
             </label>
           </div>
@@ -349,9 +420,9 @@ export default function TasksPage() {
               <label className="min-w-0 text-xs text-slate-500">
                 Progress
                 <select value={progress} onChange={(e) => setProgress(e.target.value)} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500">
-                  <option value="IN_PROGRESS">In Progress</option>
-                  <option value="COMPLETED">Completed</option>
-                  <option value="BLOCKED">Blocked</option>
+                  {PROGRESS_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
                 </select>
               </label>
             </>
@@ -368,16 +439,31 @@ export default function TasksPage() {
           </label>
         </div>
 
+        {data?.entryForm?.ready && progress === "BLOCKED" && (
+          <label className="block text-xs text-slate-500">
+            Blocked reason <span className="text-rose-500">*</span>
+            <textarea
+              value={blockedNote}
+              onChange={(e) => setBlockedNote(e.target.value)}
+              maxLength={BLOCKED_REASON_MAX}
+              rows={2}
+              placeholder="What is stopping this task? Your reporting manager will see it."
+              className="mt-1 w-full resize-y break-words rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-500 [overflow-wrap:anywhere]"
+            />
+            <span className="mt-0.5 block text-[11px] text-slate-400">{blockedNote.length}/{BLOCKED_REASON_MAX} · at least 3 characters</span>
+          </label>
+        )}
+
         <div className="flex justify-end">
           <button
             type="submit"
-            disabled={busy || !title.trim() || (data?.entryForm?.ready === true && ((needProject && !projectId) || (needManager && !taggedId)))}
+            disabled={busy || !title.trim() || (data?.entryForm?.ready === true && ((needProject && !projectId) || (needManager && !taggedId) || (progress === "BLOCKED" && blockedReasonProblem(blockedNote) !== null)))}
             className="w-full rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40 sm:w-auto"
           >
             Send for approval
           </button>
         </div>
-      </form>
+      </form>}
 
       {error && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
@@ -402,10 +488,10 @@ export default function TasksPage() {
                 <EntryMeta t={t} />
               </div>
               {t.progress && (
-                <select aria-label="Progress" value={t.progress === "NOT_STARTED" ? "IN_PROGRESS" : t.progress} disabled={busy} onChange={(e) => changeProgress(t, e.target.value)} className="shrink-0 rounded-lg border border-indigo-100 px-2 py-1 text-xs text-slate-700">
-                  <option value="IN_PROGRESS">In Progress</option>
-                  <option value="COMPLETED">Completed</option>
-                  <option value="BLOCKED">Blocked</option>
+                <select aria-label="Progress" value={normalProgress(t.progress)} disabled={busy} onChange={(e) => changeProgress(t, e.target.value)} className="shrink-0 rounded-lg border border-indigo-100 px-2 py-1 text-xs text-slate-700">
+                  {PROGRESS_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
                 </select>
               )}
               <span
@@ -563,12 +649,7 @@ export default function TasksPage() {
   );
 }
 
-const PROGRESS_CHIP: Record<string, { label: string; cls: string }> = {
-  COMPLETED: { label: "Completed", cls: "bg-emerald-50 text-emerald-700" },
-  IN_PROGRESS: { label: "In Progress", cls: "bg-sky-50 text-sky-700" },
-  BLOCKED: { label: "Blocked", cls: "bg-rose-50 text-rose-700" },
-  NOT_STARTED: { label: "Not started", cls: "bg-slate-100 text-slate-500" },
-};
+const PROGRESS_CHIP = (p: string): { label: string; cls: string } => ({ label: PROGRESS_LABEL[p] ?? p, cls: PROGRESS_CHIP_CLASS[p] ?? "bg-slate-100 text-slate-600" });
 const APPROVAL_CHIP: Record<string, { label: string; cls: string }> = {
   PENDING: { label: "Approval: Pending", cls: "bg-amber-50 text-amber-700" },
   APPROVED: { label: "Approval: Approved", cls: "bg-emerald-50 text-emerald-700" },
@@ -578,7 +659,7 @@ const APPROVAL_CHIP: Record<string, { label: string; cls: string }> = {
 // Progress (is the work done?) and approval (has the manager accepted it?) are shown as two separate chips.
 function EntryMeta({ t }: { t: Task }) {
   if (!t.progress) return null;
-  const p = PROGRESS_CHIP[t.progress];
+  const p = PROGRESS_CHIP(t.progress);
   const a = APPROVAL_CHIP[t.approvalStatus];
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
@@ -587,7 +668,7 @@ function EntryMeta({ t }: { t: Task }) {
       {t.hoursSpent != null && <span className="text-slate-500">{t.hoursSpent} h</span>}
       {t.project && <span className="text-slate-500">· {t.project}</span>}
       {t.taggedManager && <span className="text-slate-500">· Manager: {t.taggedManager}</span>}
-      {t.progress === "BLOCKED" && t.blockedNote && <span className="text-rose-600">· {t.blockedNote}</span>}
+      {t.progress === "BLOCKED" && t.blockedNote && <span className="text-amber-800">· Blocked: {t.blockedNote}</span>}
       {t.approvalNote && <span className="text-slate-500">· Manager's comment: “{t.approvalNote}”</span>}
     </div>
   );

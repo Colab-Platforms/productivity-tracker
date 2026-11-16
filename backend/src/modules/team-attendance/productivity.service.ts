@@ -23,6 +23,7 @@ import { visibleUserIds } from "../tracker/tracker.service.js";
 import { projectsAndManagers } from "./peopleDetails.js";
 import { entryDetailsFor } from "../tasks/tasks.entry.js";
 import { progressOf, pendingTaskVisibleTo } from "../tasks/tasks.entry.logic.js";
+import { activeTasks } from "../tasks/tasks.deleted.js";
 
 const MAX_RANGE_DAYS = 93;
 const MAX_TARGET = 1000;
@@ -143,9 +144,9 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   // A manager's own (self-managed) tasks are his personal productivity: they never count in TEAM figures.
   const selfIds = await selfManagedTaskIdsOf(ids);
   const [counted, planned, legacy] = await Promise.all([
-    prisma.dailyTask.findMany({ where: { userId: { in: ids }, id: { notIn: selfIds }, ...COUNTED, completedAt: { gte: startUtc, lt: endUtc } }, select: { id: true, userId: true, completedAt: true, outcome: true } }).then(keepFullyDone),
-    prisma.dailyTask.groupBy({ by: ["userId", "date"], where: { userId: { in: ids }, id: { notIn: selfIds }, approvalStatus: "APPROVED", date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, _count: { _all: true } }),
-    prisma.dailyTask.groupBy({ by: ["userId", "date"], where: { userId: { in: ids }, id: { notIn: selfIds }, approvalStatus: "APPROVED", status: "COMPLETED", completedAt: null, date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, _count: { _all: true } }),
+    activeTasks().then((live) => prisma.dailyTask.findMany({ where: { userId: { in: ids }, id: { notIn: selfIds }, ...COUNTED, ...live, completedAt: { gte: startUtc, lt: endUtc } }, select: { id: true, userId: true, completedAt: true, outcome: true } }).then(keepFullyDone)),
+    activeTasks().then((live) => prisma.dailyTask.groupBy({ by: ["userId", "date"], where: { userId: { in: ids }, id: { notIn: selfIds }, approvalStatus: "APPROVED", ...live, date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, _count: { _all: true } })),
+    activeTasks().then((live) => prisma.dailyTask.groupBy({ by: ["userId", "date"], where: { userId: { in: ids }, id: { notIn: selfIds }, approvalStatus: "APPROVED", status: "COMPLETED", completedAt: null, ...live, date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, _count: { _all: true } })),
   ]);
 
   const doneBy = new Map<string, number>(); // "userId|day" -> tasks finished that day (each task once)
@@ -232,6 +233,7 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
     where: {
       userId: { in: ids },
       id: { notIn: selfIds },
+      ...(await activeTasks()),
       OR: [{ date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } }, { ...COUNTED, completedAt: { gte: startUtc, lt: endUtc } }],
     },
     select: { id: true, userId: true, title: true, description: true, weight: true, status: true, approvalStatus: true, outcome: true, date: true, completedAt: true, completionNote: true, rejectionNote: true, team: { select: { name: true } } },
@@ -266,6 +268,8 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       priority: String(t.weight),
       hoursSpent: d?.hoursSpent ?? null,
       progress: status === "CANCELLED" ? "CANCELLED" : progressOf(status, d?.blocked === true),
+      // Why a Blocked task cannot go on (the employee's written reason); empty for every other progress.
+      blockedReason: status !== "CANCELLED" && progressOf(status, d?.blocked === true) === "BLOCKED" ? d?.blockedNote ?? null : null,
       approvalStatus: String(t.approvalStatus),
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
       rating: ratings.get(t.id)?.rating ?? null,
@@ -294,7 +298,7 @@ export async function getHourly(viewerId: string, q: { date?: string; userId?: s
   const ids = people.map((p) => p.id);
   const selfIds = await selfManagedTaskIdsOf(ids); // a manager's own tasks are not team productivity
   const tasks = await keepFullyDone(await prisma.dailyTask.findMany({
-    where: { userId: { in: ids }, id: { notIn: selfIds }, ...COUNTED, completedAt: { gte: zonedToUtc(day, "00:00", tz), lt: zonedToUtc(addDays(day, 1), "00:00", tz) } },
+    where: { userId: { in: ids }, id: { notIn: selfIds }, ...COUNTED, ...(await activeTasks()), completedAt: { gte: zonedToUtc(day, "00:00", tz), lt: zonedToUtc(addDays(day, 1), "00:00", tz) } },
     select: { id: true, userId: true, completedAt: true, outcome: true },
   }));
   const grid = new Map<string, number[]>();

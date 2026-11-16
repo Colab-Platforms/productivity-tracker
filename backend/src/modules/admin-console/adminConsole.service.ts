@@ -6,6 +6,7 @@ import { overview as leaveOverview } from "../leave/leave.service.js";
 import { listLogs } from "../audit/audit.service.js";
 import { entryReady } from "../tasks/tasks.entry.js";
 import { needsManualMapping } from "../admin/hierarchy.logic.js";
+import { activeTasks } from "../tasks/tasks.deleted.js";
 
 // ---------------------------------------------------------------------------
 // ADMIN CONSOLE OVERVIEW (read-only). One answer for the Admin dashboard: people and distribution, attendance and leave, productivity and
@@ -37,7 +38,7 @@ export async function overview(adminId: string) {
     leaveOverview(adminId),
     prisma.leaveDay.groupBy({ by: ["date"], where: { ...scope, date: { gte: today, lte: soon }, user: { status: { not: "EXITED" } } }, _count: { _all: true } }),
     prisma.workSession.findMany({ where: { ...scope, date: { gte: from, lte: today } }, select: { userId: true, date: true, productiveSeconds: true } }),
-    prisma.dailyTask.findMany({ where: { ...scope, date: { gte: from, lte: today }, status: { not: "CANCELLED" } }, select: { id: true, date: true, status: true, approvalStatus: true, outcome: true } }),
+    activeTasks().then((live) => prisma.dailyTask.findMany({ where: { ...scope, date: { gte: from, lte: today }, status: { not: "CANCELLED" }, ...live }, select: { id: true, date: true, status: true, approvalStatus: true, outcome: true } })),
     listLogs(adminId, { pageSize: 25 }).then((r) => r.items.slice(0, 8)).catch(() => []),
   ]);
 
