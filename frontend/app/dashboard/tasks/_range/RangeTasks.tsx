@@ -5,6 +5,7 @@ import { apiGet } from "@/lib/api";
 import { isoDaysAgo } from "@/lib/time";
 import { Stars } from "../../_ratings/Stars";
 import { LateBadge, LateNote, type LateInfo } from "../../_late/Late";
+import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL } from "../../_progress/progress";
 
 export type RangeKey = "today" | "yesterday" | "last7" | "date";
 
@@ -54,6 +55,8 @@ type RTask = {
   id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; rating: number | null; ratingComment: string | null;
   completionNote: string | null; reviewNote: string | null; rejectionNote: string | null; project: string | null; date: string;
   late?: LateInfo | null;
+  progress?: string;
+  blockedNote?: string | null;
 };
 type RangeData = { from: string; to: string; score: { percent: number | null; done: number; total: number }; tasks: RTask[] };
 
@@ -104,9 +107,10 @@ export function RangeTasks({ from, to }: { from: string; to: string }) {
                 <li key={t.id} className="rounded-xl border border-indigo-100 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <p className="font-medium text-slate-900">{t.title}</p>
-                    <span className="flex flex-wrap items-center gap-1.5"><LateBadge late={t.late} /><span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.tone}`}>{s.label}</span></span>
+                    <span className="flex flex-wrap items-center gap-1.5"><LateBadge late={t.late} />{t.progress && <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${PROGRESS_CHIP_CLASS[t.progress] ?? "bg-slate-100 text-slate-600"}`}>{PROGRESS_LABEL[t.progress] ?? t.progress}</span>}<span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.tone}`}>{s.label}</span></span>
                   </div>
                   <LateNote date={t.date} late={t.late} />
+                  {t.progress === "BLOCKED" && <p className="mt-1 break-words rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900 [overflow-wrap:anywhere]"><span className="font-medium">Blocked:</span> {t.blockedNote || "No reason was written."}</p>}
                   {t.project && <p className="mt-1 text-xs text-slate-400">{t.project}</p>}
                   {t.description && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{t.description}</p>}
                   {t.rating != null && <p className="mt-1"><Stars value={t.rating} size={14} /></p>}

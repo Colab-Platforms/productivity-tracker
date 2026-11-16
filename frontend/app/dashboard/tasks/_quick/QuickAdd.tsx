@@ -11,20 +11,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, apiPut } from "@/lib/api";
 import { formatDate, isoDaysAgo, todayIso } from "@/lib/time";
+import { BLOCKED_REASON_MAX, PROGRESS_OPTIONS } from "../../_progress/progress";
 import {
   MAX_QUICK_ROWS,
+  applyDefault,
   applyResults,
   blankRow,
   duplicateOf,
   fromDraft,
+  inferDefaults,
+  isCustom,
   isEmptyRow,
   lateState,
   LATE_REASON_MAX,
   reasonProblem,
-  rememberedDefaults,
+  resetRowChoice,
+  startingDefaults,
   rowProblem,
+  setRowChoice,
   toDraft,
   toPayload,
+  type DefaultField,
+  type DefaultSettings,
   type QuickRow,
   type ServerResult,
 } from "./quickRows";
@@ -61,11 +69,38 @@ function writeLast(v: { projectId?: string; managerId?: string }) {
 
 const field = "mt-1 w-full min-w-0 rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-500";
 
+// Tells the person where a row's project / manager comes from: "Default" (follows the default settings) or "Custom" (picked on this row,
+// with a link to go back to the default).
+function DefaultTag({ custom, hasDefault, showWhenFollowing, onReset, disabled }: { custom: boolean; hasDefault: boolean; showWhenFollowing: boolean; onReset: () => void; disabled: boolean }) {
+  if (custom) {
+    return (
+      <span className="ml-2 inline-flex items-center gap-1.5 align-middle">
+        <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">Custom</span>
+        {hasDefault && (
+          <button type="button" onClick={onReset} disabled={disabled} className="text-[10px] font-medium text-indigo-700 underline disabled:opacity-40">
+            Reset to default
+          </button>
+        )}
+      </span>
+    );
+  }
+  if (hasDefault && showWhenFollowing) return <span className="ml-2 rounded-full bg-emerald-50 px-1.5 py-0.5 align-middle text-[10px] font-medium text-emerald-800">Default</span>;
+  return null;
+}
+
 // `previous` switches the screen to "Add Previous Day's Tasks": the person picks an earlier day, every row is saved on THAT day (never today),
 // and outside the company's allowed window a reason is required. Drafts are not offered in that mode.
-export default function QuickAdd({ projects, managers, onSent, previous }: { projects: Project[]; managers: Manager[]; onSent: () => void; previous?: { allowedDays: number; maxDays: number } }) {
+export default function QuickAdd({ projects, managers, onSent, previous, defaults: serverDefaults }: { projects: Project[]; managers: Manager[]; onSent: () => void; previous?: { allowedDays: number; maxDays: number }; defaults?: { projectId: string | null; managerId: string | null } }) {
   const choices = { projects, managers };
   const [rows, setRows] = useState<QuickRow[]>(() => [blankRow(), blankRow(), blankRow()]);
+  // Default task settings: the project and reporting manager every row follows until the person picks its own.
+  const [defaults, setDefaults] = useState<DefaultSettings>({ projectId: "", managerId: "" });
+  // True for a default that came from the person's own team allocation / reporting line (shown in the box's help text).
+  const [fromRecords, setFromRecords] = useState({ project: false, manager: false });
+  const rowsRef = useRef(rows);
+  useEffect(() => {
+    rowsRef.current = rows;
+  });
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState("");
   const [note, setNote] = useState("");
@@ -83,7 +118,10 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
   // Preselect the last project / manager on the starting rows, and restore this person's saved draft if there is one.
   useEffect(() => {
     let alive = true;
-    const d = rememberedDefaults(readLast(), choicesRef.current);
+    // The box starts from the person's records (team allocation, reporting manager); where those give no single answer, from their last choice.
+    const d = startingDefaults(serverDefaults, readLast(), choicesRef.current);
+    setDefaults({ projectId: d.projectId, managerId: d.managerId });
+    setFromRecords(d.fromRecords);
     setRows((cur) => (cur.every(isEmptyRow) ? cur.map((r) => ({ ...r, projectId: d.projectId, managerId: d.managerId })) : cur));
     if (previous) return () => { alive = false; }; // no drafts for previous days
     apiGet<DraftsPayload>("/tasks/drafts")
@@ -92,8 +130,14 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
         setDraftsOn(res.ready);
         if (res.ready && res.drafts.length) {
           hasDraft.current = true;
-          setRows((cur) => (cur.every(isEmptyRow) ? res.drafts.map((x) => fromDraft(x, choicesRef.current)) : cur));
-          setNote(`Your saved draft was restored (${res.drafts.length} task${res.drafts.length === 1 ? "" : "s"}). It is still not sent.`);
+          if (rowsRef.current.every(isEmptyRow)) {
+            // The draft keeps each row's own project and manager; the default is worked out again from them (see inferDefaults).
+            const restored = inferDefaults(res.drafts.map((x) => fromDraft(x, choicesRef.current)));
+            setDefaults(restored.defaults);
+            setRows(restored.rows);
+          }
+          const blockedBack = res.drafts.filter((x) => x.progress === "BLOCKED").length;
+          setNote(`Your saved draft was restored (${res.drafts.length} task${res.drafts.length === 1 ? "" : "s"}). It is still not sent.${blockedBack ? " Blocked tasks need their reason typed again (a draft does not keep it)." : ""}`);
         }
       })
       .catch(() => {
@@ -106,11 +150,25 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Description, hours, priority, progress and details: only that row changes.
   const patch = useCallback((uid: string, change: Partial<QuickRow>) => {
     setRows((cur) => cur.map((r) => (r.uid === uid ? { ...r, ...change, error: undefined } : r)));
-    if (change.projectId !== undefined && change.projectId) writeLast({ projectId: change.projectId });
-    if (change.managerId !== undefined && change.managerId) writeLast({ managerId: change.managerId });
   }, []);
+
+  // The person picked a project / manager for ONE row: only that row changes (custom unless it equals the default).
+  function choose(uid: string, f: DefaultField, value: string) {
+    setRows((cur) => cur.map((r) => (r.uid === uid ? setRowChoice(r, f, value, defaults) : r)));
+  }
+  // "Reset to default" on one row.
+  function resetChoice(uid: string, f: DefaultField) {
+    setRows((cur) => cur.map((r) => (r.uid === uid ? resetRowChoice(r, f, defaults) : r)));
+  }
+  // The DEFAULT changed: rows that follow it take the new value, hand-picked rows stay exactly as they are.
+  function changeDefault(f: DefaultField, value: string) {
+    setDefaults((d) => ({ ...d, [f]: value }));
+    setRows((cur) => applyDefault(cur, f, value));
+    if (value) writeLast({ [f]: value });
+  }
 
   function addRow() {
     if (rows.length >= MAX_QUICK_ROWS) {
@@ -118,8 +176,7 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
       return;
     }
     setBanner("");
-    const d = rememberedDefaults(readLast(), choices);
-    setRows((cur) => [...cur, blankRow(d)]);
+    setRows((cur) => [...cur, blankRow(defaults)]);
   }
 
   function duplicate(r: QuickRow) {
@@ -136,7 +193,7 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
   }
 
   function remove(r: QuickRow) {
-    setRows((cur) => (cur.length <= 1 ? [blankRow(rememberedDefaults(readLast(), choices))] : cur.filter((x) => x.uid !== r.uid)));
+    setRows((cur) => (cur.length <= 1 ? [blankRow(defaults)] : cur.filter((x) => x.uid !== r.uid)));
   }
 
   async function saveDraft() {
@@ -149,7 +206,8 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
       const keep = rows.filter((r) => !isEmptyRow(r));
       const res = await apiPut<DraftsPayload>("/tasks/drafts", { rows: keep.map(toDraft) });
       hasDraft.current = res.drafts.length > 0;
-      setNote(keep.length ? `Draft saved (${keep.length} task${keep.length === 1 ? "" : "s"}). Only you can see it; nothing was sent.` : "Draft cleared.");
+      const blockedKept = keep.filter((r) => r.progress === "BLOCKED").length;
+      setNote(keep.length ? `Draft saved (${keep.length} task${keep.length === 1 ? "" : "s"}). Only you can see it; nothing was sent.${blockedKept ? " A draft does not keep the blocked reason, so you will type it again when you open it." : ""}` : "Draft cleared.");
     } catch (err) {
       setBanner(err instanceof Error ? err.message : "Could not save the draft.");
     } finally {
@@ -189,7 +247,7 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
     try {
       const res = await apiPost<BulkPayload>("/tasks/bulk", { rows: valid.map(toPayload), ...(previous ? { forDate, lateReason: reason.trim() } : {}) });
       const { sent, kept } = applyResults(marked, res.results);
-      const left = kept.length ? kept : [blankRow(rememberedDefaults(readLast(), choices))];
+      const left = kept.length ? kept : [blankRow(defaults)];
       setRows(left);
       const failedCount = kept.filter((r) => !isEmptyRow(r)).length;
       setSummary({ sent: sent.map((r) => r.title.trim()), failed: failedCount, forDate: previous ? forDate : undefined });
@@ -293,6 +351,43 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
       {note && <p className="rounded-xl bg-indigo-50 px-3 py-2 text-xs text-indigo-800" role="status">{note}</p>}
       {banner && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800" role="alert">{banner}</p>}
 
+      <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3" aria-label="Default task settings">
+        <p className="text-sm font-medium text-slate-800">Default task settings</p>
+        <p className="mt-0.5 text-xs text-slate-500">Pick once; every task below follows it. You can still change the project or manager on any single task.{fromRecords.project || fromRecords.manager ? " Filled in from your team and your reporting manager; change it any time." : ""}</p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <label className="min-w-0 text-xs text-slate-500">
+            Default project
+            <select
+              value={defaults.projectId}
+              disabled={!needProject}
+              onChange={(e) => changeDefault("projectId", e.target.value)}
+              title={projects.find((p) => p.id === defaults.projectId)?.label}
+              className={field + " truncate"}
+            >
+              <option value="">{needProject ? "No default project" : "No project available"}</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="min-w-0 text-xs text-slate-500">
+            Default reporting manager
+            <select
+              value={defaults.managerId}
+              disabled={!needManager}
+              onChange={(e) => changeDefault("managerId", e.target.value)}
+              title={managers.find((m) => m.id === defaults.managerId)?.name}
+              className={field + " truncate"}
+            >
+              <option value="">{needManager ? "No default manager" : "No manager available"}</option>
+              {managers.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}{m.code ? ` (${m.code})` : ""}{m.role === "ADMIN" ? " · Admin" : ""}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
       <ol className="space-y-3">
         {rows.map((r, i) => (
           <li key={r.uid} className={`rounded-xl border p-3 ${r.error ? "border-rose-300 bg-rose-50/40" : "border-indigo-100"}`}>
@@ -315,24 +410,31 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
             </div>
 
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-6">
-              <label className="col-span-2 min-w-0 text-xs text-slate-500 sm:col-span-3">
-                Project{needProject && <span className="text-rose-500"> *</span>}
-                <select value={r.projectId} disabled={!needProject} onChange={(e) => patch(r.uid, { projectId: e.target.value })} title={projects.find((p) => p.id === r.projectId)?.label} className={field + " truncate"}>
+              {/* The Default / Custom tag and its reset button are NOT inside the <label>: a label wrapping a button would be tied to the button instead of the dropdown. */}
+              <div className="col-span-2 min-w-0 text-xs text-slate-500 sm:col-span-3">
+                <div className="flex flex-wrap items-center">
+                  <label htmlFor={`proj-${r.uid}`}>Project{needProject && <span className="text-rose-500"> *</span>}</label>
+                  <DefaultTag custom={isCustom(r, "projectId")} hasDefault={!!defaults.projectId} showWhenFollowing={!!r.projectId} onReset={() => resetChoice(r.uid, "projectId")} disabled={busy} />
+                </div>
+                <select id={`proj-${r.uid}`} value={r.projectId} disabled={!needProject} onChange={(e) => choose(r.uid, "projectId", e.target.value)} title={projects.find((p) => p.id === r.projectId)?.label} className={field + " truncate"}>
                   <option value="">{needProject ? "Select a project" : "No project available"}</option>
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
                 </select>
-              </label>
-              <label className="col-span-2 min-w-0 text-xs text-slate-500 sm:col-span-3">
-                Reporting manager{needManager && <span className="text-rose-500"> *</span>}
-                <select value={r.managerId} disabled={!needManager} onChange={(e) => patch(r.uid, { managerId: e.target.value })} title={managers.find((m) => m.id === r.managerId)?.name} className={field + " truncate"}>
+              </div>
+              <div className="col-span-2 min-w-0 text-xs text-slate-500 sm:col-span-3">
+                <div className="flex flex-wrap items-center">
+                  <label htmlFor={`mgr-${r.uid}`}>Reporting manager{needManager && <span className="text-rose-500"> *</span>}</label>
+                  <DefaultTag custom={isCustom(r, "managerId")} hasDefault={!!defaults.managerId} showWhenFollowing={!!r.managerId} onReset={() => resetChoice(r.uid, "managerId")} disabled={busy} />
+                </div>
+                <select id={`mgr-${r.uid}`} value={r.managerId} disabled={!needManager} onChange={(e) => choose(r.uid, "managerId", e.target.value)} title={managers.find((m) => m.id === r.managerId)?.name} className={field + " truncate"}>
                   <option value="">{needManager ? "Select a manager" : "No manager available"}</option>
                   {managers.map((m) => (
                     <option key={m.id} value={m.id}>{m.name}{m.code ? ` (${m.code})` : ""}{m.role === "ADMIN" ? " · Admin" : ""}</option>
                   ))}
                 </select>
-              </label>
+              </div>
               <label className="min-w-0 text-xs text-slate-500 sm:col-span-2">
                 Hours
                 <input type="number" min={0} max={24} step={0.25} value={r.hours} onChange={(e) => patch(r.uid, { hours: e.target.value })} placeholder="0" className={field} />
@@ -348,11 +450,24 @@ export default function QuickAdd({ projects, managers, onSent, previous }: { pro
               <label className="col-span-2 min-w-0 text-xs text-slate-500 sm:col-span-2">
                 Progress
                 <select value={r.progress} onChange={(e) => patch(r.uid, { progress: e.target.value })} className={field}>
-                  <option value="IN_PROGRESS">In Progress</option>
-                  <option value="COMPLETED">Completed</option>
-                  <option value="BLOCKED">Blocked</option>
+                  {PROGRESS_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
                 </select>
               </label>
+              {r.progress === "BLOCKED" && (
+                <label className="col-span-2 min-w-0 text-xs text-slate-500 sm:col-span-6">
+                  Blocked reason <span className="text-rose-500">*</span>
+                  <textarea
+                    value={r.blockedNote ?? ""}
+                    onChange={(e) => patch(r.uid, { blockedNote: e.target.value })}
+                    maxLength={BLOCKED_REASON_MAX}
+                    rows={2}
+                    placeholder="What is stopping this task? Your reporting manager will see it."
+                    className={field + " resize-y [overflow-wrap:anywhere]"}
+                  />
+                </label>
+              )}
             </div>
 
             <details className="mt-2 text-xs text-slate-500" open={!!r.description}>

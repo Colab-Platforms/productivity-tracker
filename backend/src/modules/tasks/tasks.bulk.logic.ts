@@ -5,7 +5,7 @@ export const MAX_DRAFT_ROWS = 30; // rows kept in a person's draft sheet
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const WEIGHTS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
-const PROGRESS = ["COMPLETED", "IN_PROGRESS", "BLOCKED"];
+const PROGRESS = ["TODO", "IN_PROGRESS", "COMPLETED", "BLOCKED"];
 
 export type DraftRow = {
   title: string;

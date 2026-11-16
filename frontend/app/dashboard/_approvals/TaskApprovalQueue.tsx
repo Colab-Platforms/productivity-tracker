@@ -24,13 +24,14 @@ type Task = {
   project?: string | null;
   hoursSpent?: number | null;
   progress?: string | null;
+  blockedNote?: string | null;
   date?: string;
   canAct?: boolean;
 };
 type Queue = { proposals: Task[]; all?: Task[] };
 
 const WEIGHT: Record<string, string> = { LOW: "bg-slate-100 text-slate-600", MEDIUM: "bg-sky-50 text-sky-700", HIGH: "bg-amber-50 text-amber-700", CRITICAL: "bg-rose-50 text-rose-700" };
-const PROGRESS: Record<string, string> = { COMPLETED: "Completed", IN_PROGRESS: "In progress", BLOCKED: "Blocked", NOT_STARTED: "Not started" };
+const PROGRESS: Record<string, string> = { TODO: "To Do", NOT_STARTED: "To Do", IN_PROGRESS: "In Progress", COMPLETED: "Completed", BLOCKED: "Blocked" };
 const dayText = (iso?: string) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : null);
 
 export default function TaskApprovalQueue({ onCount }: { onCount?: (waiting: number) => void }) {
@@ -108,6 +109,7 @@ export default function TaskApprovalQueue({ onCount }: { onCount?: (waiting: num
                   {typeof t.hoursSpent === "number" ? ` · ${t.hoursSpent}h` : ""}
                 </p>
                 {t.description && <p className="mt-1 text-xs text-slate-500">{t.description}</p>}
+                {t.progress === "BLOCKED" && <p className="mt-1 break-words rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900 [overflow-wrap:anywhere]"><span className="font-medium">Blocked:</span> {t.blockedNote || "No reason was written."}</p>}
               </div>
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${WEIGHT[t.weight] ?? WEIGHT.LOW}`}>{t.weight.toLowerCase()}</span>
               <div className="flex shrink-0 flex-wrap items-center gap-2">

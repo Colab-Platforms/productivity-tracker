@@ -268,6 +268,8 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       priority: String(t.weight),
       hoursSpent: d?.hoursSpent ?? null,
       progress: status === "CANCELLED" ? "CANCELLED" : progressOf(status, d?.blocked === true),
+      // Why a Blocked task cannot go on (the employee's written reason); empty for every other progress.
+      blockedReason: status !== "CANCELLED" && progressOf(status, d?.blocked === true) === "BLOCKED" ? d?.blockedNote ?? null : null,
       approvalStatus: String(t.approvalStatus),
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
       rating: ratings.get(t.id)?.rating ?? null,

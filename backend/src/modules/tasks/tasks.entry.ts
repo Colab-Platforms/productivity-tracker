@@ -1,8 +1,8 @@
-import { allLinkedManagerIds } from "../../lib/reportingLinks.js";
+import { allLinkedManagerIds, linkedManagerIdsOf } from "../../lib/reportingLinks.js";
 import { prisma } from "../../lib/prisma.js";
 import { managerIdsByTeam } from "../../lib/teamManagers.js";
 import { getPinnedCompany, onlyPinnedCompany } from "../../lib/deployment.js";
-import { progressOf, type Progress } from "./tasks.entry.logic.js";
+import { pickDefaults, progressOf, type EntryDefaults, type Progress } from "./tasks.entry.logic.js";
 
 // ---------------------------------------------------------------------------
 // TASK ENTRY DETAILS (database side): hours spent, the tagged reporting manager, "Blocked", the manager's approval comment.
@@ -68,7 +68,7 @@ export async function entryDetailsFor(taskIds: string[]): Promise<Map<string, En
 /** The fields a task row carries for the new form: progress, hours, tagged manager, the manager's comment. Null fields when there is no row. */
 export function entryView(status: string, d: EntryDetail | undefined) {
   return {
-    progress: progressOf(status, d?.blocked === true) as Progress | "NOT_STARTED",
+    progress: progressOf(status, d?.blocked === true) as Progress,
     hoursSpent: d?.hoursSpent ?? null,
     taggedManagerId: d?.taggedManagerId ?? null,
     taggedManager: d?.taggedManagerName ?? null,
@@ -153,5 +153,21 @@ export async function selectableProjects(_owner: { id: string; platformId: strin
 export async function entryFormChoices(userId: string, platformId: string) {
   const owner = { id: userId, platformId };
   const [projects, managers] = await Promise.all([selectableProjects(owner), eligibleManagers(owner)]);
-  return { projects, managers };
+  return { projects, managers, defaults: await entryDefaults(userId, projects, managers) };
+}
+
+/** The project and manager to pre-select for this employee, from their team allocation and reporting line (see pickDefaults). */
+export async function entryDefaults(userId: string, projects: { id: string }[], managers: { id: string }[]): Promise<EntryDefaults> {
+  const [me, memberships, linked] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { reportsToId: true } }),
+    prisma.teamMember.findMany({ where: { userId, isActive: true, team: { isActive: true } }, select: { teamId: true, isPrimary: true } }),
+    linkedManagerIdsOf([userId]),
+  ]);
+  return pickDefaults({
+    reportsToId: me?.reportsToId ?? null,
+    linkedManagerIds: linked.get(userId) ?? [],
+    memberships,
+    projectIds: projects.map((p) => p.id),
+    managerIds: managers.map((m) => m.id),
+  });
 }

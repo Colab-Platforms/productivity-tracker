@@ -1,7 +1,7 @@
 // Quick Add rules that need no database: the server's row cleaning and limits, and the screen's row checks / result handling.
 import assert from "node:assert/strict";
 import { MAX_BULK_ROWS, MAX_DRAFT_ROWS, bulkRows, cleanDraftRow, cleanDraftRows, sameTaskKey, summarize } from "../src/modules/tasks/tasks.bulk.logic.js";
-import { MAX_QUICK_ROWS, applyResults, blankRow, duplicateOf, fromDraft, isEmptyRow, rememberedDefaults, rowProblem, toDraft, toPayload } from "../../frontend/app/dashboard/tasks/_quick/quickRows.js";
+import { startingDefaults, MAX_QUICK_ROWS, applyDefault, applyResults, blankRow, duplicateOf, fromDraft, inferDefaults, isCustom, isEmptyRow, rememberedDefaults, resetRowChoice, rowProblem, setRowChoice, toDraft, toPayload } from "../../frontend/app/dashboard/tasks/_quick/quickRows.js";
 
 let pass = 0, fail = 0;
 const t = (n: string, f: () => void) => { try { f(); pass++; console.log("PASS " + n); } catch (e) { fail++; console.log("FAIL " + n + " -> " + (e as Error).message); } };
@@ -78,5 +78,146 @@ t("screen: a draft restores only projects/managers still on the lists", () => {
 t("screen: remembered project/manager are used only if still allowed", () => {
   assert.deepEqual(rememberedDefaults({ projectId: U1, managerId: "gone" }, C), { projectId: U1, managerId: "" });
   assert.deepEqual(rememberedDefaults(null, C), { projectId: "", managerId: "" });
+});
+// ---- default task settings ----
+const P1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", P2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", P3 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const M1 = "11111111-1111-4111-8111-111111111111", M2 = "22222222-2222-4222-8222-222222222222";
+const none = { projectId: "", managerId: "" };
+const typed = (n: number, d = none) => Array.from({ length: n }, (_, i) => ({ ...blankRow(d), title: `task ${i + 1}`, hours: String(i + 1) }));
+
+t("defaults: picking the default project fills EVERY row that follows it (10 rows)", () => {
+  const rows = applyDefault(typed(10), "projectId", P1);
+  assert.equal(rows.length, 10); assert.ok(rows.every((r) => r.projectId === P1 && !isCustom(r, "projectId")));
+  assert.ok(rows.every((r) => r.managerId === ""), "the manager is not touched by the project");
+});
+t("defaults: project and manager are independent of each other", () => {
+  let rows = applyDefault(typed(4), "managerId", M1);
+  rows = applyDefault(rows, "projectId", P2);
+  assert.ok(rows.every((r) => r.projectId === P2 && r.managerId === M1));
+});
+t("defaults: descriptions, hours, priority and progress are never touched", () => {
+  const rows = typed(3).map((r, i) => ({ ...r, weight: ["LOW", "HIGH", "CRITICAL"][i], progress: ["COMPLETED", "BLOCKED", "IN_PROGRESS"][i], description: "d" + i }));
+  const after = applyDefault(applyDefault(rows, "projectId", P1), "managerId", M2);
+  after.forEach((r, i) => { assert.equal(r.title, rows[i].title); assert.equal(r.hours, rows[i].hours); assert.equal(r.weight, rows[i].weight); assert.equal(r.progress, rows[i].progress); assert.equal(r.description, rows[i].description); });
+});
+t("defaults: a new row inherits the current defaults", () => {
+  const d = { projectId: P1, managerId: M1 };
+  const r = blankRow(d); assert.equal(r.projectId, P1); assert.equal(r.managerId, M1); assert.equal(isCustom(r, "projectId"), false);
+});
+t("override: changing ONE row's project changes only that row and marks it custom", () => {
+  const d = { projectId: P1, managerId: M1 };
+  const rows = applyDefault(applyDefault(typed(5, d), "projectId", P1), "managerId", M1);
+  const out = rows.map((r, i) => (i === 2 ? setRowChoice(r, "projectId", P2, d) : r));
+  assert.deepEqual(out.map((r) => r.projectId), [P1, P1, P2, P1, P1]);
+  assert.equal(isCustom(out[2], "projectId"), true); assert.equal(isCustom(out[2], "managerId"), false);
+  assert.ok(out.every((r, i) => i === 2 || !isCustom(r, "projectId")));
+  assert.ok(out.every((r) => r.managerId === M1), "managers untouched");
+});
+t("override: changing the default afterwards updates followers but never a custom row", () => {
+  const d = { projectId: P1, managerId: M1 };
+  let rows = typed(6, d);
+  rows = rows.map((r, i) => (i === 1 ? setRowChoice(r, "projectId", P2, d) : i === 4 ? setRowChoice(r, "managerId", M2, d) : r));
+  rows = applyDefault(rows, "projectId", P3);
+  assert.deepEqual(rows.map((r) => r.projectId), [P3, P2, P3, P3, P3, P3]);
+  rows = applyDefault(rows, "managerId", M2);
+  assert.deepEqual(rows.map((r) => r.managerId), [M2, M2, M2, M2, M2, M2]);
+  const m = applyDefault(rows.map((r, i) => (i === 4 ? setRowChoice(r, "managerId", M1, { projectId: P3, managerId: M2 }) : r)), "managerId", M1);
+  assert.equal(m[4].managerId, M1); assert.equal(isCustom(m[4], "managerId"), false, "same as the new default again, so it follows it");
+});
+t("override: a project custom on one row and a manager custom on another stay independent", () => {
+  const d = { projectId: P1, managerId: M1 };
+  const rows = typed(3, d).map((r, i) => (i === 0 ? setRowChoice(r, "projectId", P2, d) : i === 1 ? setRowChoice(r, "managerId", M2, d) : r));
+  const after = applyDefault(applyDefault(rows, "projectId", P3), "managerId", M2);
+  assert.deepEqual(after.map((r) => [r.projectId, r.managerId]), [[P2, M2], [P3, M2], [P3, M2]]);
+});
+t("override: choosing the default value on a row means it follows the default again", () => {
+  const d = { projectId: P1, managerId: M1 };
+  const custom = setRowChoice(typed(1, d)[0], "projectId", P2, d); assert.equal(isCustom(custom, "projectId"), true);
+  const back = setRowChoice(custom, "projectId", P1, d); assert.equal(isCustom(back, "projectId"), false);
+});
+t("reset: a custom row goes back to the default and follows it again", () => {
+  const d = { projectId: P1, managerId: M1 };
+  const custom = setRowChoice(setRowChoice(typed(1, d)[0], "projectId", P2, d), "managerId", M2, d);
+  const reset = resetRowChoice(custom, "projectId", d);
+  assert.equal(reset.projectId, P1); assert.equal(isCustom(reset, "projectId"), false);
+  assert.equal(reset.managerId, M2); assert.equal(isCustom(reset, "managerId"), true, "the manager reset is separate");
+  const moved = applyDefault([reset], "projectId", P3)[0]; assert.equal(moved.projectId, P3);
+});
+t("duplicate: a copy keeps its custom flags and values", () => {
+  const d = { projectId: P1, managerId: M1 };
+  const custom = setRowChoice(typed(1, d)[0], "projectId", P2, d); const copy = duplicateOf(custom);
+  assert.equal(copy.projectId, P2); assert.equal(isCustom(copy, "projectId"), true); assert.notEqual(copy.uid, custom.uid);
+});
+t("submit data: every row still carries its OWN project and manager (individual routing)", () => {
+  const d = { projectId: P1, managerId: M1 };
+  const rows = typed(4, d).map((r, i) => (i === 1 ? setRowChoice(r, "managerId", M2, d) : i === 3 ? setRowChoice(r, "projectId", P2, d) : r));
+  const pay = rows.map((r) => toPayload(r)) as { teamId: string; taggedManagerId: string }[];
+  assert.deepEqual(pay.map((p) => [p.teamId, p.taggedManagerId]), [[P1, M1], [P1, M2], [P1, M1], [P2, M1]]);
+  assert.ok(!("projectCustom" in pay[0]) && !("managerCustom" in pay[0]), "the flags never go to the server");
+});
+t("draft: values are saved per row and the flags are not (the draft shape is unchanged)", () => {
+  const d = { projectId: P1, managerId: M1 };
+  const dr = toDraft(setRowChoice(typed(1, d)[0], "projectId", P2, d)); assert.equal(dr.teamId, P2); assert.equal(dr.taggedManagerId, M1);
+  assert.ok(!("projectCustom" in dr));
+});
+t("draft reopened: the most common value becomes the default; the others are custom; values are kept", () => {
+  const C = { projects: [{ id: P1 }, { id: P2 }, { id: P3 }], managers: [{ id: M1 }, { id: M2 }] };
+  const rows = [[P1, M1], [P1, M1], [P2, M1], [P1, M2], [P1, M1]].map(([p, m], i) => fromDraft({ title: "t" + i, description: null, teamId: p, taggedManagerId: m, hoursSpent: 1, weight: "MEDIUM", progress: "IN_PROGRESS" }, C));
+  const inf = inferDefaults(rows);
+  assert.deepEqual(inf.defaults, { projectId: P1, managerId: M1 });
+  assert.deepEqual(inf.rows.map((r) => [r.projectId, r.managerId]), [[P1, M1], [P1, M1], [P2, M1], [P1, M2], [P1, M1]]);
+  assert.deepEqual(inf.rows.map((r) => isCustom(r, "projectId")), [false, false, true, false, false]);
+  assert.deepEqual(inf.rows.map((r) => isCustom(r, "managerId")), [false, false, false, true, false]);
+  const changed = applyDefault(inf.rows, "projectId", P3);
+  assert.deepEqual(changed.map((r) => r.projectId), [P3, P3, P2, P3, P3], "after reopening, changing the default still spares the custom row");
+});
+t("draft reopened: rows with nothing chosen follow the default; an all-empty draft gives no default", () => {
+  const rows = [typed(1, { projectId: P1, managerId: M1 })[0], { ...typed(1)[0] }];
+  const inf = inferDefaults(rows);
+  assert.equal(inf.defaults.projectId, P1); assert.equal(isCustom(inf.rows[1], "projectId"), false);
+  const empty = inferDefaults(typed(3)); assert.deepEqual(empty.defaults, none); assert.ok(empty.rows.every((r) => !isCustom(r, "projectId") && !isCustom(r, "managerId")));
+});
+t("draft reopened: a tie picks the first value met", () => {
+  const rows = [typed(1, { projectId: P2, managerId: M1 })[0], typed(1, { projectId: P1, managerId: M1 })[0]];
+  assert.equal(inferDefaults(rows).defaults.projectId, P2);
+});
+t("validation is unchanged: each row still needs its own project and manager", () => {
+  const C = { projects: [{ id: P1 }], managers: [{ id: M1 }] };
+  const r = { ...typed(1)[0] };
+  assert.match(rowProblem(r, C)!, /project/i);
+  assert.equal(rowProblem({ ...r, projectId: P1, managerId: M1 }, C), null);
+});
+t("starting defaults: the server's defaults (from the person's records) come first", () => {
+  const C = { projects: [{ id: P1 }, { id: P2 }], managers: [{ id: M1 }, { id: M2 }] };
+  const d = startingDefaults({ projectId: P2, managerId: M2 }, { projectId: P1, managerId: M1 }, C);
+  assert.deepEqual([d.projectId, d.managerId], [P2, M2]); assert.deepEqual(d.fromRecords, { project: true, manager: true });
+});
+t("starting defaults: where the records give none, the last choice in this browser is used; each field is decided on its own", () => {
+  const C = { projects: [{ id: P1 }, { id: P2 }], managers: [{ id: M1 }, { id: M2 }] };
+  const d = startingDefaults({ projectId: null, managerId: M2 }, { projectId: P1, managerId: M1 }, C);
+  assert.deepEqual([d.projectId, d.managerId], [P1, M2]); assert.deepEqual(d.fromRecords, { project: false, manager: true });
+});
+t("starting defaults: nothing on the lists is ever invented", () => {
+  const C = { projects: [{ id: P1 }], managers: [{ id: M1 }] };
+  assert.deepEqual(startingDefaults({ projectId: "gone", managerId: "gone" }, { projectId: "old", managerId: "old" }, C), { projectId: "", managerId: "", fromRecords: { project: false, manager: false } });
+  assert.deepEqual(startingDefaults(undefined, null, C), { projectId: "", managerId: "", fromRecords: { project: false, manager: false } });
+});
+t("blocked: a Blocked row needs a reason of at least 3 characters; other progress values do not", () => {
+  const C = { projects: [{ id: P1 }], managers: [{ id: M1 }] };
+  const base = { ...blankRow({ projectId: P1, managerId: M1 }), title: "x" };
+  assert.equal(rowProblem({ ...base, progress: "TODO" }, C), null);
+  assert.equal(rowProblem({ ...base, progress: "IN_PROGRESS" }, C), null);
+  assert.equal(rowProblem({ ...base, progress: "COMPLETED" }, C), null);
+  assert.match(rowProblem({ ...base, progress: "BLOCKED" }, C)!, /blocking/i);
+  assert.match(rowProblem({ ...base, progress: "BLOCKED", blockedNote: "ab" }, C)!, /blocking/i);
+  assert.equal(rowProblem({ ...base, progress: "BLOCKED", blockedNote: "No access to the CRM" }, C), null);
+  assert.match(rowProblem({ ...base, progress: "BLOCKED", blockedNote: "x".repeat(501) }, C)!, /500/);
+});
+t("blocked: the reason is sent only for Blocked rows, trimmed", () => {
+  const base = { ...blankRow({ projectId: P1, managerId: M1 }), title: "x", blockedNote: "  reason here " };
+  assert.equal((toPayload({ ...base, progress: "BLOCKED" }) as { blockedNote?: string }).blockedNote, "reason here");
+  assert.ok(!("blockedNote" in toPayload({ ...base, progress: "IN_PROGRESS" })), "a leftover reason is not sent for another progress");
+  assert.ok(!("blockedNote" in toPayload({ ...base, progress: "TODO" })));
+  assert.equal(toPayload({ ...base, progress: "TODO" }).progress, "TODO");
 });
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
