@@ -1,0 +1,19 @@
+// Soft delete of a task by its tagged manager. NEW TABLE ONLY: the daily_tasks row (description, project, employee, approval history, rating,
+// comments) is never changed or removed. A row here means "this task is deleted": every active list, count, rating and report skips it.
+// The relation on DailyTask (`deletion`) is virtual: it adds no column, it only lets readers write `deletion: { is: null }`.
+model TaskDeletion {
+  id            String    @id @default(uuid()) @db.Uuid
+  platformId    String    @db.Uuid
+  taskId        String    @unique @db.Uuid
+  task          DailyTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  deletedById   String?   @db.Uuid
+  deletedByName String
+  deletedByRole String
+  reasonCode    String
+  reasonNote    String?
+  deletedAt     DateTime  @default(now())
+
+  @@index([platformId, deletedAt])
+  @@index([deletedById])
+  @@map("task_deletions")
+}

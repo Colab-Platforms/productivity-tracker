@@ -26,6 +26,7 @@ import Avatar, { PhotoEditor } from "../_photos/Avatar";
 import WarningLettersAdmin from "../_warnings/WarningLettersAdmin";
 import { AdditionalManagers } from "../_employees/AdditionalManagers";
 import { useMe } from "../layout";
+import LatePolicyCard from "../_late/LatePolicyCard";
 
 const API = API_BASE;
 
@@ -1662,6 +1663,8 @@ function ThresholdsTab({ onError, onDone }: TabProps) {
           </button>
         </div>
       )}
+
+      <LatePolicyCard onError={onError} onDone={onDone} />
     </div>
   );
 }

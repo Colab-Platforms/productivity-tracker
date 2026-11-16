@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { isoDaysAgo } from "@/lib/time";
 import { Stars } from "../../_ratings/Stars";
+import { LateBadge, LateNote, type LateInfo } from "../../_late/Late";
 
 export type RangeKey = "today" | "yesterday" | "last7" | "date";
 
@@ -52,6 +53,7 @@ export function DateFilter({ value, picked, onChange }: { value: RangeKey; picke
 type RTask = {
   id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; rating: number | null; ratingComment: string | null;
   completionNote: string | null; reviewNote: string | null; rejectionNote: string | null; project: string | null; date: string;
+  late?: LateInfo | null;
 };
 type RangeData = { from: string; to: string; score: { percent: number | null; done: number; total: number }; tasks: RTask[] };
 
@@ -102,8 +104,9 @@ export function RangeTasks({ from, to }: { from: string; to: string }) {
                 <li key={t.id} className="rounded-xl border border-indigo-100 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <p className="font-medium text-slate-900">{t.title}</p>
-                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.tone}`}>{s.label}</span>
+                    <span className="flex flex-wrap items-center gap-1.5"><LateBadge late={t.late} /><span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.tone}`}>{s.label}</span></span>
                   </div>
+                  <LateNote date={t.date} late={t.late} />
                   {t.project && <p className="mt-1 text-xs text-slate-400">{t.project}</p>}
                   {t.description && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{t.description}</p>}
                   {t.rating != null && <p className="mt-1"><Stars value={t.rating} size={14} /></p>}

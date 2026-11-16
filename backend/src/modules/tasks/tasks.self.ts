@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma.js";
 import { isOverdue } from "./tasks.self.logic.js";
 import { localDayOf, parseIsoDay } from "../../lib/dates.js";
 import { taskWorkSeconds } from "../tracker/productiveBreakdown.js";
+import { activeTasks } from "./tasks.deleted.js";
 
 // ---------------------------------------------------------------------------
 // MANAGER SELF-MANAGED TASKS (database side)
@@ -104,7 +105,7 @@ export async function summary(userId: string, fromIso: string, toIso: string) {
   if (!(await selfTasksReady())) return empty;
 
   const rows = await prisma.dailyTask.findMany({
-    where: { userId, date: { gte: from, lte: to }, status: { not: "CANCELLED" } },
+    where: { userId, date: { gte: from, lte: to }, status: { not: "CANCELLED" }, ...(await activeTasks()) },
     select: { id: true, title: true, date: true, status: true, weight: true, completedAt: true },
     orderBy: { date: "asc" },
   });
