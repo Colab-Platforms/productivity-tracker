@@ -4,6 +4,8 @@ import { getPinnedCompany } from "../../lib/deployment.js";
 import { closeStaleBreaks, closeStaleMeetings } from "./tracker.service.js";
 import { localMinutes, recompute } from "./tracker.service.js";
 import { platformToday } from "../../lib/dates.js";
+import { earlyDayTargetSeconds, isEarlyLogoutDay } from "../attendance/earlyLogout.logic.js";
+import { loadEarlyLogoutPolicy } from "../attendance/earlyLogout.js";
 
 const INTERVAL_MINUTES = 15;
 
@@ -148,6 +150,7 @@ export async function generateAlerts() {
   const pinned = await getPinnedCompany();
   const platforms = await prisma.platform.findMany({ where: { isActive: true, ...(pinned ? { id: pinned.id } : {}) } });
   let raised = 0;
+  const earlyPolicy = await loadEarlyLogoutPolicy();
 
   for (const platform of platforms) {
     const today = platformToday(platform.timezone);
@@ -159,9 +162,10 @@ export async function generateAlerts() {
         breaks: true,
         user: {
           include: {
+            shift: true,
             teamMemberships: {
               where: { isActive: true },
-              include: { team: { include: { config: true } } },
+              include: { team: { include: { config: true, shift: true } } },
             },
           },
         },
@@ -175,7 +179,10 @@ export async function generateAlerts() {
       const overtimeAfter =
         dailySeconds + (cfg?.overtimeAlertMinutes ?? 15) * 60;
       const lowThreshold = cfg?.lowProductivityThreshold ?? 0.75;
-      const productiveTarget = (cfg?.productiveHours ?? 8) * 3600;
+      // On a 2nd/4th Saturday the productive target shrinks with the shortened day (same rule as Reports), so a 4 PM logout is not "low productivity".
+      const shiftOfDay = s.user.shift ?? s.user.teamMemberships[0]?.team.shift ?? null;
+      const normalProductive = (cfg?.productiveHours ?? 8) * 3600;
+      const productiveTarget = isEarlyLogoutDay(earlyPolicy, today.toISOString().slice(0, 10)) ? earlyDayTargetSeconds(earlyPolicy, normalProductive, shiftOfDay) : normalProductive;
 
       if (s.wasLateLogin) {
         await raise(

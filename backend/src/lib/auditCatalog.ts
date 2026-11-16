@@ -95,6 +95,7 @@ const RULES: Rule[] = [
   { method: "PATCH", re: /^\/api\/admin\/teams\/:id$/, module: "Teams & rules", action: "UPDATE", summary: "Updated a team", recordType: "Team" },
   { method: "POST", re: /^\/api\/admin\/teams\/:id\/members$/, module: "Teams & rules", action: "UPDATE", summary: "Added a team member", recordType: "Team" },
   { method: "DELETE", re: /^\/api\/admin\/teams\/:id\/members\/:id$/, module: "Teams & rules", action: "UPDATE", summary: "Removed a team member", recordType: "Team" },
+  { method: "PUT", re: /^\/api\/admin\/early-logout-policy$/, module: "Teams & rules", action: "UPDATE", summary: "Changed the 2nd/4th Saturday early logout policy" },
   { method: "POST", re: /^\/api\/admin\/shifts$/, module: "Teams & rules", action: "CREATE", summary: "Created a shift" },
   { method: "PATCH", re: /^\/api\/admin\/shifts\/:id$/, module: "Teams & rules", action: "UPDATE", summary: "Updated a shift", recordType: "Shift" },
   { method: "PATCH", re: /^\/api\/admin\/config\/:id$/, module: "Teams & rules", action: "UPDATE", summary: "Changed a team's attendance rules", recordType: "TeamConfig" },

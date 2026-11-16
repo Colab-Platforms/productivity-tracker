@@ -21,6 +21,7 @@ import { accessFor, assertCompany } from "../../lib/companyAccess.js";
 import { peekEmployeeCode } from "./employeeCode.js";
 import { parseFilters } from "../hr-filters/hrFilters.logic.js";
 import * as officeNet from "../tracker/clockInNetwork.js";
+import * as earlyLogout from "../attendance/earlyLogout.js";
 import { clientIp } from "../../lib/clientIp.js";
 
 const router = Router();
@@ -44,6 +45,11 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_RANGE: { status: 400, message: "The end date cannot be before the start date." },
   RANGE_TOO_LONG: { status: 400, message: "Mark at most 120 days of leave at a time." },
   NO_WORKING_DAYS: { status: 400, message: "A shift needs at least one working day." },
+  BAD_ENABLED: { status: 400, message: "Send the policy as switched on or off." },
+  BAD_TIME: { status: 400, message: "The early logout time must be a time between 12:00 and 18:59, for example 16:00." },
+  BAD_TARGET_HOURS: { status: 400, message: "Expected hours must be between 1 and 12, in steps of a quarter hour (for example 5.25). Leave it blank to work it out from each person's shift." },
+  BAD_START_DATE: { status: 400, message: "The start date must be a real date in YYYY-MM-DD format." },
+  START_DATE_REQUIRED: { status: 400, message: "Choose the first day the policy applies. Earlier days are never changed." },
   // employee import
   EMPTY_FILE: { status: 400, message: "That file is empty." },
   FILE_TOO_LARGE: { status: 413, message: "That file is larger than 5 MB." },
@@ -453,6 +459,24 @@ router.patch("/config/:teamId", requireRole("ADMIN"), async (req, res) => {
       req.body ?? {}
     );
     res.json({ config });
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+// --- early logout policy (2nd and 4th Saturday) -------------------------------
+// One organisation-wide setting. HR can read it; only an Admin can change it.
+router.get("/early-logout-policy", async (_req, res) => {
+  try {
+    res.json(await earlyLogout.policyView());
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.put("/early-logout-policy", requireRole("ADMIN"), async (req, res) => {
+  try {
+    res.json(await earlyLogout.savePolicy(req.user!.userId, req.body ?? {}));
   } catch (e) {
     fail(res, e);
   }

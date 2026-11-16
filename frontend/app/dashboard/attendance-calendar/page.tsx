@@ -20,6 +20,7 @@ type Row = {
   workedSeconds: number | null; breakSeconds: number | null; stillWorking: boolean; payrollStatus: string; leaveType: string | null; holidayName: string | null; note: string | null;
   lateRemark: string | null; correctedBy: string | null; autoClosed: boolean; leaveHalfDay: string | null; leaveReason: string | null;
   tasksPlanned: number | null; tasksCompleted: number | null; remarks: string;
+  earlyLogoutDay?: boolean; earlyLogoutLabel?: string | null;
   discussions: { startedAt: string; endedAt: string | null; seconds: number; remark: string }[];
 };
 type Data = {
@@ -28,6 +29,8 @@ type Data = {
   // everyone the viewer may see, and how many of them the filters leave
   scope?: { orgTotal: number; filteredTotal: number };
   people: Person[]; rows: Row[]; counts: Record<string, number>;
+  // the 2nd/4th Saturdays inside the range (empty when the policy is off)
+  earlyLogout?: { enabled: boolean; logoutTime: string; label: string; dates: string[] };
 };
 
 const LOOK: Record<Status, { label: string; chip: string; dot: string }> = {
@@ -120,6 +123,8 @@ export default function AttendanceCalendarPage() {
   const personById = useMemo(() => new Map((data?.people ?? []).map((p) => [p.id, p])), [data]);
   const dates = useMemo(() => (data ? datesBetween(data.from, data.to) : []), [data]);
   const single = data && data.people.length === 1 ? data.people[0] : null; // one person: a real month calendar
+  const earlyDates = useMemo(() => new Set(data?.earlyLogout?.dates ?? []), [data]);
+  const earlyLabel = data?.earlyLogout?.label ?? "Early Logout – 4:00 PM";
   const pickedRow = picked ? byKey.get(`${picked.userId}|${picked.date}`) ?? null : null;
   const pickedPerson = picked ? personById.get(picked.userId) ?? null : null;
 
@@ -193,6 +198,12 @@ export default function AttendanceCalendarPage() {
         {statusFilter && <button type="button" onClick={() => setStatusFilter("")} className="rounded-full px-3 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50">Clear filter</button>}
       </div>
 
+      {data?.earlyLogout?.enabled && (
+        <p className="text-xs text-slate-500" data-testid="early-logout-note">
+          <span className="font-semibold text-indigo-700">{data.earlyLogout.label}</span> on the 2nd and 4th Saturday: a normal working day that ends early, not a week-off.
+        </p>
+      )}
+
       {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
       {data && data.people.length === 0 && !loading && <div className={`${card} p-8 text-center text-sm text-slate-500`}>No employees to show for these filters.</div>}
@@ -217,6 +228,7 @@ export default function AttendanceCalendarPage() {
                   className={`flex min-h-16 flex-col items-start rounded-xl border p-1.5 text-left transition sm:min-h-20 sm:p-2 ${r ? `${look!.chip} border-transparent hover:ring-2 hover:ring-indigo-300` : "border-dashed border-indigo-100 text-slate-300"} ${d === data.today ? "ring-2 ring-indigo-500" : ""}`}
                 >
                   <span className="text-xs font-semibold">{Number(d.slice(8))}</span>
+                  {earlyDates.has(d) && <span data-testid="early-logout-tag" className="mt-0.5 rounded bg-white/70 px-1 text-[9px] font-semibold leading-tight text-indigo-700 sm:text-[10px]" title={earlyLabel}>{earlyLabel}</span>}
                   {r && <span className="mt-auto text-[11px] font-medium leading-tight">{look!.label}</span>}
                   {r?.firstCheckIn && <span className="hidden text-[10px] opacity-80 sm:block">{clockTime(r.firstCheckIn, single.timezone)}</span>}
                 </button>
@@ -236,6 +248,7 @@ export default function AttendanceCalendarPage() {
                   <th key={d} className={`px-0.5 py-2 text-center font-medium ${d === data.today ? "text-indigo-600" : "text-slate-400"}`}>
                     <div>{Number(d.slice(8))}</div>
                     <div className="text-[9px] uppercase">{["M", "T", "W", "T", "F", "S", "S"][weekday(d)]}</div>
+                    {earlyDates.has(d) && <div data-testid="early-logout-mark" className="mx-auto mt-0.5 h-1 w-4 rounded-full bg-indigo-500" title={earlyLabel} aria-label={earlyLabel} />}
                   </th>
                 ))}
               </tr>
@@ -283,6 +296,7 @@ export default function AttendanceCalendarPage() {
               <>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <span className={`rounded-full px-3 py-1 text-xs font-semibold ${LOOK[pickedRow.status].chip}`}>{LOOK[pickedRow.status].label}</span>
+                  {pickedRow.earlyLogoutDay && <span data-testid="early-logout-badge" className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">{pickedRow.earlyLogoutLabel ?? earlyLabel}</span>}
                   {pickedRow.firstCheckIn && (pickedRow.lateByMinutes ?? 0) > 0 && (
                     <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">Late arrival · {hm((pickedRow.lateByMinutes ?? 0) * 60)} after {data?.rules.presentUntil}</span>
                   )}
