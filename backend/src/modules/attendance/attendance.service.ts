@@ -5,7 +5,7 @@
 // of the truth that can drift from the first.
 
 import { prisma } from "../../lib/prisma.js";
-import { awayOf } from "../tracker/activityClass.js";
+import { awayOf, isCountedBreak, recordedRowSeconds } from "../tracker/activityClass.js";
 import { earlyLogoutLabel, isEarlyLogoutDay, stayedUntil } from "./earlyLogout.logic.js";
 import { loadEarlyLogoutPolicy } from "./earlyLogout.js";
 
@@ -51,7 +51,9 @@ export type AttendanceDay = {
   workedHours: number; // productive + meeting, i.e. actual work
   productiveHours: number;
   meetingHours: number;
-  breakHours: number;
+  breakHours: number; // after any Admin correction
+  breakRecordedHours: number; // as the timer recorded it
+  breakCorrected: boolean;
   washroomHours: number;
   loginAt: string | null;
   logoutAt: string | null;
@@ -253,7 +255,7 @@ export async function getMonthAttendanceBulk(
       logoutAt: true,
       productiveSeconds: true,
       breakSeconds: true,
-      breaks: { select: { breakType: true, reason: true, startedAt: true, endedAt: true } },
+      breaks: { select: { breakType: true, reason: true, startedAt: true, endedAt: true, correctedDurationSeconds: true } },
       meetingSeconds: true,
       autoClosed: true,
     },
@@ -374,6 +376,9 @@ export async function getMonthAttendanceBulk(
       const awayNow = new Date();
       const breakSeconds = daySessions.reduce((sum, s) => sum + awayOf(s, awayNow).breakSeconds, 0);
       const washroomSeconds = daySessions.reduce((sum, s) => sum + awayOf(s, awayNow).washroomSeconds, 0);
+      // The same breaks as the timer recorded them, so a day an Admin corrected can show both values.
+      const breakRecordedSeconds = daySessions.reduce((sum, s) => sum + (s.breaks ?? []).filter((b) => isCountedBreak(b)).reduce((n, b) => n + recordedRowSeconds(b, awayNow), 0), 0);
+      const breakCorrected = daySessions.some((s) => (s.breaks ?? []).some((b) => isCountedBreak(b) && b.correctedDurationSeconds != null));
       const meetingSeconds = daySessions.reduce(
         (sum, s) => sum + s.meetingSeconds,
         0,
@@ -513,6 +518,8 @@ export async function getMonthAttendanceBulk(
         productiveHours: round2(productiveSeconds / 3600),
         meetingHours: round2(meetingSeconds / 3600),
         breakHours: round2(breakSeconds / 3600),
+        breakRecordedHours: round2(breakRecordedSeconds / 3600),
+        breakCorrected,
         washroomHours: round2(washroomSeconds / 3600),
         loginAt: firstLogin ? firstLogin.toISOString() : null,
         logoutAt: lastLogout ? lastLogout.toISOString() : null,

@@ -125,7 +125,9 @@ type Row = {
   logoutAt: string | null;
   status: string;
   productiveSeconds: number;
-  breakSeconds: number; // Tea / Lunch / Personal / Other (Washroom is separate)
+  breakSeconds: number; // Tea / Lunch / Personal / Other (Washroom is separate). After any Admin correction.
+  breakRecordedSeconds?: number; // the same breaks as the timer recorded them, before any correction
+  breakCorrected?: boolean;
   washroomSeconds?: number;
   meetingSeconds: number;
   breakCount: number;
@@ -204,6 +206,8 @@ export default function HistoryPage() {
       "Clock out",
       "Productive",
       "Break",
+      "Break as recorded",
+      "Break corrected by Admin",
       "Washroom",
       "Team Huddle",
       "Breaks taken",
@@ -223,6 +227,8 @@ export default function HistoryPage() {
         r.logoutAt ? formatTime(r.logoutAt) : "",
         hm(r.productiveSeconds),
         hm(r.breakSeconds),
+        hm(r.breakRecordedSeconds ?? r.breakSeconds),
+        r.breakCorrected ? "yes" : "no",
         hm(r.washroomSeconds ?? 0),
         hm(r.huddleSeconds ?? 0),
         r.breakCount,
@@ -417,6 +423,11 @@ export default function HistoryPage() {
                           {" "}
                           ·{r.breakCount}
                         </span>
+                        {r.breakCorrected && (
+                          <div className="text-xs font-normal text-amber-700" title="An Admin corrected this day's break. The recorded value is kept and can be restored.">
+                            Corrected · recorded {hm(r.breakRecordedSeconds ?? 0)}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-600">{(r.washroomSeconds ?? 0) > 0 ? hm(r.washroomSeconds ?? 0) : <span className="text-slate-300">—</span>}</td>
                       <td className="px-4 py-3 text-right text-slate-600 tabular-nums">

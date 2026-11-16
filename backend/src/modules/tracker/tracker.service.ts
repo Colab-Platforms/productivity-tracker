@@ -9,7 +9,7 @@ import { huddleSecondsByDay } from "../meetings/participation.service.js";
 import { starsFor } from "../tasks/tasks.rating.js";
 import { creditOf } from "../tasks/tasks.rating.logic.js";
 import { calendarStatus, minutesAfterLimit } from "../team-attendance/arrival.logic.js";
-import { DISCUSSION_PREFIX, REMARK_MAX, REMARK_MIN, awayOf, awayRows, isCountedBreak, isDiscussion, isWashroom, splitAwayTime } from "./activityClass.js";
+import { DISCUSSION_PREFIX, REMARK_MAX, REMARK_MIN, awayOf, awayRows, isCountedBreak, isDiscussion, isWashroom, recordedRowSeconds, splitAwayTime } from "./activityClass.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
 
 const DEFAULTS = {
@@ -952,6 +952,9 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
       status: s.status,
       productiveSeconds: s.productiveSeconds,
       breakSeconds: awayOf(s, new Date()).breakSeconds,
+      // What the timer recorded for the same breaks, before any Admin correction. Differs from breakSeconds only on a corrected day.
+      breakRecordedSeconds: s.breaks.filter((b) => isCountedBreak(b)).reduce((n, b) => n + recordedRowSeconds(b, new Date()), 0),
+      breakCorrected: s.breaks.some((b) => isCountedBreak(b) && b.correctedDurationSeconds != null),
       washroomSeconds: awayOf(s, new Date()).washroomSeconds,
       discussionSeconds: awayOf(s, new Date()).discussionSeconds,
       meetingSeconds: s.meetingSeconds,
