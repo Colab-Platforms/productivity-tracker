@@ -21,6 +21,7 @@ export const DESIGNATIONS = [
   "BDM & Project Lead",
   "Business Head",
   "Business Operations & Legal",
+  "Content Creator",
   "Creative Head",
   "Customer After Service Executive",
   "Digital Marketing",

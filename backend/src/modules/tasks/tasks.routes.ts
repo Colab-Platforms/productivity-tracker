@@ -9,6 +9,8 @@ import { Router } from "express";
 import { parseFilters } from "../hr-filters/hrFilters.logic.js";
 import * as tasks from "./tasks.service.js";
 import * as selfTasks from "./tasks.self.js";
+import * as bulk from "./tasks.bulk.js";
+import * as late from "./tasks.late.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 
 const router = Router();
@@ -66,6 +68,21 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   REMARK_REQUIRED: { status: 400, message: "Add a remark (at least 3 characters) explaining why." },
   REMARK_TOO_LONG: { status: 400, message: "Keep the remark to 300 characters or fewer." },
   ALREADY_REOPENED: { status: 409, message: "That task was already reopened." },
+  BACKDATE_NOT_PAST: { status: 400, message: "Pick a date before today. Use Quick Add or Add Single Task for today." },
+  BACKDATE_TOO_OLD: { status: 400, message: "That date is too old. Tasks can be added for the last 14 days only." },
+  LATE_REASON_REQUIRED: { status: 400, message: "Add a reason (at least 3 characters) for submitting this late." },
+  LATE_REASON_TOO_LONG: { status: 400, message: "Keep the reason to 300 characters or fewer." },
+  NO_APPROVER_FOR_LATE: { status: 409, message: "A late task needs a manager to review it, and none is available. Please ask HR or your Admin." },
+  BAD_ALLOWED_DAYS: { status: 400, message: "Enter a whole number of days from 0 to 14." },
+  BAD_DELETE_REASON: { status: 400, message: "Choose a reason for deleting this task." },
+  DELETE_NOTE_REQUIRED: { status: 400, message: "Write a short note (at least 3 characters) when the reason is Other." },
+  DELETE_NOTE_TOO_LONG: { status: 400, message: "Keep the note to 300 characters or fewer." },
+  ALREADY_DELETED: { status: 409, message: "That task was already deleted." },
+  DUPLICATE_TASK: { status: 409, message: "You already sent this task today (same description, project and manager)." },
+  BULK_NOT_AVAILABLE: { status: 403, message: "Quick Add is for tasks that need approval. Your own tasks use the manager screen." },
+  NO_ROWS: { status: 400, message: "Add at least one task." },
+  TOO_MANY_ROWS: { status: 400, message: "Too many tasks at once. Send up to 20 at a time (drafts hold up to 30)." },
+  BAD_ROWS: { status: 400, message: "That list of tasks is not valid." },
   ASSIGNED_CANNOT_DELETE: { status: 400, message: "A task your manager assigned can't be deleted." },
 };
 
@@ -120,6 +137,69 @@ router.get("/self/summary", async (req, res) => {
 });
 
 // The history of one of the signed-in person's own tasks: every step, edit and work update.
+// --- Quick Add: several tasks from one screen (drafts are the person's own, never tasks) ----------
+router.get("/drafts", async (req, res) => {
+  try {
+    res.json(await bulk.listDrafts(req.user!.userId));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.put("/drafts", async (req, res) => {
+  try {
+    res.json(await bulk.saveDrafts(req.user!.userId, req.body?.rows));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.post("/bulk", async (req, res) => {
+  try {
+    const out = await bulk.submitBulk(req.user!.userId, req.body?.rows, { forDate: req.body?.forDate, lateReason: req.body?.lateReason });
+    // Each failed row says why, in words (the same messages the single form shows).
+    res.json({ ...out, results: out.results.map((r) => (r.ok ? r : { ...r, error: MESSAGES[r.code ?? ""]?.message ?? "This task could not be sent." })) });
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+// --- late (previous-day) submissions: the window the employee screen needs, and the Admin setting ----------
+// Deleted tasks (read only): HR and Admin for their companies, a manager only what he deleted himself.
+router.get("/deleted", async (req, res) => {
+  try {
+    res.json(await tasks.listDeletedTasks(req.user!.userId));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.get("/late-policy", async (req, res) => {
+  try {
+    res.json(await late.policyFor(req.user!.userId));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.get("/late-policy/all", async (req, res) => {
+  try {
+    if (req.user!.role !== "ADMIN") throw new Error("NOT_ALLOWED");
+    res.json(await late.listPolicies(req.user!.userId));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+router.put("/late-policy", async (req, res) => {
+  try {
+    if (req.user!.role !== "ADMIN") throw new Error("NOT_ALLOWED");
+    res.json(await late.setPolicy(req.user!.userId, req.body?.companyId, req.body?.allowedDays));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
 router.get("/:id/history", async (req, res) => {
   try {
     const task = await tasks.ownTaskOrThrow(req.user!.userId, id(req.params.id));
@@ -196,6 +276,14 @@ router.post(["/review/:id/rating", "/review/:id/outcome"], async (req, res) => {
 });
 
 // Send a Completed task back to In Progress. Body: { type: "PARTIAL" | "NOT_FULL", remark }.
+router.post("/review/:id/delete", async (req, res) => {
+  try {
+    res.json(await tasks.deleteTaskAsManager(req.user!.userId, id(req.params.id), { reasonCode: req.body?.reasonCode, note: req.body?.note }));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
 router.post("/review/:id/revert", async (req, res) => {
   try {
     res.json(await tasks.revertTask(req.user!.userId, id(req.params.id), req.body?.type, req.body?.remark));

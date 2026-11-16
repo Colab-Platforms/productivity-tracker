@@ -10,6 +10,7 @@ import { starsFor } from "../tasks/tasks.rating.js";
 import { creditOf } from "../tasks/tasks.rating.logic.js";
 import { calendarStatus, minutesAfterLimit } from "../team-attendance/arrival.logic.js";
 import { DISCUSSION_PREFIX, REMARK_MAX, REMARK_MIN, awayOf, awayRows, isCountedBreak, isDiscussion, isWashroom, splitAwayTime } from "./activityClass.js";
+import { activeTasks } from "../tasks/tasks.deleted.js";
 
 const DEFAULTS = {
   dailyWorkHours: 9,
@@ -899,9 +900,9 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
     prisma.leaveDay.findMany({
       where: { userId, date: { gte: from, lte: to } },
     }),
-    prisma.dailyTask.findMany({
-      where: { userId, date: { gte: from, lte: to } },
-    }),
+    activeTasks().then((live) => prisma.dailyTask.findMany({
+      where: { userId, date: { gte: from, lte: to }, ...live },
+    })),
   ]);
 
   const key = (d: Date) => d.toISOString().slice(0, 10);

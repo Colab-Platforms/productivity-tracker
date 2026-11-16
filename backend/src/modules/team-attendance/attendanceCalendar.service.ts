@@ -8,6 +8,7 @@ import { DISCUSSION_PREFIX } from "../tracker/activityClass.js";
 import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
 import { resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { isFiltering, NO_FILTERS, type HrFilters } from "../hr-filters/hrFilters.logic.js";
+import { activeTasks } from "../tasks/tasks.deleted.js";
 
 // ---------------------------------------------------------------------------
 // ATTENDANCE CALENDAR (read-only, no schema change)
@@ -113,12 +114,12 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
         select: { userId: true, date: true, isHalfDay: true, isFirstHalf: true, leaveRequest: { select: { reason: true } } },
       })
       .catch(() => [] as { userId: string; date: Date; isHalfDay: boolean; isFirstHalf: boolean; leaveRequest: { reason: string } | null }[]),
-    prisma.dailyTask
-      .groupBy({
+    activeTasks()
+      .then((live) => prisma.dailyTask.groupBy({
         by: ["userId", "date", "status", "approvalStatus"],
-        where: { userId: { in: ids }, date: { gte: from, lte: to }, status: { not: "CANCELLED" } },
+        where: { userId: { in: ids }, date: { gte: from, lte: to }, status: { not: "CANCELLED" }, ...live },
         _count: { _all: true },
-      })
+      }))
       .catch(() => [] as { userId: string; date: Date; status: string; approvalStatus: string; _count: { _all: number } }[]),
   ]);
   const sessionOf = new Map(sessions.map((s) => [`${s.userId}|${s.date.toISOString().slice(0, 10)}`, s]));

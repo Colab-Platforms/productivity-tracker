@@ -15,6 +15,7 @@ import { apiGet, apiPost , API_BASE } from "@/lib/api";
 import { useTaskRealtime } from "@/lib/realtime";
 import { formatDate, isoDaysAgo } from "@/lib/time";
 import { DateFilter, RangeTasks, rangeFor, type RangeKey } from "./_range/RangeTasks";
+import QuickAdd from "./_quick/QuickAdd";
 import SelfManagedTasks, { type SelfPayload } from "./_self/SelfManagedTasks";
 import { Stars } from "../_ratings/Stars";
 
@@ -123,6 +124,12 @@ export default function TasksPage() {
   const [busy, setBusy] = useState(false);
   const [rangeKey, setRangeKey] = useState<RangeKey>("today");
   const [picked, setPicked] = useState(isoDaysAgo(1));
+  const [entryMode, setEntryMode] = useState<"single" | "quick" | "previous">("single");
+  // How many previous days may be added without a reason (company setting); `ready` is false until the server has the feature.
+  const [latePolicy, setLatePolicy] = useState<{ ready: boolean; allowedDays: number; maxDays: number } | null>(null);
+  useEffect(() => {
+    apiGet<{ ready: boolean; allowedDays: number; maxDays: number }>("/tasks/late-policy").then(setLatePolicy).catch(() => setLatePolicy(null));
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -287,7 +294,33 @@ export default function TasksPage() {
       )}
 
       {/* --- propose ------------------------------------------------------ */}
-      <form
+      {data?.entryForm?.ready && (
+        <div role="tablist" aria-label="How do you want to add tasks?" className="flex w-full flex-col gap-1 rounded-xl bg-white p-1 shadow-[var(--shadow-card)] sm:inline-flex sm:w-auto sm:flex-row sm:gap-0">
+          {([["single", "Add Single Task"], ["quick", "Quick Add (Multiple Tasks)"], ["previous", "Add Previous Day's Tasks"]] as const).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={entryMode === k}
+              onClick={() => setEntryMode(k)}
+              className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${entryMode === k ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-indigo-50"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {data?.entryForm?.ready && entryMode === "quick" && (
+        <QuickAdd key="today" projects={data.entryForm.projects} managers={data.entryForm.managers} onSent={() => void load()} />
+      )}
+      {data?.entryForm?.ready && entryMode === "previous" && (
+        latePolicy?.ready ? (
+          <QuickAdd key="previous" previous={{ allowedDays: latePolicy.allowedDays, maxDays: latePolicy.maxDays }} projects={data.entryForm.projects} managers={data.entryForm.managers} onSent={() => void load()} />
+        ) : (
+          <p className="rounded-2xl bg-white p-5 text-sm text-slate-600 shadow-[var(--shadow-card)]">Adding tasks for a previous day is not switched on yet. Please ask your Admin.</p>
+        )
+      )}
+      {!(data?.entryForm?.ready && entryMode !== "single") && <form
         onSubmit={propose}
         className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-5 space-y-4"
       >
@@ -377,7 +410,7 @@ export default function TasksPage() {
             Send for approval
           </button>
         </div>
-      </form>
+      </form>}
 
       {error && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
