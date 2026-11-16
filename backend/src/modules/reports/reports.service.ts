@@ -28,6 +28,8 @@ import { huddleSecondsByDay } from "../meetings/participation.service.js";
 import { awayOf } from "../tracker/activityClass.js";
 import { platformToday, parseIsoDay } from "../../lib/dates.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
+import { earlyDayTargetSeconds, isEarlyLogoutDay } from "../attendance/earlyLogout.logic.js";
+import { loadEarlyLogoutPolicy } from "../attendance/earlyLogout.js";
 
 export type GroupBy = "person" | "day" | "week" | "month" | "year";
 
@@ -219,7 +221,7 @@ export async function getTeamReport(
 
       prisma.shift.findMany({
         where: companyScope,
-        select: { id: true, workingDays: true, isDefault: true, platformId: true },
+        select: { id: true, workingDays: true, isDefault: true, platformId: true, startTime: true, endTime: true, spansMidnight: true },
       }),
 
       prisma.holiday.findMany({
@@ -240,10 +242,18 @@ export async function getTeamReport(
 
   const shiftDays = new Map<string, number[]>();
   const defaultDaysOf = new Map<string, number[]>(); // each company's default shift
+  const shiftById = new Map<string, (typeof shifts)[number]>();
+  const defaultShiftOf = new Map<string, (typeof shifts)[number]>();
   for (const s of shifts) {
     shiftDays.set(s.id, s.workingDays);
-    if (s.isDefault) defaultDaysOf.set(s.platformId, s.workingDays);
+    shiftById.set(s.id, s);
+    if (s.isDefault) {
+      defaultDaysOf.set(s.platformId, s.workingDays);
+      defaultShiftOf.set(s.platformId, s);
+    }
   }
+  // 2nd/4th Saturday early-logout policy: on those days the expected (target) hours are the policy's own figure when one is set, else the normal target scaled by the person's own shift.
+  const earlyPolicy = await loadEarlyLogoutPolicy();
 
   const holidayDaysOf = new Map<string, Set<string>>(); // each company's own holidays
   for (const h of holidays) {
@@ -368,7 +378,10 @@ export async function getTeamReport(
     const person = byPerson.get(u.id)!;
     const days = (u.shiftId ? shiftDays.get(u.shiftId) : undefined) ?? defaultDaysOf.get(u.platformId) ?? DEFAULT_WORKING_DAYS;
     const holidayDays = holidayDaysOf.get(u.platformId) ?? new Set<string>();
-    const dailyTargetSeconds = targetSecondsOf(u.platformId);
+    const normalTargetSeconds = targetSecondsOf(u.platformId);
+    const earlyShift = (u.shiftId ? shiftById.get(u.shiftId) : undefined) ?? defaultShiftOf.get(u.platformId);
+    const earlyTargetSeconds = earlyPolicy.enabled ? earlyDayTargetSeconds(earlyPolicy, normalTargetSeconds, earlyShift) : normalTargetSeconds;
+    let dailyTargetSeconds = normalTargetSeconds;
     const mgr = managerIds.has(u.id);
 
     const joined = u.dateOfJoining ? u.dateOfJoining.getTime() : -Infinity;
@@ -393,6 +406,7 @@ export async function getTeamReport(
       if (holidayDays.has(key)) continue;
 
       const b = bucket(bucketKey(date, groupBy));
+      dailyTargetSeconds = isEarlyLogoutDay(earlyPolicy, key) ? earlyTargetSeconds : normalTargetSeconds;
 
       const leave = leaveMap.get(`${u.id}|${key}`);
       if (leave === true) {

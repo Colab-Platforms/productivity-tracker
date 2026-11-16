@@ -6,6 +6,8 @@
 
 import { prisma } from "../../lib/prisma.js";
 import { awayOf } from "../tracker/activityClass.js";
+import { earlyLogoutLabel, isEarlyLogoutDay, stayedUntil } from "./earlyLogout.logic.js";
+import { loadEarlyLogoutPolicy } from "./earlyLogout.js";
 
 // Every company here operates in India. Shift times like "10:00" mean 10:00
 // IST, while timestamps are stored in UTC, so the two are compared after
@@ -61,6 +63,10 @@ export type AttendanceDay = {
   leaveHalfDay: "first half" | "second half" | null;
   autoClosed: boolean;
   note: string | null;
+  // 2nd/4th Saturday early-logout policy. true only on a working day that the policy covers (never a holiday, week-off or leave-free date it does not touch).
+  earlyLogoutDay: boolean;
+  earlyLogoutTime: string | null; // "16:00" on those days
+  earlyLogoutLabel: string | null; // "Early Logout – 4:00 PM"
 };
 
 export type AttendanceTotals = {
@@ -189,6 +195,8 @@ export async function getMonthAttendanceBulk(
   const from = utcDate(year, month, 1);
   const to = utcDate(year, month, dayCount);
   const today = istToday();
+  // The early-logout policy (off when switched off or when its table does not exist yet). Days before its start date are never affected.
+  const earlyPolicy = await loadEarlyLogoutPolicy();
 
   // The person, their own shift if they have one, and the two dates that bound
   // their employment. Without those dates the engine marks somebody absent for
@@ -399,6 +407,7 @@ export async function getMonthAttendanceBulk(
 
       let status: DayStatus;
       let note: string | null = null;
+      const policyDay = isEarlyLogoutDay(earlyPolicy, key);
 
       const isFuture = date.getTime() > today.getTime();
       const isWorkingDay = forcedWorking || workingDays.includes(dow);
@@ -446,6 +455,10 @@ export async function getMonthAttendanceBulk(
         // absence and a wrong deduction is far worse than a missed one.
         status = "NOT_TRACKED";
         note = "No attendance recorded for anyone this day";
+      } else if (policyDay && stayedUntil(lastLogout, key, earlyPolicy.logoutTime)) {
+        // 2nd/4th Saturday: staying until the early-logout time (or later) is a full day, whatever the hours.
+        status = "PRESENT";
+        if (workedHours < fullDayAfterHours) note = `${earlyLogoutLabel(earlyPolicy.logoutTime)}: counted as a full day (${round2(workedHours)}h worked)`;
       } else if (workedHours >= fullDayAfterHours) {
         status = "PRESENT";
       } else if (workedHours >= halfDayAfterHours) {
@@ -486,6 +499,9 @@ export async function getMonthAttendanceBulk(
         }
       }
 
+      // Marked only where the person is expected to work: not a holiday, a week-off, or outside employment.
+      const earlyDay = policyDay && isWorkingDay && !offHoliday && status !== "NOT_EMPLOYED" && status !== "HOLIDAY" && status !== "WEEK_OFF";
+
       days.push({
         date: key,
         dayOfWeek: dow,
@@ -507,6 +523,9 @@ export async function getMonthAttendanceBulk(
         leaveHalfDay: leave?.isHalfDay ? (leave.isFirstHalf ? "first half" : "second half") : null,
         autoClosed: daySessions.some((s) => s.autoClosed),
         note,
+        earlyLogoutDay: earlyDay,
+        earlyLogoutTime: earlyDay ? earlyPolicy.logoutTime : null,
+        earlyLogoutLabel: earlyDay ? earlyLogoutLabel(earlyPolicy.logoutTime) : null,
       });
     }
 

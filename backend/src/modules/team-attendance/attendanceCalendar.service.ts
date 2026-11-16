@@ -2,6 +2,8 @@ import { prisma } from "../../lib/prisma.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
+import { earlyLogoutLabel, isEarlyLogoutDay } from "../attendance/earlyLogout.logic.js";
+import { loadEarlyLogoutPolicy } from "../attendance/earlyLogout.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
 import { DISCUSSION_PREFIX } from "../tracker/activityClass.js";
@@ -208,6 +210,8 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
         leaveType: d.leaveType,
         holidayName: d.holidayName,
         note: d.note,
+        earlyLogoutDay: d.earlyLogoutDay,
+        earlyLogoutLabel: d.earlyLogoutLabel,
         // What explains the day
         lateRemark: lateText,
         correctedBy: fixedBy,
@@ -227,7 +231,17 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
     }
   }
   rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  return { ...base, people: chosen, rows, counts };
+  // The 2nd/4th Saturdays inside the range, so the calendar can label them even where no row exists (a future date).
+  const policy = await loadEarlyLogoutPolicy();
+  const earlyDates: string[] = [];
+  if (policy.enabled) {
+    for (let t = Date.parse(`${fromIso}T00:00:00Z`); t <= Date.parse(`${toIso}T00:00:00Z`); t += 86400000) {
+      const iso = new Date(t).toISOString().slice(0, 10);
+      if (isEarlyLogoutDay(policy, iso)) earlyDates.push(iso);
+    }
+  }
+  const earlyLogout = { enabled: policy.enabled, logoutTime: policy.logoutTime, startDate: policy.startDate, label: earlyLogoutLabel(policy.logoutTime), dates: earlyDates };
+  return { ...base, people: chosen, rows, counts, earlyLogout };
 }
 
 function emptyCounts(): Record<string, number> {
