@@ -68,7 +68,7 @@ const PW = "Tdf@12345678";
   const f2 = await form("E2");
   ok("two teams and none primary: no project is guessed, the manager still defaults", f2.defaults.projectId === null && f2.defaults.managerId === M1, f2.defaults);
   const f3 = await form("E3");
-  ok("only one team (not marked primary): that team; the reporting manager is HR, who cannot be tagged, so no manager", f3.defaults.projectId === P2 && f3.defaults.projectSource === "ONLY_TEAM" && f3.defaults.managerId === null, f3.defaults);
+  ok("only one team (not marked primary): that team; the reporting manager is HR, who may approve their own reporting employees (2026-11-17 rule), so HR is the default", f3.defaults.projectId === P2 && f3.defaults.projectSource === "ONLY_TEAM" && f3.defaults.managerId !== null && f3.defaults.managerSource === "REPORTING_MANAGER", f3.defaults);
   const f4 = await form("E4");
   ok("no team and a suspended reporting manager: nothing is pre-selected", f4.defaults.projectId === null && f4.defaults.managerId === null, f4.defaults);
   if (linksTable) {

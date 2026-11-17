@@ -72,13 +72,14 @@ export function mayReview(input: { actorId: string; taggedId: string | null; tag
 
 /**
  * Does a task that is still WAITING for its manager's decision show up for this viewer?
- *  - HR: never (HR monitors tasks only after the manager has approved them).
+ *  - HR: only a task tagged to this HR person (they are that employee's reporting manager); every other waiting task only after approval.
  *  - Admin: yes, as read-only monitoring; the Needs Approval list still contains only what the Admin may decide (canAct).
  *  - Manager (and anyone else): only when the task is theirs to decide (they are the tagged manager, or the task has no usable tag and the
  *    earlier reporting-line rule applies). Another manager's queue stays invisible to them.
  */
 export function pendingTaskVisibleTo(role: string, canAct: boolean): boolean {
-  if (role === "HR") return false;
+  // HR sees a waiting task only when it is tagged to them (canAct): the employee's own reporting manager, when that is HR.
+  if (role === "HR") return canAct;
   if (role === "ADMIN") return true;
   return canAct;
 }

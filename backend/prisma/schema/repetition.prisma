@@ -1,0 +1,72 @@
+// Repetitive task detection: flags, the tasks behind each flag, the review trail and ONE threshold row. NEW TABLES ONLY; no existing table or column is touched,
+// and a flag never changes a rating, salary, attendance, productivity figure or evaluation. No relations here (the foreign keys live in the migration).
+// Before the migration is applied nothing is detected and every screen behaves as before.
+
+model RepetitionSettings {
+  id            String   @id @default("global")
+  enabled       Boolean  @default(true)
+  minCount      Int      @default(3) // similar submissions needed
+  windowDays    Int      @default(7) // within this many days
+  similarityPct Int      @default(60) // how alike two tasks must read (0-100)
+  updatedById   String?  @db.Uuid
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("repetition_settings")
+}
+
+model RepetitionFlag {
+  id          String    @id @default(uuid()) @db.Uuid
+  platformId  String    @db.Uuid // the employee's company
+  userId      String    @db.Uuid // the employee
+  teamId      String?   @db.Uuid // the project the repeated tasks belong to (null = no project)
+  patternKey  String // stable fingerprint of the pattern (employee + project + core words)
+  sampleTitle String
+  repeatCount Int
+  firstDate   DateTime  @db.Date
+  lastDate    DateTime  @db.Date
+  similarity  Int // average similarity (0-100) of the matched tasks
+  reason      String // why these tasks were grouped, in words
+  status      String    @default("NEW") // NEW | UNDER_REVIEW | VALID | FALSE_POSITIVE | RESOLVED
+  escalatedAt DateTime?
+  escalatedById String? @db.Uuid
+  lastDetectedAt DateTime @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, status])
+  @@index([platformId, status])
+  @@map("repetition_flags")
+}
+
+// The tasks behind a flag, with a snapshot of what they looked like when matched (so the evidence survives later edits).
+model RepetitionFlagTask {
+  id             String   @id @default(uuid()) @db.Uuid
+  flagId         String   @db.Uuid
+  taskId         String   @db.Uuid
+  taskDate       DateTime @db.Date
+  title          String
+  description    String?
+  status         String
+  approvalStatus String
+  createdAt      DateTime @default(now())
+
+  @@unique([flagId, taskId])
+  @@index([taskId])
+  @@map("repetition_flag_tasks")
+}
+
+// Append-only review trail (a database trigger refuses edits and deletes).
+model RepetitionFlagEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  flagId     String   @db.Uuid
+  actorId    String?  @db.Uuid // null = the system
+  kind       String // DETECTED | UPDATED | STATUS | COMMENT | ESCALATED
+  fromStatus String?
+  toStatus   String?
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([flagId, createdAt])
+  @@map("repetition_flag_events")
+}
