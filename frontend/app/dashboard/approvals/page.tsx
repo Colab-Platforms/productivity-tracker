@@ -26,6 +26,10 @@ import { LateNote, type LateInfo } from "../_late/Late";
 import { DeleteTaskModal } from "./DeleteTaskModal";
 import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL, PROGRESS_OPTIONS, normalProgress } from "../_progress/progress";
 import { DeletedTasks } from "./DeletedTasks";
+import { EditedChip } from "../_taskedit/EditedChip";
+import { TaskHistoryModal } from "../_taskedit/TaskHistoryModal";
+import { CorrectionRequests } from "../_taskedit/CorrectionRequests";
+import RepetitionAlerts from "../tasks/_repetition/RepetitionAlerts";
 
 const API = API_BASE;
 
@@ -75,6 +79,9 @@ type Task = {
   late?: LateInfo | null;
   date?: string;
   completedAt?: string | null;
+  // The employee edited this task, or asked for a correction (the manager can open the history).
+  edited?: { at: string | null; count: number } | null;
+  pendingCorrection?: boolean;
 };
 
 // Calendar day of a timestamp in the company timezone; used to flag work ticked off after its own day.
@@ -217,6 +224,7 @@ export default function ApprovalsPage() {
   // Progress filter (To Do / In Progress / Completed / Blocked). Progress is the work; approval is the manager's decision, a separate thing.
   const [progressFilter, setProgressFilter] = useState<"all" | "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED">("all");
   const [reload, setReload] = useState(0);
+  const [historyFor, setHistoryFor] = useState<{ id: string; title: string } | null>(null);
   // The company's "today" (from the server). Until the first answer arrives, the browser's own local date.
   const [today, setToday] = useState<string>(() => todayIso());
 
@@ -360,6 +368,12 @@ export default function ApprovalsPage() {
           {error}
         </div>
       )}
+
+      {historyFor && <TaskHistoryModal taskId={historyFor.id} title={historyFor.title} onClose={() => setHistoryFor(null)} />}
+      {/* Correction requests waiting for THIS person (the server lists only the ones they may decide; hidden when none). */}
+      <CorrectionRequests reloadKey={reload} onDecided={() => setReload((n) => n + 1)} />
+      {/* Repetitive task alerts: people who sent the same or very similar work several times (managers: their own people; HR/Admin: their companies). Hidden when nothing is flagged. */}
+      <RepetitionAlerts canEscalate={me?.role === "MANAGER" || me?.role === "ADMIN"} />
 
       {deleteFor && (
         <DeleteTaskModal
@@ -535,6 +549,7 @@ export default function ApprovalsPage() {
                   </p>
                   <LateNote date={t.date} late={t.late} forManager />
                 <BlockedCallout t={t} />
+                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited || t.pendingCorrection ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
                   {t.canAct && (
                     <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
                       Delete task
@@ -649,6 +664,7 @@ export default function ApprovalsPage() {
                 <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
                 <LateNote date={t.date} late={t.late} forManager />
                 <BlockedCallout t={t} />
+                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited || t.pendingCorrection ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
                 {t.canAct && (
                   <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
                     Delete task
@@ -692,6 +708,7 @@ export default function ApprovalsPage() {
                 <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
                 <LateNote date={t.date} late={t.late} forManager />
                 <BlockedCallout t={t} />
+                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited || t.pendingCorrection ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
                 {t.canAct && (
                   <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
                     Delete task
@@ -763,6 +780,7 @@ export default function ApprovalsPage() {
                   <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
                 <LateNote date={t.date} late={t.late} forManager />
                 <BlockedCallout t={t} />
+                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited || t.pendingCorrection ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
                 {t.canAct && (
                   <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
                     Delete task

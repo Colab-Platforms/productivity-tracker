@@ -28,6 +28,7 @@ import { AdditionalManagers } from "../_employees/AdditionalManagers";
 import { useMe } from "../layout";
 import LatePolicyCard from "../_late/LatePolicyCard";
 import EarlyLogoutCard from "../_attendance/EarlyLogoutCard";
+import RepetitionSettingsCard from "../tasks/_repetition/RepetitionSettingsCard";
 
 const API = API_BASE;
 
@@ -1666,6 +1667,7 @@ function ThresholdsTab({ onError, onDone }: TabProps) {
       )}
 
       <EarlyLogoutCard onError={onError} onDone={onDone} />
+      <RepetitionSettingsCard onError={onError} onDone={onDone} />
       <LatePolicyCard onError={onError} onDone={onDone} />
     </div>
   );

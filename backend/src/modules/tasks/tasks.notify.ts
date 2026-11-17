@@ -20,7 +20,7 @@ import { entryDetailsFor } from "./tasks.entry.js";
 // Posting a notification must never break the task action that caused it: everything here is caught and logged.
 // ---------------------------------------------------------------------------
 
-export type TaskEvent = "assigned" | "proposed" | "submitted" | "proposalApproved" | "proposalReturned" | "approved" | "notAccepted" | "rated" | "reverted" | "deleted";
+export type TaskEvent = "assigned" | "proposed" | "submitted" | "proposalApproved" | "proposalReturned" | "approved" | "notAccepted" | "rated" | "reverted" | "deleted" | "edited" | "correctionRequested" | "correctionDecided";
 
 const MANAGER_LINK = "/dashboard/approvals";
 const EMPLOYEE_LINK = "/dashboard/tasks";
@@ -72,7 +72,7 @@ async function send(recipients: string[], base: { type: string; title: string; b
   for (const [platformId, userIds] of byPlatform) await notifyUsers({ platformId, userIds, ...base });
 }
 
-export async function taskNotice(event: TaskEvent, taskId: string, actorId: string, extra: { note?: string | null; partial?: boolean; stamp?: number; label?: string; stars?: number; lateDate?: string } = {}): Promise<void> {
+export async function taskNotice(event: TaskEvent, taskId: string, actorId: string, extra: { note?: string | null; partial?: boolean; stamp?: number; label?: string; stars?: number; lateDate?: string; resubmitted?: boolean; oldManagerId?: string | null } = {}): Promise<void> {
   try {
     const task = await prisma.dailyTask.findUnique({
       where: { id: taskId },
@@ -92,11 +92,28 @@ export async function taskNotice(event: TaskEvent, taskId: string, actorId: stri
     if (event === "proposed") {
       return send(await reviewersOf(task.id, task.userId, null, [actorId, task.userId]), { type: "TASK_PROPOSED", title: extra.lateDate ? "Late task needs your approval" : "Task needs your approval", body: extra.lateDate ? `${owner} submitted late for ${extra.lateDate}: ${task.title}` : `${owner} proposed: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:proposed`, data });
     }
+    if (event === "edited") {
+      // The employee changed a task that is waiting (or sent back): whoever it is tagged to hears it needs a decision again.
+      const reviewers = await reviewersOf(task.id, task.userId, null, [actorId, task.userId]);
+      await send(reviewers, { type: "TASK_PROPOSED", title: extra.resubmitted ? "Task resubmitted for approval" : "Task updated, needs your approval", body: `${owner} ${extra.resubmitted ? "edited and resubmitted" : "updated"}: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:edited:${stamp}`, data });
+      // If the approving manager was changed, the earlier manager is told it has moved (they no longer decide it).
+      if (extra.oldManagerId && !reviewers.includes(extra.oldManagerId) && extra.oldManagerId !== actorId) {
+        const live = await prisma.user.findFirst({ where: { id: extra.oldManagerId, status: { in: ["ACTIVE", "INVITED"] } }, select: { id: true } });
+        if (live) await send([live.id], { type: "TASK_MOVED", title: "A task moved to another manager", body: `${owner} changed who approves: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:moved:${stamp}`, data });
+      }
+      return;
+    }
+    if (event === "correctionRequested") {
+      return send(await reviewersOf(task.id, task.userId, null, [actorId, task.userId]), { type: "TASK_CORRECTION_REQUESTED", title: "Correction requested", body: `${owner} asked to correct an approved task: ${task.title}${clip(extra.note, 160)}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:correction-requested:${stamp}`, data });
+    }
     if (event === "submitted") {
       return send(await reviewersOf(task.id, task.userId, task.assignedById, [actorId, task.userId]), { type: "TASK_SUBMITTED", title: "Work submitted for review", body: `${owner} marked done: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:submitted:${stamp}`, data });
     }
     // Everything below tells the employee about a manager's decision.
     if (task.userId === actorId) return;
+    if (event === "correctionDecided") {
+      return send([task.userId], { type: "TASK_CORRECTION_DECIDED", title: extra.label === "approved" ? "Your correction was approved" : "Your correction was declined", body: `${by} ${extra.label ?? "decided"} the correction to: ${task.title}${clip(extra.note, 200)}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:correction-decided:${stamp}`, data });
+    }
     if (event === "proposalApproved") {
       return send([task.userId], { type: "TASK_PROPOSAL_APPROVED", title: "Your task was approved", body: `${by} approved: ${task.title}. You can start it.`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:proposal-approved:${stamp}`, data });
     }

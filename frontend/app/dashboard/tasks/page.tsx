@@ -20,6 +20,15 @@ import SelfManagedTasks, { type SelfPayload } from "./_self/SelfManagedTasks";
 import { Stars } from "../_ratings/Stars";
 import { BlockedReasonModal } from "../_progress/BlockedReasonModal";
 import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL, PROGRESS_OPTIONS, blockedReasonProblem, normalProgress, BLOCKED_REASON_MAX } from "../_progress/progress";
+import { EditTaskModal } from "../_taskedit/EditTaskModal";
+import { EditButton } from "../_taskedit/EditButton";
+import { EditedChip } from "../_taskedit/EditedChip";
+import { TaskHistoryModal } from "../_taskedit/TaskHistoryModal";
+import type { EditableTask } from "../_taskedit/editTypes";
+import { ViewTabs } from "../_assigned/ViewTabs";
+import AssignedToMe from "../_assigned/AssignedToMe";
+import AssignedByMe from "../_assigned/AssignedByMe";
+import ApprovalsPage from "../approvals/page";
 
 const API = API_BASE;
 
@@ -68,6 +77,12 @@ type Task = {
   approvalNote?: string | null;
   project?: string | null;
   projectId?: string | null;
+  // Editing (from the server): the id of the tagged manager, the version token, and what route an edit takes.
+  taggedManagerId?: string | null;
+  version?: number;
+  editRoute?: "DIRECT" | "CORRECTION" | null;
+  edited?: { at: string | null; count: number } | null;
+  pendingCorrection?: boolean;
 };
 
 // For each project the person is on: who may approve its tasks (the project's managers) and who is preselected.
@@ -134,8 +149,20 @@ export default function TasksPage() {
   const [rangeKey, setRangeKey] = useState<RangeKey>("today");
   const [picked, setPicked] = useState(isoDaysAgo(1));
   const [entryMode, setEntryMode] = useState<"single" | "quick" | "previous">("single");
+  // Editing a submitted task (or asking for a correction) and reading its history.
+  const [editFor, setEditFor] = useState<EditableTask | null>(null);
+  const [historyFor, setHistoryFor] = useState<{ id: string; title: string } | null>(null);
+  const [notice, setNotice] = useState("");
+  const [rangeReload, setRangeReload] = useState(0);
   // How many previous days may be added without a reason (company setting); `ready` is false until the server has the feature.
   const [latePolicy, setLatePolicy] = useState<{ ready: boolean; allowedDays: number; maxDays: number } | null>(null);
+  // Which part of Daily Tasks is open. Employee: "main" (my submitted tasks) or "assigned". Manager: "own", "submitted" (the approval queue) or "assigned".
+  // Same page, no sidebar item: the switch sits at the top.
+  const [view, setView] = useState<string>("main");
+  const [assignedOpen, setAssignedOpen] = useState(0);
+  useEffect(() => {
+    apiGet<{ counts: { todo: number; inProgress: number } }>("/tasks/assigned/mine").then((p) => setAssignedOpen(p.counts.todo + p.counts.inProgress)).catch(() => undefined);
+  }, []);
   useEffect(() => {
     apiGet<{ ready: boolean; allowedDays: number; maxDays: number }>("/tasks/late-policy").then(setLatePolicy).catch(() => setLatePolicy(null));
   }, []);
@@ -234,6 +261,13 @@ export default function TasksPage() {
     }
   }
 
+  async function afterEdit(message: string) {
+    setEditFor(null);
+    if (message) setNotice(message);
+    await load();
+    setRangeReload((n) => n + 1);
+  }
+
   async function withdraw(task: Task) {
     setBusy(true);
     setError("");
@@ -261,11 +295,50 @@ export default function TasksPage() {
 
   // A manager's own work: self-managed, no approval. Employees (and everyone else) keep the screen below.
   if (data?.selfManagedMode) {
-    return <SelfManagedTasks data={data as unknown as SelfPayload} onData={(p) => setData(p as unknown as Payload)} error={error} setError={setError} />;
+    const mgrView = view === "submitted" || view === "assigned" ? view : "own";
+    return (
+      <div className="space-y-5">
+        <ViewTabs
+          value={mgrView}
+          onChange={setView}
+          tabs={[{ key: "own", label: "My own tasks" }, { key: "submitted", label: "Employee submitted tasks" }, { key: "assigned", label: "Assigned by me" }]}
+        />
+        {mgrView === "own" && <SelfManagedTasks data={data as unknown as SelfPayload} onData={(p) => setData(p as unknown as Payload)} error={error} setError={setError} />}
+        {mgrView === "submitted" && <ApprovalsPage />}
+        {mgrView === "assigned" && <AssignedByMe />}
+      </div>
+    );
   }
+
+  // An employee's "Assigned by manager" part of the same page.
+  const employeeTabs = [{ key: "main", label: "My submitted tasks" }, { key: "assigned", label: "Assigned by manager", badge: assignedOpen }];
+  if (view === "assigned") {
+    return (
+      <div className="space-y-5">
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Daily tasks</h1>
+        </header>
+        <ViewTabs value="assigned" onChange={setView} tabs={employeeTabs} />
+        <AssignedToMe onCount={setAssignedOpen} />
+      </div>
+    );
+  }
+
+  const editChoices = {
+    projects: (data?.entryForm?.ready ? data.entryForm.projects : []).map((p) => ({ id: p.id, label: p.label })),
+    managers: data?.entryForm?.managers ?? [],
+  };
 
   return (
     <div className="space-y-5">
+      {editFor && <EditTaskModal task={editFor} choices={editChoices} latePolicy={latePolicy} onClose={() => setEditFor(null)} onSaved={(m) => void afterEdit(m)} />}
+      {historyFor && <TaskHistoryModal taskId={historyFor.id} title={historyFor.title} onClose={() => setHistoryFor(null)} />}
+      {notice && (
+        <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice("")} className="shrink-0 text-emerald-700 hover:underline" aria-label="Dismiss">Dismiss</button>
+        </div>
+      )}
       {blockFor && (
         <BlockedReasonModal
           title={blockFor.title}
@@ -289,8 +362,10 @@ export default function TasksPage() {
         </p>
       </header>
 
+      <ViewTabs value="main" onChange={setView} tabs={employeeTabs} />
+
       <DateFilter value={rangeKey} picked={picked} onChange={(k, p) => { setRangeKey(k); setPicked(p); }} />
-      {rangeKey !== "today" && <RangeTasks {...rangeFor(rangeKey, picked)} />}
+      {rangeKey !== "today" && <RangeTasks {...rangeFor(rangeKey, picked)} choices={editChoices} latePolicy={latePolicy} reloadKey={rangeReload} onChanged={() => void load()} />}
       {rangeKey !== "today" ? null : <>
       {/* --- score ------------------------------------------------------- */}
       {score && (
@@ -486,6 +561,7 @@ export default function TasksPage() {
                   <p className="mt-0.5 text-xs text-slate-400">{t.description}</p>
                 )}
                 <EntryMeta t={t} />
+                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
               </div>
               {t.progress && (
                 <select aria-label="Progress" value={normalProgress(t.progress)} disabled={busy} onChange={(e) => changeProgress(t, e.target.value)} className="shrink-0 rounded-lg border border-indigo-100 px-2 py-1 text-xs text-slate-700">
@@ -501,6 +577,7 @@ export default function TasksPage() {
               >
                 {t.weight.toLowerCase()}
               </span>
+              <EditButton task={t} busy={busy} onEdit={() => setEditFor(t)} />
               <button
                 onClick={() => withdraw(t)}
                 disabled={busy}
@@ -518,8 +595,12 @@ export default function TasksPage() {
         <Section title="Sent back" hint="Read the reason, then propose it again.">
           {data.rejected.map((t) => (
             <li key={t.id} className="px-5 py-3.5">
-              <p className="text-sm text-slate-700 line-through">{t.title}</p>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="text-sm text-slate-700 line-through">{t.title}</p>
+                <EditButton task={t} busy={busy} onEdit={() => setEditFor(t)} />
+              </div>
               <EntryMeta t={t} />
+              <div className="mt-1"><EditedChip edited={t.edited} onHistory={t.edited ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
               {t.rejectionNote && (
                 <p className="mt-1 rounded-md bg-rose-50 px-2 py-1 text-xs text-rose-700">
                   {t.approvedBy ?? "Your manager"}: {t.rejectionNote}
@@ -558,6 +639,7 @@ export default function TasksPage() {
                 {t.fromEarlierDay && ` · from ${t.date}`}
               </p>
               <EntryMeta t={t} />
+              <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
               {t.reopened && (
                 <p className="mt-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-900">
                   <span className="font-medium">Reopened by your manager · {t.reopened.label}:</span> {t.reopened.remark}
@@ -572,6 +654,8 @@ export default function TasksPage() {
             >
               {t.weight.toLowerCase()}
             </span>
+
+            <EditButton task={t} busy={busy} onEdit={() => setEditFor(t)} />
 
             {t.status === "PENDING" ? (
               <button
@@ -615,6 +699,7 @@ export default function TasksPage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-slate-700">{t.title}</p>
                   <EntryMeta t={t} />
+                  <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
                   {t.ratingComment ? (
                     <p className="mt-0.5 break-words text-xs text-slate-500 [overflow-wrap:anywhere]">
                       {t.reviewedBy ? `${t.reviewedBy}: ` : ""}{t.ratingComment}
@@ -629,6 +714,8 @@ export default function TasksPage() {
                 <span className="shrink-0">
                   <Stars value={t.rating} size={16} emptyText="waiting for a rating" />
                 </span>
+
+                <EditButton task={t} busy={busy} onEdit={() => setEditFor(t)} />
 
                 {t.rating == null && (
                   <button

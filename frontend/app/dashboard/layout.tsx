@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { Suspense, createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { dashboardTitle } from "@/lib/roles";
 import { homeFor } from "@/lib/roleHome";
 import { CARRIED } from "./_filters/useHrFilters";
@@ -8,6 +8,8 @@ import { usePathname, useRouter } from "next/navigation";
 import Bell from "./_notifications/Bell";
 import TopBar from "./_shell/TopBar";
 import { pageTitle } from "./_shell/pageTitle";
+import { isNavActive } from "./_shell/navActive";
+import SearchBridge from "./_shell/SearchBridge";
 import { NotificationsProvider } from "./_notifications/NotificationsContext";
 import { ThemeProvider } from "./_theme/ThemeContext";
 import { ThemeIconButton, ThemeRow } from "./_theme/ThemeToggle";
@@ -271,6 +273,8 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/attendance-calendar", label: "Calendar", ready: true, roles: ["HR"], icon: I.holidays },
       { href: "/dashboard/leave", label: "Leave Management", ready: true, roles: ["HR"], icon: I.holidays },
       { href: "/dashboard/payroll", label: "Payroll", ready: true, roles: ["HR"], icon: I.payroll },
+      // An HR person who is someone's reporting manager approves that person's tasks; the page lists only what is theirs to decide, plus approved work (view only).
+      { href: "/dashboard/approvals", label: "Task Approvals", ready: true, roles: ["HR"], icon: I.approvals },
       // ---- Manager and Employee ----
       { href: "/dashboard/manager", label: "Today", ready: true, roles: ["MANAGER"], icon: I.today },
       { href: "/dashboard/employee", label: "Today", ready: true, roles: ["EMPLOYEE"], icon: I.today },
@@ -338,6 +342,9 @@ export default function DashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  // The page's own ?query, reported by <SearchBridge/>, so a shortcut item (Productivity = Reports > Task productivity) lights up correctly.
+  const [navSearch, setNavSearch] = useState("");
+  const onNavSearch = useCallback((s: string) => setNavSearch(s), []);
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
@@ -525,6 +532,7 @@ export default function DashboardLayout({
     ),
   })).filter((g) => g.items.length > 0);
 
+  const allHrefs = groups.flatMap((g) => g.items.map((i) => i.href));
   const renderSidebar = (compact: boolean) => (
     <aside aria-label="Main navigation" className={`flex h-full ${compact ? "w-[4.5rem]" : "w-64"} shrink-0 flex-col rounded-2xl bg-[var(--nav-bg)] shadow-[var(--shadow-card)] transition-[width] duration-200`}>
       {/* The ONE place the signed-in person is shown: their photo (or initials), full name, the My Profile link and the notification bell with its
@@ -567,9 +575,8 @@ export default function DashboardLayout({
             )}
             <div className="space-y-0.5">
               {group.items.map((item) => {
-                // Items that deep-link with ?tab= are never "active"; the
-                // plain page entry owns the highlight.
-                const active = !item.href.includes("?") && pathname === item.href;
+                // Exactly one item is lit: a ?tab= shortcut when the address carries its tab, otherwise the plain page entry (see _shell/navActive.ts).
+                const active = isNavActive(item.href, allHrefs, pathname, new URLSearchParams(navSearch));
                 const Icon = item.icon;
 
                 if (!item.ready) {
@@ -660,6 +667,7 @@ export default function DashboardLayout({
     <MeContext.Provider value={me}>
       <ThemeProvider>
       <NotificationsProvider>
+      <Suspense fallback={null}><SearchBridge onChange={onNavSearch} /></Suspense>
       <div className="flex min-h-screen bg-[var(--background)]">
         {/* Desktop */}
         <div className="sticky top-0 hidden h-screen p-4 pr-0 lg:block">{renderSidebar(collapsed)}</div>

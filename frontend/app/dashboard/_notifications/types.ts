@@ -14,6 +14,17 @@ export const TYPE_LABEL: Record<string, string> = {
   TASK_REJECTED: "Work not accepted",
   TASK_REVERTED: "Task reopened",
   TASK_DELETED: "Task removed",
+  REPETITIVE_TASK_FLAG: "Repetitive task alert",
+  REPETITIVE_TASK_ESCALATED: "Repetitive task escalated",
+  ASSIGNED_TASK_UPDATED: "Assigned task changed",
+  ASSIGNED_TASK_PROGRESS: "Assigned task progress",
+  ASSIGNED_TASK_DONE: "Assigned task done",
+  ASSIGNED_TASK_COMMENT: "Assigned task comment",
+  ASSIGNED_TASK_CONFIRMED: "Task confirmed",
+  ASSIGNED_TASK_SENT_BACK: "Task sent back",
+  TASK_MOVED: "Task moved",
+  TASK_CORRECTION_REQUESTED: "Correction requested",
+  TASK_CORRECTION_DECIDED: "Correction answer",
   MEETING_RESPONDED: "Invitation answer",
   LEAVE_REQUESTED: "Leave request",
   LEAVE_DECIDED: "Leave answer",
@@ -35,7 +46,7 @@ export const TYPE_LABEL: Record<string, string> = {
 export const labelOf = (type: string) => TYPE_LABEL[type] ?? "Notification";
 
 // Events important enough to pop up on screen when they arrive. Everything still lands in the bell either way.
-export const POPUP_TYPES = new Set(["TASK_ASSIGNED", "TASK_PROPOSED", "TASK_SUBMITTED", "TASK_PROPOSAL_APPROVED", "TASK_PROPOSAL_RETURNED", "TASK_APPROVED", "TASK_REJECTED", "TASK_REVERTED", "TASK_DELETED", "POLICY_PUBLISHED", "POLICY_UPDATED", "PAYSLIP_PUBLISHED", "MEETING_INVITED", "MEETING_UPDATED", "MEETING_PARTICIPATION_CORRECTED", "MEETING_RECORDING", "MEETING_MINUTES", "LEAVE_REQUESTED", "LEAVE_DECIDED"]);
+export const POPUP_TYPES = new Set(["TASK_ASSIGNED", "TASK_PROPOSED", "TASK_SUBMITTED", "TASK_PROPOSAL_APPROVED", "TASK_PROPOSAL_RETURNED", "TASK_APPROVED", "TASK_REJECTED", "TASK_REVERTED", "TASK_DELETED", "ASSIGNED_TASK_DONE", "ASSIGNED_TASK_CONFIRMED", "ASSIGNED_TASK_SENT_BACK", "TASK_CORRECTION_REQUESTED", "TASK_CORRECTION_DECIDED", "POLICY_PUBLISHED", "POLICY_UPDATED", "PAYSLIP_PUBLISHED", "MEETING_INVITED", "MEETING_UPDATED", "MEETING_PARTICIPATION_CORRECTED", "MEETING_RECORDING", "MEETING_MINUTES", "LEAVE_REQUESTED", "LEAVE_DECIDED"]);
 
 export const ago = (iso: string) => {
   const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
