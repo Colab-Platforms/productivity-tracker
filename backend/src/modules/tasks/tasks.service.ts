@@ -20,6 +20,9 @@ import { mayReview, pendingTaskVisibleTo, parseHours, parseProgress, storeProgre
 import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeRevertNote, reopenedView, revertBlock, type RevertType } from "./tasks.revert.logic.js";
 import { checkComment, creditOf, parseRating } from "./tasks.rating.logic.js";
 import { isRated, ratingReady, ratingsFor, withRatings } from "./tasks.rating.js";
+import { editInfoFor } from "./tasks.edit.js";
+import { editView } from "./tasks.edit.logic.js";
+import { detectAfterSubmit } from "./repetition.detect.js";
 
 // ---------------------------------------------------------------------------
 // SCORING
@@ -38,7 +41,7 @@ const WEIGHTS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const STATUSES = ["PENDING", "IN_PROGRESS", "COMPLETED"];
 const MANAGING_ROLES = ["MANAGER", "HR", "ADMIN"];
 
-async function userContext(userId: string) {
+export async function userContext(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: { platform: true },
@@ -67,7 +70,7 @@ async function userContext(userId: string) {
 // can SEE every task but are not approvers by their role.
 // Grading the finished work and reopening it (not strict) keep their earlier permissions: the tagged manager, the earlier rule, and HR/Admin of
 // the company.
-async function assertCanReviewTask(
+export async function assertCanReviewTask(
   actor: { id: string; role: string; platformId: string },
   task: { id: string; userId: string; teamId: string | null },
   strict = false
@@ -77,8 +80,12 @@ async function assertCanReviewTask(
   const tagged = detail?.taggedManagerId ?? null;
   const taggedActive = detail?.taggedManagerActive ?? false;
   if (strict) {
-    // HR never decides a task, whatever the reporting line says (HR monitors; the tagged manager decides).
-    if (actor.role === "HR") throw new Error("NOT_YOUR_TEAM");
+    // HR never decides a task by role. The one exception: a task the employee tagged to THIS HR person (which the server only allows when
+    // the HR person is the employee's own reporting manager). An untagged or other-tagged task is never HR's, whatever the reporting line says.
+    if (actor.role === "HR") {
+      if (tagged && taggedActive && tagged === actor.id) return;
+      throw new Error("NOT_YOUR_TEAM");
+    }
     const legacyOk = tagged && taggedActive ? false : await legacyMayReview(actor, task);
     if (!mayReview({ actorId: actor.id, taggedId: tagged, taggedActive, legacyOk })) throw new Error("NOT_YOUR_TEAM");
     return;
@@ -109,7 +116,7 @@ async function legacyMayReview(actor: { id: string }, task: { userId: string; te
 }
 
 // For assigning NEW work, where there is no task to read a project from.
-async function assertCanManage(
+export async function assertCanManage(
   actor: { id: string; role: string; platformId: string },
   targetUserId: string
 ) {
@@ -327,8 +334,9 @@ export async function listTasks(userId: string) {
   }));
   const selfDetails = await detailsFor(rows.map((r) => r.id));
   const entries = await entryDetailsFor(rows.map((r) => r.id));
+  const edits = await editInfoFor(rows.map((r) => r.id));
   const nowForSelf = new Date();
-  const tasks = rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone), ...entryView(String(t.status), entries.get(t.id)) }));
+  const tasks = rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...shapeSelf(selfDetails.get(t.id), String(t.status), nowForSelf, ctx.timezone), ...entryView(String(t.status), entries.get(t.id)), ...editView(t, entries.get(t.id)?.updatedAt, edits.get(t.id)) }));
   // True for a manager once the self-managed tables exist: his own tasks need no approval.
   const selfManagedMode = ctx.role === "MANAGER" && (await selfTasksReady());
 
@@ -401,16 +409,17 @@ export async function listMyRange(userId: string, from: unknown, to: unknown) {
   }));
   const lates = await lateDetailsFor(rows.map((r) => r.id));
   const entries = await entryDetailsFor(rows.map((r) => r.id));
+  const edits = await editInfoFor(rows.map((r) => r.id));
   return {
     from: start.toISOString().slice(0, 10),
     to: end.toISOString().slice(0, 10),
     score: scoreOf(rows),
-    tasks: rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...entryView(String(t.status), entries.get(t.id)), late: lates.get(t.id) ?? null })),
+    tasks: rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...entryView(String(t.status), entries.get(t.id)), ...editView(t, entries.get(t.id)?.updatedAt, edits.get(t.id)), late: lates.get(t.id) ?? null })),
   };
 }
 
 // Resolves the project for a new task and refuses one the person isn't on.
-async function resolveProject(
+export async function resolveProject(
   userId: string,
   given: unknown,
   required = false,
@@ -549,6 +558,7 @@ export async function createProposedTask(userId: string, body: Record<string, un
   else if (progress) await recordEvent({ taskId: created.id, platformId: ctx.platformId, actorId: userId, kind: "CREATED", note: `Submitted as ${PROGRESS_LABEL[progress]}${blockedReason ? `. Blocked reason: ${blockedReason}` : ""}` });
   emitTaskChange({ taskId: created.id, ownerId: userId, action: "created" }); // after the write succeeded
   if (!selfApprove) await taskNotice("proposed", created.id, userId, late ? { lateDate: date.toISOString().slice(0, 10) } : {});
+  detectAfterSubmit(userId); // repetitive-task check in the background; never delays or fails the submission
 
   return { id: created.id };
 }
@@ -892,7 +902,7 @@ export async function listForApproval(
   const selfIds = new Set((await detailsFor(rawRows.map((r) => r.id))).keys());
   const rows = rawRows.filter((r) => !selfIds.has(r.id));
 
-  const [entries, acting, ratedRows, lates] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatings(rows), lateDetailsFor(rows.map((r) => r.id))]);
+  const [entries, acting, ratedRows, lates, edits] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatings(rows), lateDetailsFor(rows.map((r) => r.id)), editInfoFor(rows.map((r) => r.id))]);
   const deciderIds = [...new Set(ratedRows.map((t) => t.approvedById).filter((x): x is string => !!x))];
   const deciders = new Map(
     (deciderIds.length ? await prisma.user.findMany({ where: { id: { in: deciderIds } }, select: { id: true, firstName: true, lastName: true } }) : []).map((u) => [u.id, `${u.firstName} ${u.lastName}`.trim()])
@@ -903,13 +913,18 @@ export async function listForApproval(
     return {
       ...shape(t, t.team?.name ?? null),
       ...entryView(String(t.status), d),
+      // Edited label, version and correction badge (the manager sees that a task was changed and can open its history).
+      ...editView(t, d?.updatedAt, edits.get(t.id)),
       // Set when this was submitted for an earlier day: how late, the reason, and the real submission time (`createdAt`); `date` is the original task day.
       late: lates.get(t.id) ?? null,
       // HR and Admin see every task but only the manager it belongs to can act on it.
       // Approval history: who decided and when (the Admin monitors this; HR sees it once a task is approved).
       decidedBy: t.approvedById ? deciders.get(t.approvedById) ?? null : null,
       decidedAt: t.approvedAt ? t.approvedAt.toISOString() : null,
-      canAct: mayReview({ actorId: managerId, taggedId: d?.taggedManagerId ?? null, taggedActive: d?.taggedManagerActive ?? false, legacyOk: acting.has(t.userId) }),
+      // HR can act only on a task tagged to them (no legacy reporting-line fallback); everyone else follows mayReview.
+      canAct: ctx.role === "HR"
+        ? !!d?.taggedManagerId && d.taggedManagerActive && d.taggedManagerId === managerId
+        : mayReview({ actorId: managerId, taggedId: d?.taggedManagerId ?? null, taggedActive: d?.taggedManagerActive ?? false, legacyOk: acting.has(t.userId) }),
       userId: t.userId,
       who,
       name: who,

@@ -40,6 +40,7 @@ export type EntryDetail = {
   blocked: boolean;
   blockedNote: string | null;
   approvalNote: string | null;
+  updatedAt: Date; // the later of this and the task row decides the edit version
 };
 
 /** task id -> its details (only tasks that have a row). */
@@ -60,6 +61,7 @@ export async function entryDetailsFor(taskIds: string[]): Promise<Map<string, En
       blocked: r.blocked,
       blockedNote: r.blockedNote,
       approvalNote: r.approvalNote,
+      updatedAt: r.updatedAt,
     });
   }
   return out;
@@ -103,7 +105,18 @@ export async function eligibleManagers(owner: { id: string; platformId: string }
     select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
-  return users.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode, role: String(u.role) }));
+  const list = users.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode, role: String(u.role) }));
+  // An active HR person who IS this employee's own reporting manager may also approve this employee's tasks (the owner's rule, 2026-11-17).
+  // Read from users.reportsToId, never by name; HR who are not the employee's reporting manager stay view-only.
+  const me = await prisma.user.findUnique({ where: { id: owner.id }, select: { reportsToId: true } });
+  if (me?.reportsToId && me.reportsToId !== owner.id && !list.some((m) => m.id === me.reportsToId)) {
+    const boss = await prisma.user.findFirst({ where: { id: me.reportsToId, status: "ACTIVE", role: "HR" }, select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true } });
+    if (boss && (await onlyPinnedCompany([boss.id])).length) {
+      list.push({ id: boss.id, name: `${boss.firstName} ${boss.lastName}`.trim(), code: boss.employeeCode, role: String(boss.role) });
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
+  }
+  return list;
 }
 
 /**

@@ -15,12 +15,14 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import AttendanceReport from "./_team/AttendanceReport";
 import ShiftBreakdownCard from "./_team/ShiftBreakdownCard";
 import TeamExport from "./_team/TeamExport";
+import RepetitionSummary from "../tasks/_repetition/RepetitionSummary";
 import ProductivityReport from "./_team/ProductivityReport";
 import FilterBar from "../_filters/FilterBar";
 import { useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
@@ -171,12 +173,26 @@ function bandClass(value: number): string {
 
 // Managers, HR and Admin get the team reports (history). An employee only ever sees their own figures.
 export default function ReportsPage() {
+  // useSearchParams needs a Suspense boundary. The tab is read from the page's OWN address, never from window.location: during a click inside the app
+  // the browser address can still be the previous page's, and a state read once on mount missed a click on a sidebar shortcut such as Productivity.
+  return (
+    <Suspense fallback={<div className="p-8" aria-busy="true"><div className="skeleton h-10" /></div>}>
+      <ReportsPageInner />
+    </Suspense>
+  );
+}
+
+function ReportsPageInner() {
   const me = useMe();
-  const [tab, setTab] = useState<Exclude<Tab, "summary">>(() => {
-    if (typeof window === "undefined") return "attendance";
-    const t = new URLSearchParams(window.location.search).get("tab");
-    return t === "productivity" || t === "shift" ? t : "attendance";
-  });
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab: Exclude<Tab, "summary"> = tabParam === "productivity" || tabParam === "shift" ? tabParam : "attendance";
+  const setTab = (next: Exclude<Tab, "summary">) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", next);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  };
   const canSeeTeam = !!me && ["MANAGER", "HR", "ADMIN"].includes(me.role);
   // Company, project, reporting manager and name/ID search narrow all three reports to the SAME people (the server builds the tables, KPIs and charts from
   // that one list, so the exports match). HR and Admin: every company they act on; a manager: their own people.
@@ -225,7 +241,10 @@ export default function ReportsPage() {
       ) : tab === "shift" ? (
         <ShiftBreakdownCard filters={filters} ready={ready} onScope={setScope} />
       ) : (
-        <ProductivityReport canSetTargets={!!me && ["HR", "ADMIN"].includes(me.role)} filters={filters} ready={ready} onScope={setScope} />
+        <>
+          <ProductivityReport canSetTargets={!!me && ["HR", "ADMIN"].includes(me.role)} filters={filters} ready={ready} onScope={setScope} />
+          <RepetitionSummary />
+        </>
       )}
     </div>
   );

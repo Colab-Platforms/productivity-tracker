@@ -1,5 +1,5 @@
 // Daily task entry rules: progress vs approval, hours, and who may review. No database.
-import { BLOCKED_REASON_MAX, PROGRESS_LABEL, PROGRESS_VALUES, checkBlockedReason, mayReview, parseHours, parseProgress, pickDefaults, progressOf, storeProgress } from "../src/modules/tasks/tasks.entry.logic.js";
+import { BLOCKED_REASON_MAX, PROGRESS_LABEL, PROGRESS_VALUES, checkBlockedReason, mayReview, pendingTaskVisibleTo, parseHours, parseProgress, pickDefaults, progressOf, storeProgress } from "../src/modules/tasks/tasks.entry.logic.js";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n); };
@@ -54,6 +54,12 @@ ok("a blocked reason is required", code(() => checkBlockedReason(undefined)) ===
 ok("at least 3 characters (after trimming)", code(() => checkBlockedReason("ab")) === "BLOCKED_REASON_REQUIRED" && code(() => checkBlockedReason("  ab ")) === "BLOCKED_REASON_REQUIRED" && checkBlockedReason("abc") === "abc");
 ok("at most 500 characters", code(() => checkBlockedReason("x".repeat(BLOCKED_REASON_MAX + 1))) === "BLOCKED_REASON_TOO_LONG" && checkBlockedReason("x".repeat(BLOCKED_REASON_MAX)).length === BLOCKED_REASON_MAX);
 ok("the reason is trimmed", checkBlockedReason("  Waiting for access to the CRM  ") === "Waiting for access to the CRM");
+
+console.log("\n## HR may decide only a task tagged to them (they are the employee's reporting manager)");
+ok("a waiting task: HR sees it only when it is tagged to them", pendingTaskVisibleTo("HR", true) === true);
+ok("any other waiting task stays hidden from HR", pendingTaskVisibleTo("HR", false) === false);
+ok("Admin always sees a waiting task (monitoring); a manager only when it is theirs", pendingTaskVisibleTo("ADMIN", false) === true && pendingTaskVisibleTo("MANAGER", true) === true && pendingTaskVisibleTo("MANAGER", false) === false);
+ok("a task tagged to an active person is theirs alone: HR tagged yes, HR not tagged no, another manager no", mayReview({ actorId: "hr", taggedId: "hr", taggedActive: true, legacyOk: false }) === true && mayReview({ actorId: "hr", taggedId: "mgr", taggedActive: true, legacyOk: true }) === false && mayReview({ actorId: "mgr", taggedId: "hr", taggedActive: true, legacyOk: true }) === false);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

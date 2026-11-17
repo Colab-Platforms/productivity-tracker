@@ -6,6 +6,11 @@ import { isoDaysAgo } from "@/lib/time";
 import { Stars } from "../../_ratings/Stars";
 import { LateBadge, LateNote, type LateInfo } from "../../_late/Late";
 import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL } from "../../_progress/progress";
+import { EditTaskModal } from "../../_taskedit/EditTaskModal";
+import { EditButton } from "../../_taskedit/EditButton";
+import { EditedChip } from "../../_taskedit/EditedChip";
+import { TaskHistoryModal } from "../../_taskedit/TaskHistoryModal";
+import type { EditChoices, EditableTask } from "../../_taskedit/editTypes";
 
 export type RangeKey = "today" | "yesterday" | "last7" | "date";
 
@@ -51,12 +56,10 @@ export function DateFilter({ value, picked, onChange }: { value: RangeKey; picke
   );
 }
 
-type RTask = {
-  id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; rating: number | null; ratingComment: string | null;
-  completionNote: string | null; reviewNote: string | null; rejectionNote: string | null; project: string | null; date: string;
+type RTask = EditableTask & {
+  status: string; rating: number | null; ratingComment: string | null;
+  completionNote: string | null; reviewNote: string | null; rejectionNote: string | null;
   late?: LateInfo | null;
-  progress?: string;
-  blockedNote?: string | null;
 };
 type RangeData = { from: string; to: string; score: { percent: number | null; done: number; total: number }; tasks: RTask[] };
 
@@ -74,9 +77,13 @@ function stateOf(t: RTask): { label: string; tone: string } {
 const dayLabel = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { timeZone: "UTC", weekday: "long", day: "numeric", month: "short", year: "numeric" });
 
 // Read-only list of earlier days. To tick off a forgotten task, open the day in My history.
-export function RangeTasks({ from, to }: { from: string; to: string }) {
+export function RangeTasks({ from, to, choices, latePolicy, reloadKey = 0, onChanged }: { from: string; to: string; choices?: EditChoices; latePolicy?: { ready: boolean; allowedDays: number; maxDays: number } | null; reloadKey?: number; onChanged?: () => void }) {
   const [res, setRes] = useState<{ key: string; data?: RangeData; error?: string } | null>(null);
-  const key = `${from}|${to}`;
+  const [editFor, setEditFor] = useState<EditableTask | null>(null);
+  const [historyFor, setHistoryFor] = useState<{ id: string; title: string } | null>(null);
+  const [notice, setNotice] = useState("");
+  const [local, setLocal] = useState(0);
+  const key = `${from}|${to}|${reloadKey}|${local}`;
   useEffect(() => {
     let live = true;
     apiGet<RangeData>(`/tasks/range?from=${from}&to=${to}`)
@@ -94,6 +101,22 @@ export function RangeTasks({ from, to }: { from: string; to: string }) {
   const days = [...new Set(data.tasks.map((t) => t.date))];
   return (
     <div className="space-y-4">
+      {editFor && choices && (
+        <EditTaskModal
+          task={editFor}
+          choices={choices}
+          latePolicy={latePolicy ?? null}
+          onClose={() => setEditFor(null)}
+          onSaved={(m) => { setEditFor(null); if (m) setNotice(m); setLocal((n) => n + 1); onChanged?.(); }}
+        />
+      )}
+      {historyFor && <TaskHistoryModal taskId={historyFor.id} title={historyFor.title} onClose={() => setHistoryFor(null)} />}
+      {notice && (
+        <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice("")} className="shrink-0 text-emerald-700 hover:underline" aria-label="Dismiss">Dismiss</button>
+        </div>
+      )}
       <p className="text-sm text-slate-500">
         {data.score.done} of {data.score.total} approved tasks done{data.score.percent !== null ? ` · score ${data.score.percent}%` : ""}. Forgot to tick one? Open that day in <a href="/dashboard/history" className="font-medium text-indigo-700 hover:underline">My history</a>.
       </p>
@@ -107,9 +130,10 @@ export function RangeTasks({ from, to }: { from: string; to: string }) {
                 <li key={t.id} className="rounded-xl border border-indigo-100 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <p className="font-medium text-slate-900">{t.title}</p>
-                    <span className="flex flex-wrap items-center gap-1.5"><LateBadge late={t.late} />{t.progress && <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${PROGRESS_CHIP_CLASS[t.progress] ?? "bg-slate-100 text-slate-600"}`}>{PROGRESS_LABEL[t.progress] ?? t.progress}</span>}<span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.tone}`}>{s.label}</span></span>
+                    <span className="flex flex-wrap items-center gap-1.5">{choices && <EditButton task={t} onEdit={() => setEditFor(t)} />}<LateBadge late={t.late} />{t.progress && <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${PROGRESS_CHIP_CLASS[t.progress] ?? "bg-slate-100 text-slate-600"}`}>{PROGRESS_LABEL[t.progress] ?? t.progress}</span>}<span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.tone}`}>{s.label}</span></span>
                   </div>
                   <LateNote date={t.date} late={t.late} />
+                  <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
                   {t.progress === "BLOCKED" && <p className="mt-1 break-words rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900 [overflow-wrap:anywhere]"><span className="font-medium">Blocked:</span> {t.blockedNote || "No reason was written."}</p>}
                   {t.project && <p className="mt-1 text-xs text-slate-400">{t.project}</p>}
                   {t.description && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{t.description}</p>}

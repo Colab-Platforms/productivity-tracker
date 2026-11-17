@@ -251,7 +251,7 @@ export default function EmployeeOverview() {
         </div>
       </div>
 
-      <section className="grid gap-4 lg:grid-cols-2" aria-label="Distribution">
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Distribution">
         <Panel title="By company" sub={`${plural(scoped.length, "employee")}${viewWord ? `, ${viewWord}` : ""}`}>
           <Bars rows={companies} total={scoped.length} empty="No employees to show." />
         </Panel>
