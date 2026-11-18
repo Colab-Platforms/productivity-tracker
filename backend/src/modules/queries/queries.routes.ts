@@ -81,6 +81,7 @@ router.post("/", run((req) => queries.createQuery(uid(req), req.body ?? {})));
 
 // Department requests (manager -> Admin approval -> department work). Fixed paths first.
 router.get("/dept/departments", run((req) => dept.departmentsForPicker(uid(req))));
+router.get("/dept/form-preview", run((req) => dept.formPreview(uid(req))));
 router.get("/dept/admin/departments", run((req) => dept.adminDepartments(uid(req))));
 router.post("/dept/admin/departments", run((req) => dept.createDepartment(uid(req), req.body ?? {})));
 router.post("/dept/admin/departments/:deptId", run((req) => dept.updateDepartment(uid(req), String(req.params.deptId), req.body ?? {})));

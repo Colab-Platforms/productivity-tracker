@@ -557,6 +557,35 @@ export default function TodayView() {
   const days = (tsData?.days ?? []).map((d) => (d.date === today && liveAsTs ? { ...d, session: liveAsTs } : d));
   const models = tsData ? days.filter((d) => !d.isFuture).map((d) => buildDayModel(d, tz, tsData.schedule, now, today)) : [];
 
+  // ---- THE ONE SELECTED DATE ------------------------------------------------------------------
+  // Everything that depends on a day reads it from here. A single-day selection (Today, Yesterday, or one custom date) is the
+  // selected date; a longer range has none and the live card keeps showing today. A day before today is shown as RECORDED data
+  // only: no live timer, no Break / Clock-out (those act on right now), no join-a-huddle card, no meeting invites.
+  const selectedDate = range && !rangeError && range.from === range.to ? range.from : null;
+  const pastDay = !!selectedDate && !!todayStr && selectedDate < todayStr;
+  const dayLoaded = !!tsData && tsData.range.from === selectedDate && tsData.range.to === selectedDate;
+  const dayRow = pastDay && dayLoaded ? (days.find((d) => d.date === selectedDate) ?? null) : null;
+  const daySession = dayRow?.session ?? null;
+  const dayProductive = daySession?.productiveSeconds ?? 0;
+  const dayBreak = daySession?.breakSeconds ?? 0;
+  const dayWashroom = daySession?.washroomSeconds ?? 0;
+  const dayHuddle = daySession?.breakdown?.huddleSeconds ?? 0;
+  const dayDiscussion = (daySession?.breaks ?? []).reduce((n, b) => n + (b.reason?.startsWith("Discussion: ") ? (b.durationSeconds ?? 0) : 0), 0);
+  const dayState = !dayRow
+    ? { label: "LOADING", dot: "bg-slate-300", tone: "text-slate-400" }
+    : daySession
+      ? daySession.logoutAt
+        ? { label: "COMPLETED", dot: "bg-slate-400", tone: "text-slate-500" }
+        : { label: "NOT CLOCKED OUT", dot: "bg-amber-400", tone: "text-amber-600" }
+      : dayRow.onLeave
+        ? { label: "ON LEAVE", dot: "bg-sky-400", tone: "text-sky-600" }
+        : dayRow.holiday
+          ? { label: dayRow.holiday.name.toUpperCase(), dot: "bg-violet-400", tone: "text-violet-600" }
+          : !dayRow.expected
+            ? { label: "DAY OFF", dot: "bg-slate-300", tone: "text-slate-400" }
+            : { label: "NO CLOCK-IN", dot: "bg-red-400", tone: "text-red-500" };
+  const [dh, dm, ds] = hms(dayProductive + dayBreak + dayWashroom);
+
   // Period totals: stored values for past days, live values for today.
   const periodProductive = days.reduce((n, d) => n + (d.date === today && session ? productive : (d.session?.productiveSeconds ?? 0)), 0);
   const periodBreak = days.reduce((n, d) => n + (d.date === today && session ? breakSecs : (d.session?.breakSeconds ?? 0)), 0);
@@ -590,7 +619,7 @@ export default function TodayView() {
               <p className="text-[15px] text-slate-500">
                 Welcome, <span className="font-semibold text-slate-900">{me.firstName} {me.lastName}</span> <span aria-hidden>👋</span>
               </p>
-              <p className="text-xs text-slate-400">{roleLine} · {fmtDateTime(now, tz)}</p>
+              <p className="text-xs text-slate-400">{roleLine} · {pastDay && selectedDate ? `Viewing ${periodName === "Yesterday" ? "yesterday, " : ""}${longDay(selectedDate)}` : fmtDateTime(now, tz)}</p>
             </div>
           </div>
 
@@ -626,7 +655,14 @@ export default function TodayView() {
         </header>
 
         {/* An in-person stand-up you are invited to: the join button, the live "in a meeting" state, your record. */}
-        <StandupCard />
+        {pastDay && selectedDate ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900" data-testid="past-day-banner">
+            <p>Showing <b>{periodName === "Yesterday" ? "yesterday" : "the recorded day"}, {longDay(selectedDate)}</b>. Everything below is what was recorded for that day. Clock-in, breaks and huddles are live actions for today only.</p>
+            <button type="button" onClick={() => setPreset("TODAY")} className="rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">Back to today</button>
+          </div>
+        ) : (
+          <StandupCard />
+        )}
 
         {preset === "CUSTOM" && (
           <div className="mt-3 flex flex-wrap items-end gap-3 rounded-2xl bg-slate-50 px-4 py-3">
@@ -647,7 +683,7 @@ export default function TodayView() {
         )}
 
         {/* ===================== meeting invites ===================== */}
-        {invites.map((invite) => (
+        {(pastDay ? [] : invites).map((invite) => (
           <div key={invite.id} className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-violet-200 bg-violet-50 p-4">
             <div>
               <p className="text-sm font-medium text-violet-900">
@@ -677,8 +713,54 @@ export default function TodayView() {
           <section className={CARD}>
             <div className="flex items-center gap-2 border-b border-slate-100 pb-3.5 text-[15px] font-medium text-slate-900">
               <span className="text-slate-500">{Ico.timer}</span> Clock-in
+              {pastDay && selectedDate ? <span className="ml-auto text-xs font-normal text-slate-400">{longDay(selectedDate)}</span> : preset !== "TODAY" && <span className="ml-auto text-xs font-normal text-slate-400">Live · today</span>}
             </div>
-            {!loaded ? (
+            {pastDay && selectedDate ? (
+              !dayRow ? (
+                <div className="space-y-3 py-6" aria-busy="true">
+                  <div className="skeleton mx-auto h-4 w-20" />
+                  <div className="skeleton mx-auto h-12 w-48" />
+                  <div className="skeleton mx-auto h-9 w-44" />
+                </div>
+              ) : (
+                <div className="flex flex-col items-center pt-5 text-center" data-testid="past-day-clock">
+                  <p className={`flex items-center gap-1.5 text-[11px] font-medium tracking-[0.12em] ${dayState.tone}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${dayState.dot}`} />
+                    {dayState.label}
+                  </p>
+                  <p className="mt-2 text-[44px] font-semibold leading-none tracking-tight tabular-nums text-slate-900" aria-label="Time on site that day">
+                    {dh}:{dm}
+                    <span className="text-slate-300">:{ds}</span>
+                  </p>
+                  <p className="mt-2 text-xs text-slate-400">
+                    {daySession ? (
+                      <>
+                        Clocked in at <span className="font-medium text-slate-600">{fmtClock(Date.parse(daySession.loginAt), tz)}</span>
+                        {daySession.wasLateLogin && <span className="ml-1.5 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-600">late by {daySession.lateByMinutes}m</span>}
+                        {daySession.logoutAt ? <> · out at <span className="font-medium text-slate-600">{fmtClock(Date.parse(daySession.logoutAt), tz)}</span></> : <> · no clock-out was recorded</>}
+                      </>
+                    ) : dayRow.onLeave ? "You were on approved leave" : dayRow.holiday ? "Holiday" : !dayRow.expected ? "Not a working day for you" : "You did not clock in on this day"}
+                  </p>
+                  {daySession && tsData && <BreakBudget used={dayBreak} budget={tsData.schedule.breakBudgetMinutes * 60} onBreak={false} />}
+                  {daySession && dayDiscussion > 0 && (
+                    <div className="mx-auto mt-3 flex max-w-xs items-center justify-between gap-3 rounded-xl bg-violet-50 px-4 py-2.5 text-sm text-violet-900">
+                      <span className="font-medium">Discussion that day</span><span className="tabular-nums font-semibold">{hms(dayDiscussion).join(":")}</span>
+                    </div>
+                  )}
+                  {daySession && dayWashroom > 0 && (
+                    <div className="mx-auto mt-3 flex max-w-xs items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-2.5 text-sm text-slate-700">
+                      <span className="font-medium">Washroom that day</span><span className="tabular-nums font-semibold">{hms(dayWashroom).join(":")}</span>
+                    </div>
+                  )}
+                  {daySession && dayHuddle > 0 && (
+                    <div className="mx-auto mt-3 flex max-w-xs items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-2.5 text-sm text-slate-700">
+                      <span className="font-medium">Team Huddle that day</span><span className="tabular-nums font-semibold">{hms(dayHuddle).join(":")}</span>
+                    </div>
+                  )}
+                  <p className="mt-4 max-w-xs text-[11px] text-slate-400">A past day is read-only. If something is wrong, use “Request correction” under My timesheets.</p>
+                </div>
+              )
+            ) : !loaded ? (
               <div className="space-y-3 py-6">
                 <div className="skeleton mx-auto h-4 w-20" />
                 <div className="skeleton mx-auto h-12 w-48" />
@@ -875,8 +957,9 @@ export default function TodayView() {
         </div>
 
         {/* ===================== My Timesheets ===================== */}
-        {me.role === "MANAGER" && <HuddleOverview compact />}
-        {(me.role === "MANAGER" || me.role === "EMPLOYEE") && <OrgOverview />}
+        {me.role === "MANAGER" && <HuddleOverview compact date={pastDay ? selectedDate ?? undefined : undefined} label={pastDay && selectedDate ? longDay(selectedDate) : undefined} />}
+        {/* "Today's tasks waiting for approval / approved / sent back" are today-only counts, so they are not shown while a past day is selected. */}
+        {(me.role === "MANAGER" || me.role === "EMPLOYEE") && !pastDay && <OrgOverview />}
 
         {tsData && (
           <Breakdown totals={tsData.totals} days={days} tz={tz} today={today} rangeLabel={rangeLabel} />

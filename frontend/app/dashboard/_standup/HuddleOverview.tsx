@@ -25,18 +25,20 @@ const hm = (sec: number) => {
 const t = (iso: string | null, tz: string) => (iso ? new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso)) : "—");
 const CHIP = { NOT_JOINED: ["Not joined", "bg-slate-100 text-slate-600"], IN_MEETING: ["In the huddle", "bg-emerald-50 text-emerald-700"], ENDED: ["Ended", "bg-indigo-50 text-indigo-700"] } as const;
 
-export default function HuddleOverview({ compact = false }: { compact?: boolean }) {
+export default function HuddleOverview({ compact = false, date, label }: { compact?: boolean; date?: string; label?: string }) {
+  // date = a past day chosen on the dashboard (company day, YYYY-MM-DD); none = today. label = how to name that day.
+  const when = label ?? "today";
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      setData(await apiGet<Overview>("/meetings/huddles/overview"));
+      setData(await apiGet<Overview>(date ? `/meetings/huddles/overview?date=${date}` : "/meetings/huddles/overview"));
       setError("");
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [date]);
   useEffect(() => {
     const first = setTimeout(() => void load(), 0);
     const poll = setInterval(() => void load(), 30_000);
@@ -53,12 +55,12 @@ export default function HuddleOverview({ compact = false }: { compact?: boolean 
   return (
     <section className={compact ? "mt-5 rounded-2xl border border-slate-200 bg-white p-5" : "space-y-5"} aria-label="Team Huddle">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-[15px] font-medium text-slate-900">Team Huddle · today</h2>
+        <h2 className="text-[15px] font-medium text-slate-900">Team Huddle · {when}</h2>
         {compact && <Link href="/dashboard/meetings?tab=participation" className="text-xs font-medium text-indigo-600 hover:underline">Open Team Huddle</Link>}
       </div>
 
       {data.meetings.length === 0 ? (
-        <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No Team Huddle scheduled for today. Schedule one from Team Huddle with “Schedule meeting”, with “In-person stand-up” ticked.</p>
+        <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No Team Huddle scheduled for {when}. Schedule one from Team Huddle with “Schedule meeting”, with “In-person stand-up” ticked.</p>
       ) : (
         <div className="mt-3 space-y-4">
           {data.meetings.map((m) => (
@@ -98,7 +100,7 @@ export default function HuddleOverview({ compact = false }: { compact?: boolean 
           ))}
 
           <div>
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Productive time today, by employee</p>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Productive time {when}, by employee</p>
             <div className="overflow-x-auto rounded-2xl border border-indigo-100">
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="bg-[#F3F7F6] text-xs text-slate-500"><tr><th className="px-3 py-2 font-medium">Employee</th><th className="px-3 py-2 text-right font-medium">Regular work</th><th className="px-3 py-2 text-right font-medium">Team Huddle</th><th className="px-3 py-2 text-right font-medium">Other eligible</th><th className="px-3 py-2 text-right font-medium">Total productive</th><th className="px-3 py-2 text-right font-medium">Break</th><th className="px-3 py-2 text-right font-medium">Washroom</th><th className="px-3 py-2 text-right font-medium">Time on site</th></tr></thead>

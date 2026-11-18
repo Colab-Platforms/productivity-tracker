@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE, apiGet, apiPost, getToken } from "@/lib/api";
 import { Modal } from "../../_employees/Modal";
 import { useMe } from "../../layout";
+import { DeptRaiseModal } from "./RaiseForm";
 
 type Item = {
   id: string; reference: string; title: string; priority: string; priorityLabel: string; approvalStatus: string; approvalLabel: string;
@@ -178,65 +179,10 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
         </ul>
       </section>
 
-      {raising && <RaiseModal departments={depts.data?.departments ?? []} onClose={() => setRaising(false)} onDone={(ref, stage) => { setRaising(false); setNotice(`Sent as ${ref}. ${stage === "PENDING_MANAGER" ? "Your reporting manager decides first." : "It goes to an Admin for approval."}`); setReload((n) => n + 1); }} />}
+      {raising && <DeptRaiseModal departments={depts.data?.departments ?? []} onClose={() => setRaising(false)} onDone={(ref, stage) => { setRaising(false); setNotice(`Sent as ${ref}. ${stage === "PENDING_MANAGER" ? "Your reporting manager decides first." : "It goes to an Admin for approval."}`); setReload((n) => n + 1); }} />}
       {managing && <ManageDepartments onClose={() => { setManaging(false); setReload((n) => n + 1); }} />}
       {openId && <DetailModal id={openId} onClose={() => { setChosen(null); if (!chosen) setClosedLink(linkedId); }} onChanged={() => setReload((n) => n + 1)} />}
     </div>
-  );
-}
-
-// ===========================================================================
-function RaiseModal({ departments, onClose, onDone }: { departments: Dept[]; onClose: () => void; onDone: (ref: string, stage: string) => void }) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
-  const [find, setFind] = useState("");
-  const [priority, setPriority] = useState("MEDIUM");
-  const [file, setFile] = useState<File | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const shown = departments.filter((x) => x.name.toLowerCase().includes(find.trim().toLowerCase()));
-  const picked = departments.find((x) => x.id === departmentId);
-
-  async function submit() {
-    if (busy) return;
-    setBusy(true); setError("");
-    try {
-      const attachment = file ? { fileName: file.name, data: await readFile(file), mimeType: file.type } : undefined;
-      const r = await apiPost<{ reference: string; stage: string }>("/queries/dept", { title, description, departmentId, priority, attachment });
-      onDone(r.reference, r.stage);
-    } catch (e) { setError((e as Error).message); setBusy(false); }
-  }
-  return (
-    <Modal title="New department request" subtitle="Your reporting manager and an Admin approve it, then the department you pick does the work." onClose={onClose} width="max-w-xl"
-      footer={<div className="flex justify-end gap-2">
-        <button onClick={onClose} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Close</button>
-        <button disabled={busy || title.trim().length < 3 || description.trim().length < 5 || !departmentId} onClick={submit} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">{busy ? "Sending…" : "Send for approval"}</button>
-      </div>}>
-      <div className="space-y-4">
-        <label className="block text-sm text-slate-600">Query title *<input value={title} maxLength={150} onChange={(e) => setTitle(e.target.value)} placeholder="For example: Request for PC cleaning" className={`mt-1 ${input}`} /></label>
-        <label className="block text-sm text-slate-600">Detailed description *<textarea value={description} maxLength={4000} rows={4} onChange={(e) => setDescription(e.target.value)} placeholder="What do you need, and why?" className={`mt-1 ${input}`} /></label>
-        <div className="text-sm text-slate-600">
-          <label htmlFor="dept-find">Department that will do the work *</label>
-          <input id="dept-find" value={find} onChange={(e) => setFind(e.target.value)} placeholder="Type to search departments…" className={`mt-1 ${input}`} />
-          <select aria-label="Department" size={Math.min(5, Math.max(2, shown.length))} value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className={`mt-2 ${input}`}>
-            {shown.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-          </select>
-          {departments.length === 0 && <p className="mt-1 text-xs text-amber-700">No departments are set up for your company yet. Ask an Admin to create them (Query Desk &gt; Manage departments).</p>}
-          {picked && <p className="mt-1 text-xs text-slate-500">Selected: <b>{picked.name}</b></p>}
-        </div>
-        <label className="block text-sm text-slate-600">Priority *
-          <select value={priority} onChange={(e) => setPriority(e.target.value)} className={`mt-1 ${input}`}>
-            <option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="URGENT">Urgent</option>
-          </select>
-        </label>
-        <label className="block text-sm text-slate-600">Supporting attachment (optional)
-          <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-1 block w-full text-sm text-slate-600" />
-          <span className="text-xs text-slate-400">PDF, image or Word file, up to 10 MB. The date and time you send it are recorded automatically.</span>
-        </label>
-        {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600" role="alert">{error}</p>}
-      </div>
-    </Modal>
   );
 }
 
