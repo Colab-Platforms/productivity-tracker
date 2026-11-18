@@ -283,7 +283,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/attendance-calendar", label: "Calendar", ready: true, roles: ["MANAGER"], icon: I.holidays },
       { href: "/dashboard/approvals", label: "Tasks & Performance", ready: true, roles: ["MANAGER"], icon: I.approvals },
       // HR and Manager
-      { href: "/dashboard/queries", label: "Query Desk", ready: true, roles: ["MANAGER", "HR"], badge: "queries", icon: I.ticket },
+      { href: "/dashboard/queries", label: "Query Desk", ready: true, roles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, roles: ["MANAGER", "HR"], icon: I.reports },
       { href: "/dashboard/reports", label: "My Report", ready: true, roles: ["EMPLOYEE"], icon: I.reports },
     ],
@@ -291,7 +291,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Me",
     items: [
-      { href: "/dashboard/today", label: "Productivity Tracker", ready: true, roles: ["HR", "ADMIN"], icon: I.today },
+      { href: "/dashboard/today", label: "Productivity Tracker", ready: true, roles: ["HR"], icon: I.today },
       { href: "/dashboard/tasks", label: "Daily Tasks", ready: true, icon: I.tasks },
       { href: "/dashboard/history", label: "My History", ready: true, icon: I.history },
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
@@ -301,7 +301,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/meetings", label: "Team Huddle", ready: true, notRoles: ["ADMIN"], icon: I.huddle },
       { href: "/dashboard/policies", label: "Policies", ready: true, notRoles: ["ADMIN"], icon: I.shield },
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, notRoles: ["ADMIN"], icon: I.receipt },
-      { href: "/dashboard/queries", label: "Complaint Centre", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
+      { href: "/dashboard/queries", label: "Query Desk", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/talk-to-management", label: "Talk to Management", ready: true, roles: ["EMPLOYEE", "MANAGER", "HR"], icon: I.lock },
       { href: "/dashboard/talk-to-management", label: "Management Inbox", ready: true, roles: ["ADMIN"], icon: I.mail },
       { href: "/change-password", label: "Change password", ready: true, icon: I.lock },

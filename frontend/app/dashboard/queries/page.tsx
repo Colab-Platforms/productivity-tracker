@@ -7,9 +7,10 @@ import { API_BASE, apiGet, apiPost, getToken } from "@/lib/api";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
 import RequestCorrectionModal from "../_corrections/RequestModal";
+import DeptRequests from "./_dept/DeptRequests";
 
 // ---------------------------------------------------------------------------
-// COMPLAINT CENTRE (employees) / QUERY DESK (HR, Manager, Admin)
+// QUERY DESK (every role; employees used to see it as "Complaint Centre")
 // ONE place for everything a person raises or has to answer: HR queries, leave, payroll, documents, technical issues, other, and
 // attendance corrections. A correction is only LISTED here: it keeps its own form and its own approval screen (manager first, then HR).
 // The server decides who sees what; this page only shows what comes back.
@@ -97,12 +98,12 @@ function Chip({ status, label }: { status: string; label: string }) {
 }
 
 // ===========================================================================
-function QueriesInner() {
+function ClassicQueries({ tabs }: { tabs: React.ReactNode }) {
   const me = useMe();
   const router = useRouter();
   const params = useSearchParams();
   const staff = me?.role !== "EMPLOYEE";
-  const title = staff ? "Query Desk" : "Complaint Centre";
+  const title = "Query Desk";
 
   const [reload, setReload] = useState(0);
   const [category, setCategory] = useState(() => params.get("category") ?? "");
@@ -162,13 +163,14 @@ function QueriesInner() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {staff ? "Queries and complaints from the people you look after, and attendance corrections waiting for you. Everything in one place." : "Raise a complaint or query, attach proof, and follow the answer. Attendance corrections are here too."}
+            {staff ? "Queries and complaints from the people you look after, and attendance corrections waiting for you. Everything in one place." : "Raise a query or complaint, attach proof, and follow the answer. Attendance corrections are here too."}
           </p>
         </div>
         <button onClick={() => setRaising(true)} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700">
-          {staff ? "Raise a query" : "Raise a complaint"}
+          Raise a query
         </button>
       </header>
+      {tabs}
 
       {notice && <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700" role="status">{notice}</p>}
       {list.error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">{list.error}</p>}
@@ -212,7 +214,7 @@ function QueriesInner() {
       <section className="overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)]">
         {!d && !list.error && <div className="space-y-2 p-5" aria-busy="true"><div className="skeleton h-14" /><div className="skeleton h-14" /><div className="skeleton h-14" /></div>}
         {d && d.items.length === 0 && (
-          <p className="px-6 py-14 text-center text-sm text-slate-500">{filtersOn ? "Nothing matches these filters." : staff ? "Nothing here yet. New queries from your people will show up here." : "You haven't raised anything yet. Use “Raise a complaint” if you need help."}</p>
+          <p className="px-6 py-14 text-center text-sm text-slate-500">{filtersOn ? "Nothing matches these filters." : staff ? "Nothing here yet. New queries from your people will show up here." : "You haven't raised anything yet. Use “Raise a query” if you need help."}</p>
         )}
         <ul className="divide-y divide-indigo-50">
           {d?.items.map((i) => (
@@ -289,7 +291,7 @@ function RaiseModal({ categories, staff, onClose, onCorrection, onDone }: { cate
   const input = "mt-1 w-full rounded-xl border border-indigo-100 bg-white px-3 py-2.5 text-sm text-slate-800";
   return (
     <Modal
-      title={staff ? "Raise a query" : "Raise a complaint"}
+      title="Raise a query"
       subtitle="Pick what it is about. Add a screenshot or document if it helps."
       onClose={onClose}
       width="max-w-xl"
@@ -481,10 +483,31 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
   );
 }
 
+// The Query Desk has two parts: the usual queries and complaints (answered by HR/Admin/managers), and department requests
+// (employee -> manager -> Admin -> department). ?tab=dept&id=<request> opens the second one (notification links use it).
+function QueriesShell() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const [picked, setPicked] = useState<string | null>(null);
+  const tab = picked ?? (params.get("tab") === "dept" ? "dept" : "queries");
+  const choose = (t: string) => {
+    setPicked(t);
+    router.replace(t === "dept" ? "/dashboard/queries?tab=dept" : "/dashboard/queries");
+  };
+  const tabs = (
+    <div role="tablist" aria-label="Query Desk" className="flex flex-wrap gap-2">
+      {([["queries", "Queries and complaints"], ["dept", "Department requests"]] as const).map(([k, label]) => (
+        <button key={k} role="tab" aria-selected={tab === k} onClick={() => choose(k)} className={`rounded-full px-4 py-1.5 text-sm font-medium ${tab === k ? "bg-indigo-600 text-white" : "bg-white text-slate-600 shadow-[var(--shadow-card)] hover:bg-indigo-50"}`}>{label}</button>
+      ))}
+    </div>
+  );
+  return tab === "dept" ? <DeptRequests openId={params.get("tab") === "dept" ? params.get("id") : null} tabs={tabs} /> : <ClassicQueries tabs={tabs} />;
+}
+
 export default function QueriesPage() {
   return (
     <Suspense fallback={null}>
-      <QueriesInner />
+      <QueriesShell />
     </Suspense>
   );
 }
