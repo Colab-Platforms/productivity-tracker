@@ -190,6 +190,45 @@ async function fallbackAdmins(platformId: string, requesterId: string) {
   return out;
 }
 
+/**
+ * Who a request from this person goes to: the reporting manager (if there is a manager step) and the Admin(s) for the final approval.
+ * ONE function used by both the real submit and the form's read-only preview, so what the form promises is what happens.
+ */
+async function routeFor(userId: string, role: string, platformId: string) {
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, reportsToId: true } });
+  const boss = u?.reportsToId ? await prisma.user.findUnique({ where: { id: u.reportsToId }, select: { id: true, role: true, status: true, reportsToId: true } }) : null;
+  const bossFacts: L.Boss = boss ? { id: boss.id, role: String(boss.role), status: String(boss.status) } : null;
+  const managerId = L.firstApprover({ id: userId, role }, bossFacts);
+  // The Admin above: the manager's own boss when there is a manager step, otherwise the requester's boss.
+  let above: L.Boss = bossFacts;
+  if (managerId && boss?.reportsToId) {
+    const mb = await prisma.user.findUnique({ where: { id: boss.reportsToId }, select: { id: true, role: true, status: true } });
+    above = mb ? { id: mb.id, role: String(mb.role), status: String(mb.status) } : null;
+  } else if (managerId) above = null;
+  const mapped = L.mappedAdmin(userId, above);
+  const adminApproverIds = mapped ? [mapped] : await fallbackAdmins(platformId, userId);
+  return { managerId, adminApproverIds, usedFallback: !mapped };
+}
+
+/** What the form shows about the signed-in person, read from their own record (never typed by them): name, ID, company and who approves. */
+export async function formPreview(userId: string) {
+  const me = await who(userId);
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true, employeeCode: true, designation: true, platformId: true } });
+  if (!u) throw new Error("NOT_FOUND");
+  const company = await prisma.platform.findUnique({ where: { id: u.platformId }, select: { name: true } });
+  const route = await routeFor(userId, me.viewer.role, me.platformId);
+  const ids = [route.managerId, ...route.adminApproverIds].filter((x): x is string => !!x);
+  const people = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true } }) : [];
+  const nm = new Map(people.map((p) => [p.id, nameOf(p) ?? ""]));
+  return {
+    employee: { name: nameOf(u) ?? "", employeeCode: u.employeeCode, designation: u.designation, company: company?.name ?? "" },
+    reportingManager: route.managerId ? nm.get(route.managerId) ?? null : null,
+    hasManagerStep: !!route.managerId,
+    finalApprovers: route.adminApproverIds.map((a) => nm.get(a) ?? "").filter(Boolean),
+    adminsMapped: !route.usedFallback,
+  };
+}
+
 export async function createRequest(userId: string, body: { title?: unknown; description?: unknown; departmentId?: unknown; priority?: unknown; attachment?: Upload | null }) {
   await needReady();
   const me = await who(userId);
@@ -207,19 +246,7 @@ export async function createRequest(userId: string, body: { title?: unknown; des
   if (!dept) throw new Error("BAD_DEPARTMENT");
   const file = await store(me.platformId, body.attachment); // checked first: a bad file stops the whole thing
 
-  const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, reportsToId: true } });
-  const boss = u?.reportsToId ? await prisma.user.findUnique({ where: { id: u.reportsToId }, select: { id: true, role: true, status: true, reportsToId: true } }) : null;
-  const bossFacts: L.Boss = boss ? { id: boss.id, role: String(boss.role), status: String(boss.status) } : null;
-  const managerId = L.firstApprover({ id: userId, role: me.viewer.role }, bossFacts);
-  // The Admin above: the manager's own boss when there is a manager step, otherwise the requester's boss.
-  let above: L.Boss = bossFacts;
-  if (managerId && boss?.reportsToId) {
-    const mb = await prisma.user.findUnique({ where: { id: boss.reportsToId }, select: { id: true, role: true, status: true } });
-    above = mb ? { id: mb.id, role: String(mb.role), status: String(mb.status) } : null;
-  } else if (managerId) above = null;
-  const mapped = L.mappedAdmin(userId, above);
-  const usedFallback = !mapped;
-  const adminApproverIds = mapped ? [mapped] : await fallbackAdmins(me.platformId, userId);
+  const { managerId, adminApproverIds, usedFallback } = await routeFor(userId, me.viewer.role, me.platformId);
 
   const seq = await prisma.$queryRaw<{ n: bigint }[]>`select nextval('dept_request_ref_seq') as n`;
   const reference = `DQ-${String(seq[0].n).padStart(6, "0")}`;

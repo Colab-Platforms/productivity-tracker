@@ -8,6 +8,7 @@ import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
 import RequestCorrectionModal from "../_corrections/RequestModal";
 import DeptRequests from "./_dept/DeptRequests";
+import { DeptRaiseModal } from "./_dept/RaiseForm";
 
 // ---------------------------------------------------------------------------
 // QUERY DESK (every role; employees used to see it as "Complaint Centre")
@@ -35,7 +36,9 @@ type Item = {
   isMine: boolean;
 };
 type List = { label: string; isStaff: boolean; total: number; summary: { open: number; waitingForEmployee: number; finished: number; needsYou: number }; items: Item[] };
-type Cat = { key: string; label: string; opensCorrectionForm: boolean };
+type Cat = { key: string; label: string; opensCorrectionForm: boolean; opensDepartmentForm?: boolean };
+// Not a real ticket category: choosing it opens the department-request form (manager and Admin approve, then the department does the work).
+const DEPARTMENT_CHOICE: Cat = { key: "DEPARTMENT_REQUEST", label: "Request to a department (manager and Admin approve)", opensCorrectionForm: false, opensDepartmentForm: true };
 type Message = { id: string; body: string; isInternal: boolean; createdAt: string; author: string; authorId: string; authorIsStaff: boolean; attachment: { name: string } | null };
 type Ev = { id: string; kind: string; by: string | null; from: string | null; to: string | null; note: string | null; at: string };
 type Detail = {
@@ -143,6 +146,8 @@ function ClassicQueries({ tabs }: { tabs: React.ReactNode }) {
   if (mineOnly) qs.set("mine", "1");
   const list = useApi<List>(`/queries?${qs.toString()}`, reload);
   const cats = useApi<{ categories: Cat[] }>("/queries/categories", 0);
+  const depts = useApi<{ ready: boolean; departments: { id: string; name: string }[] }>("/queries/dept/departments", 0);
+  const [deptRaising, setDeptRaising] = useState(false);
   const filtersOn = !!(category || status || from || to || employee.trim() || q.trim() || mineOnly);
   const clear = () => { setCategory(""); setStatus(""); setFrom(""); setTo(""); setEmployee(""); setQ(""); setQApplied(""); setMineOnly(false); };
 
@@ -245,11 +250,19 @@ function ClassicQueries({ tabs }: { tabs: React.ReactNode }) {
 
       {raising && (
         <RaiseModal
-          categories={cats.data?.categories ?? []}
+          categories={[DEPARTMENT_CHOICE, ...(cats.data?.categories ?? [])]}
           staff={staff}
           onClose={() => setRaising(false)}
           onCorrection={() => { setRaising(false); setCorrecting(true); }}
+          onDepartment={() => { setRaising(false); setDeptRaising(true); }}
           onDone={(ref) => { setRaising(false); setNotice(`Sent${ref ? ` as ${ref}` : ""}. You will be told when someone answers.`); setReload((n) => n + 1); }}
+        />
+      )}
+      {deptRaising && (
+        <DeptRaiseModal
+          departments={depts.data?.departments ?? []}
+          onClose={() => setDeptRaising(false)}
+          onDone={() => { setDeptRaising(false); router.push("/dashboard/queries?tab=dept"); }}
         />
       )}
       {correcting && (
@@ -264,7 +277,7 @@ function ClassicQueries({ tabs }: { tabs: React.ReactNode }) {
 }
 
 // ===========================================================================
-function RaiseModal({ categories, staff, onClose, onCorrection, onDone }: { categories: Cat[]; staff: boolean; onClose: () => void; onCorrection: () => void; onDone: (ref: string | null) => void }) {
+function RaiseModal({ categories, staff, onClose, onCorrection, onDepartment, onDone }: { categories: Cat[]; staff: boolean; onClose: () => void; onCorrection: () => void; onDepartment: () => void; onDone: (ref: string | null) => void }) {
   const [category, setCategory] = useState("");
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
@@ -277,6 +290,7 @@ function RaiseModal({ categories, staff, onClose, onCorrection, onDone }: { cate
     if (busy) return;
     if (!category) return setError("Choose a category.");
     if (picked?.opensCorrectionForm) return onCorrection();
+    if (picked?.opensDepartmentForm) return onDepartment();
     setBusy(true);
     setError("");
     try {
@@ -299,7 +313,7 @@ function RaiseModal({ categories, staff, onClose, onCorrection, onDone }: { cate
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Close</button>
           <button disabled={busy || !category} onClick={submit} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
-            {busy ? "Sending…" : picked?.opensCorrectionForm ? "Continue" : "Send"}
+            {busy ? "Sending…" : picked?.opensCorrectionForm || picked?.opensDepartmentForm ? "Continue" : "Send"}
           </button>
         </div>
       }
@@ -311,7 +325,9 @@ function RaiseModal({ categories, staff, onClose, onCorrection, onDone }: { cate
             {categories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </select>
         </label>
-        {picked?.opensCorrectionForm ? (
+        {picked?.opensDepartmentForm ? (
+          <p className="rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900">Use this when you need a department (IT, HR, Accounts…) to do something for you. You pick the department and a priority. Your reporting manager approves first, then an Admin gives the final approval, and only then does the department see it and start work. Press Continue.</p>
+        ) : picked?.opensCorrectionForm ? (
           <p className="rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900">An attendance correction has its own form (the day and the times you should have had). It goes to your manager first, then HR decides. Press Continue.</p>
         ) : (
           <>
