@@ -40,3 +40,84 @@ model QueryEvent {
   @@index([ticketId, createdAt])
   @@map("query_events")
 }
+
+// ===========================================================================
+// QUERY DESK, DEPARTMENT REQUESTS (manager -> Admin approval, then the tagged department does the work).
+// NEW TABLES ONLY. Tickets, query_meta and query_events are untouched; old complaints keep working exactly as before.
+// APPROVAL status and DEPARTMENT WORK status are two separate columns (never mixed). Events are append-only (DB trigger).
+// No Prisma relations on purpose; the foreign keys live in the migration SQL.
+// ===========================================================================
+model Department {
+  id         String   @id @default(uuid()) @db.Uuid
+  platformId String   @db.Uuid
+  name       String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@index([platformId])
+  @@map("departments")
+}
+
+model DepartmentMember {
+  id           String   @id @default(uuid()) @db.Uuid
+  departmentId String   @db.Uuid
+  userId       String   @db.Uuid
+  createdAt    DateTime @default(now())
+
+  @@unique([departmentId, userId])
+  @@index([userId])
+  @@map("department_members")
+}
+
+model DeptRequest {
+  id         String @id @default(uuid()) @db.Uuid
+  platformId String @db.Uuid
+  reference  String @unique
+  raisedById String @db.Uuid
+
+  title        String
+  description  String
+  priority     String // LOW | MEDIUM | HIGH | URGENT
+  departmentId String @db.Uuid
+
+  // APPROVAL: PENDING_MANAGER | PENDING_ADMIN | APPROVED | REJECTED
+  approvalStatus   String
+  managerId        String?   @db.Uuid // the reporting manager asked first (null = no manager step)
+  adminApproverIds String[]  @db.Uuid // who may give the final approval, fixed when the query is raised
+  managerDecidedAt DateTime?
+  adminDecidedAt   DateTime?
+
+  // DEPARTMENT WORK (null until approved): AWAITING_ACTION | NOT_STARTED | IN_PROGRESS | ON_HOLD | COMPLETED | REOPENED
+  workStatus  String?
+  assigneeId  String?   @db.Uuid
+  startedAt   DateTime?
+  completedAt DateTime?
+  confirmedAt DateTime? // the employee confirmed it is resolved
+  reopenCount Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([platformId, approvalStatus])
+  @@index([departmentId, workStatus])
+  @@index([raisedById])
+  @@index([managerId])
+  @@map("dept_requests")
+}
+
+model DeptRequestEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  requestId      String   @db.Uuid
+  actorId        String?  @db.Uuid
+  kind           String // CREATED | MANAGER_APPROVED | MANAGER_REJECTED | ADMIN_APPROVED | ADMIN_REJECTED | ACCEPTED | PROGRESS | COMMENT | ASSIGNED | CONFIRMED | REOPENED
+  fromValue      String?
+  toValue        String?
+  note           String?
+  visibility     String   @default("ALL") // ALL | APPROVERS | DEPT
+  attachmentKey  String?
+  attachmentName String?
+  createdAt      DateTime @default(now())
+
+  @@index([requestId, createdAt])
+  @@map("dept_request_events")
+}

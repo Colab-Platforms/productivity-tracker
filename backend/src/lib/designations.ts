@@ -32,6 +32,8 @@ export const DESIGNATIONS = [
   "Graphic Designer",
   "HR Generalist",
   "HR Intern",
+  "IT Department",
+  "IT Engineer",
   "Jr. Creative Producer",
   "Jr. SME",
   "Logistics Manager",

@@ -8,6 +8,7 @@ import { visibleUserIds } from "../tracker/tracker.service.js";
 import * as tickets from "../tickets/tickets.service.js";
 import * as corrections from "../attendance-corrections/corrections.service.js";
 import * as L from "./queries.logic.js";
+import * as dept from "./dept.service.js";
 
 // ---------------------------------------------------------------------------
 // COMPLAINT CENTRE (employees) / QUERY DESK (HR, Manager, Admin)
@@ -202,7 +203,7 @@ export async function listQueries(userId: string, f: ListFilters = {}) {
 
   const staff = viewer.role !== "EMPLOYEE";
   return {
-    label: staff ? "Query Desk" : "Complaint Centre",
+    label: "Query Desk",
     isStaff: staff,
     total: filtered.length,
     summary: {
@@ -221,7 +222,8 @@ export async function listQueries(userId: string, f: ListFilters = {}) {
 
 export async function counts(userId: string) {
   const l = await listQueries(userId, {});
-  return { badge: l.summary.needsYou, needsYou: l.summary.needsYou };
+  const d = await dept.needsYouCount(userId); // department requests waiting for this person (approve, take, confirm)
+  return { badge: l.summary.needsYou + d, needsYou: l.summary.needsYou + d };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
