@@ -58,7 +58,7 @@ export default function OrgOverview() {
   }
   if (d.role === "MANAGER") {
     tiles.push(<Tile key="ml" label="Team leave waiting for you" value={d.awaitingMyLeaveApproval ?? 0} href="/dashboard/leave" tone="amber" />);
-    tiles.push(<Tile key="mt" label="Task approvals waiting for you" value={d.pendingTaskApprovals ?? 0} href="/dashboard/approvals" tone="indigo" />);
+    tiles.push(<Tile key="mt" label="Task approvals waiting for you" value={d.pendingTaskApprovals ?? 0} href="/dashboard/tasks?tab=submitted" tone="indigo" />);
     tiles.push(<Tile key="ts" label="People reporting to you" value={d.teamSize ?? 0} tone="emerald" />);
   }
   if (d.role === "EMPLOYEE" || d.role === "MANAGER" || d.role === "HR") {

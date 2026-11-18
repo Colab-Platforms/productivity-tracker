@@ -111,24 +111,30 @@ async function raise(person: { id: string; platformId: string; reportsToId: stri
 /** The reporting manager hears about a NEW flag (once). With no usable reporting manager, the company's HR/Admin do. */
 async function notifyNew(flagId: string, person: { id: string; platformId: string; reportsToId: string | null; firstName: string; lastName: string; employeeCode: string | null }, c: Candidate) {
   try {
-    let to: string[] = [];
+    // Everyone who should know hears once: the employee, the reporting manager, and the company's HR and Admin (the same people who may open the flag).
+    const staff = new Set<string>();
     if (person.reportsToId) {
       const m = await prisma.user.findFirst({ where: { id: person.reportsToId, status: "ACTIVE" as never, role: { in: ["MANAGER", "ADMIN", "HR"] as never } }, select: { id: true } });
-      if (m) to = [m.id];
+      if (m) staff.add(m.id);
     }
-    if (to.length === 0) to = await deciderIdsForCompany(person.platformId, person.id);
-    if (to.length === 0) return;
-    const people = await prisma.user.findMany({ where: { id: { in: to } }, select: { id: true, platformId: true } });
-    const by = new Map<string, string[]>();
-    for (const p of people) by.set(p.platformId, [...(by.get(p.platformId) ?? []), p.id]);
+    for (const id of await deciderIdsForCompany(person.platformId, person.id)) staff.add(id);
+    staff.delete(person.id);
     const name = `${person.firstName} ${person.lastName}`.trim();
-    for (const [platformId, userIds] of by) {
-      await notifyUsers({
-        platformId, userIds, type: "REPETITIVE_TASK_FLAG", title: "Repetitive task alert",
-        body: `${name}${person.employeeCode ? ` (${person.employeeCode})` : ""} submitted similar tasks ${c.count} times in ${c.spanDays} day${c.spanDays === 1 ? "" : "s"}: ${c.sampleTitle.slice(0, 80)}`,
-        link: "/dashboard/approvals", dedupeKey: `repflag:${flagId}:new`, data: { flagId },
-      });
-    }
+    const send = async (ids: string[], base: { type: string; title: string; body: string; link: string }) => {
+      if (ids.length === 0) return;
+      const people = await prisma.user.findMany({ where: { id: { in: ids }, status: "ACTIVE" as never }, select: { id: true, platformId: true } });
+      const by = new Map<string, string[]>();
+      for (const p of people) by.set(p.platformId, [...(by.get(p.platformId) ?? []), p.id]);
+      for (const [platformId, userIds] of by) await notifyUsers({ platformId, userIds, ...base, dedupeKey: `repflag:${flagId}:new`, data: { flagId } });
+    };
+    await send([...staff], {
+      type: "REPETITIVE_TASK_FLAG", title: "Repetitive task alert", link: "/dashboard/approvals",
+      body: `${name}${person.employeeCode ? ` (${person.employeeCode})` : ""} submitted similar tasks ${c.count} times in ${c.spanDays} day${c.spanDays === 1 ? "" : "s"}: ${c.sampleTitle.slice(0, 80)}`,
+    });
+    await send([person.id], {
+      type: "REPETITIVE_TASK_ALERT", title: "Similar tasks noticed", link: "/dashboard/tasks",
+      body: `Similar tasks were submitted ${c.count} times in ${c.spanDays} day${c.spanDays === 1 ? "" : "s"} ("${c.sampleTitle.slice(0, 60)}"). This is not a finding of misconduct. You can add an explanation in Daily Tasks.`,
+    });
   } catch (e) {
     console.error("[repetition] notice failed:", e instanceof Error ? e.message : e);
   }

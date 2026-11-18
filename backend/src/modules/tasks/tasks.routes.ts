@@ -112,6 +112,9 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_FLAG_STATUS: { status: 400, message: "Choose Under Review, Valid Repetition, False Positive or Resolved." },
   NOTE_REQUIRED: { status: 400, message: "Write something first." },
   NOTE_TOO_LONG: { status: 400, message: "That is too long (up to 300 characters; comments up to 500)." },
+  EXPLANATION_REQUIRED: { status: 400, message: "Write your explanation first (at least 3 characters)." },
+  USE_ESCALATE_ADMIN: { status: 403, message: "HR passes a case to Admin with Escalate to Admin." },
+  ALREADY_ESCALATED_ADMIN: { status: 409, message: "This case was already escalated to Admin." },
   HR_CANNOT_ESCALATE: { status: 403, message: "HR receives escalations, so there is nobody above to escalate to." },
   FLAG_CLOSED: { status: 409, message: "This flag is closed. Reopen it for review first." },
   ALREADY_ESCALATED: { status: 409, message: "This flag was already escalated to HR." },
@@ -405,7 +408,7 @@ router.post("/assigned/:id/cancel", async (req, res) => {
 
 // --- repetitive task flags (manager / HR / Admin; the service decides who sees what) ---
 router.get("/repetition/flags", async (req, res) => {
-  try { res.json(await rep.listFlags(req.user!.userId, { status: req.query.status as string, userId: req.query.userId as string, projectId: req.query.projectId as string })); } catch (e) { fail(res, e); }
+  try { res.json(await rep.listFlags(req.user!.userId, { status: req.query.status as string, userId: req.query.userId as string, projectId: req.query.projectId as string, own: req.query.mine === "1" })); } catch (e) { fail(res, e); }
 });
 router.get("/repetition/flags/:id", async (req, res) => {
   try { res.json(await rep.flagDetail(req.user!.userId, id(req.params.id))); } catch (e) { fail(res, e); }
@@ -415,6 +418,12 @@ router.post("/repetition/flags/:id/status", async (req, res) => {
 });
 router.post("/repetition/flags/:id/comment", async (req, res) => {
   try { res.json(await rep.addComment(req.user!.userId, id(req.params.id), req.body?.text)); } catch (e) { fail(res, e); }
+});
+router.post("/repetition/flags/:id/explain", async (req, res) => {
+  try { res.json(await rep.explain(req.user!.userId, id(req.params.id), req.body?.text)); } catch (e) { fail(res, e); }
+});
+router.post("/repetition/flags/:id/escalate-admin", async (req, res) => {
+  try { res.json(await rep.escalateToAdmin(req.user!.userId, id(req.params.id), req.body?.reason)); } catch (e) { fail(res, e); }
 });
 router.post("/repetition/flags/:id/escalate", async (req, res) => {
   try { res.json(await rep.escalate(req.user!.userId, id(req.params.id), req.body?.note)); } catch (e) { fail(res, e); }

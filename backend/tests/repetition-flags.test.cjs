@@ -42,7 +42,7 @@ const EX = ["Working on HRMS dashboard", "HRMS dashboard development", "Continue
     await q(`delete from notifications where "userId" in ${ids}`);
     await q(`delete from users where "employeeCode" like 'REP-%'`);
   };
-  const dropTables = async () => { await q(`drop table if exists repetition_flag_events, repetition_flag_tasks, repetition_flags, repetition_settings cascade`); await q(`drop function if exists repetition_flag_events_no_edit()`); };
+  const dropTables = async () => { await q(`drop table if exists repetition_flag_notes, repetition_flag_events, repetition_flag_tasks, repetition_flags, repetition_settings cascade`); await q(`drop function if exists repetition_flag_notes_no_edit()`); await q(`drop function if exists repetition_flag_events_no_edit()`); };
   await wipe(); await dropTables();
   const mk = async (code, role, o = {}) => {
     await q(`insert into users (id,"platformId",email,"passwordHash","firstName","lastName","employeeCode",role,status,"mustChangePassword","trackerAccessEnabled","onboardingStatus","reportsToId","dateOfJoining","createdAt","updatedAt") values (gen_random_uuid(),$1,$2,$3,$4,'Rep',$5,$6,'ACTIVE',false,true,'ACTIVE',$7,'2026-01-01',now(),now())`, [o.plat ?? AV, code.toLowerCase() + "@rep.test", hash, o.first ?? code.replace("REP-", ""), code, role, o.boss ?? null]);
@@ -148,7 +148,7 @@ const EX = ["Working on HRMS dashboard", "HRMS dashboard development", "Continue
     ok("Admin of another company with no grant does not", !(await seen(ADMIN2)));
     await q(`insert into company_access (id,"userId","platformId","createdAt") values (gen_random_uuid(),$1,null,now())`, [ADMIN2.id]);
     ok("an Admin with the all-companies grant sees it (organisation-wide)", await seen(ADMIN2) && await seen(ADMIN));
-    ok("an employee cannot read flags (403), not even their own", (await call("GET", "/tasks/repetition/flags", E.E1.tok)).s === 403 && (await call("GET", `/tasks/repetition/flags/${flagId}`, E.E1.tok)).s === 403);
+    ok("an employee reads only flags about themselves: the team list holds none of the others, and the report summary is refused (403)", (await call("GET", "/tasks/repetition/flags?status=all", E.E1.tok)).b.flags.every((f) => f.userId === E.E1.id) && (await call("GET", "/tasks/repetition/summary", E.E1.tok)).s === 403 && (await call("GET", `/tasks/repetition/flags/${flagId}`, E.E2.tok)).s === 404);
     ok("no token: 401", (await call("GET", "/tasks/repetition/flags")).s === 401);
     const det = (await call("GET", `/tasks/repetition/flags/${flagId}`, M1.tok)).b;
     ok("the detail shows employee, ID, dates, descriptions, statuses, repeat count, project and reason", det.flag.employee.includes("EmpE1") && det.flag.employeeCode === "REP-E1" && det.tasks.length === 4 && det.tasks.every((t) => t.date && t.title && t.status && t.approvalStatus) && det.flag.repeatCount === 4 && det.flag.reason.length > 20 && det.flag.project === "REP-Alpha", det.flag);

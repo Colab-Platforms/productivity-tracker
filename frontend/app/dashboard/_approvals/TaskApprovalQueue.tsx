@@ -89,7 +89,7 @@ export default function TaskApprovalQueue({ onCount }: { onCount?: (waiting: num
           <h2 className="font-semibold text-slate-900">Tasks sent to you for approval</h2>
           <p className="mt-1 text-sm text-slate-500">Only tasks an employee tagged to you as approver appear here. Until you approve a task it counts for nobody.</p>
         </div>
-        <Link href="/dashboard/approvals" className="text-xs font-medium text-indigo-700 hover:underline">All tasks in Task Monitoring</Link>
+        <Link href="/dashboard/tasks?tab=submitted" className="text-xs font-medium text-indigo-700 hover:underline">All tasks in Daily Tasks</Link>
       </div>
       {notice && <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</p>}
       {error && <p className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
