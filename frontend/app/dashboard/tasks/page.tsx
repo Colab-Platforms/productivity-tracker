@@ -10,7 +10,9 @@
 
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useMe } from "../layout";
 import { apiGet, apiPost , API_BASE } from "@/lib/api";
 import { useTaskRealtime } from "@/lib/realtime";
 import { formatDate, isoDaysAgo } from "@/lib/time";
@@ -28,7 +30,8 @@ import type { EditableTask } from "../_taskedit/editTypes";
 import { ViewTabs } from "../_assigned/ViewTabs";
 import AssignedToMe from "../_assigned/AssignedToMe";
 import AssignedByMe from "../_assigned/AssignedByMe";
-import ApprovalsPage from "../approvals/page";
+import ReviewQueue from "../approvals/ReviewQueue";
+import EmployeeRepetitionAlert from "./_repetition/EmployeeRepetitionAlert";
 
 const API = API_BASE;
 
@@ -130,7 +133,26 @@ const WEIGHT_CHIP: Record<string, string> = {
   CRITICAL: "bg-rose-50 text-rose-700",
 };
 
+// Daily Tasks is the ONE place for task operations. Which part is open can come from the address (?tab=submitted | assigned), so notifications and
+// dashboard links land on the right tab; Tasks & Performance (/dashboard/approvals) only shows figures.
 export default function TasksPage() {
+  return (
+    <Suspense fallback={<div className="skeleton h-10" aria-busy="true" />}>
+      <TasksPageInner />
+    </Suspense>
+  );
+}
+
+function TasksPageInner() {
+  const me = useMe();
+  const tabParam = useSearchParams().get("tab");
+  // The tab the person clicked wins until the address itself changes (a link to another tab).
+  const [pickedView, setPickedView] = useState<string | null>(null);
+  const [seenParam, setSeenParam] = useState<string | null>(tabParam);
+  if (seenParam !== tabParam) {
+    setSeenParam(tabParam);
+    setPickedView(null);
+  }
   const [data, setData] = useState<Payload | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -158,7 +180,10 @@ export default function TasksPage() {
   const [latePolicy, setLatePolicy] = useState<{ ready: boolean; allowedDays: number; maxDays: number } | null>(null);
   // Which part of Daily Tasks is open. Employee: "main" (my submitted tasks) or "assigned". Manager: "own", "submitted" (the approval queue) or "assigned".
   // Same page, no sidebar item: the switch sits at the top.
-  const [view, setView] = useState<string>("main");
+  const view = pickedView ?? (tabParam === "submitted" || tabParam === "assigned" ? tabParam : "main");
+  const setView = setPickedView;
+  // HR and Admin may open the same queue of employee-submitted tasks (they only act on tasks tagged to them; the rest is view only).
+  const canReview = me?.role === "HR" || me?.role === "ADMIN";
   const [assignedOpen, setAssignedOpen] = useState(0);
   useEffect(() => {
     apiGet<{ counts: { todo: number; inProgress: number } }>("/tasks/assigned/mine").then((p) => setAssignedOpen(p.counts.todo + p.counts.inProgress)).catch(() => undefined);
@@ -304,14 +329,29 @@ export default function TasksPage() {
           tabs={[{ key: "own", label: "My own tasks" }, { key: "submitted", label: "Employee submitted tasks" }, { key: "assigned", label: "Assigned by me" }]}
         />
         {mgrView === "own" && <SelfManagedTasks data={data as unknown as SelfPayload} onData={(p) => setData(p as unknown as Payload)} error={error} setError={setError} />}
-        {mgrView === "submitted" && <ApprovalsPage />}
+        {mgrView === "submitted" && <ReviewQueue />}
         {mgrView === "assigned" && <AssignedByMe />}
       </div>
     );
   }
 
   // An employee's "Assigned by manager" part of the same page.
-  const employeeTabs = [{ key: "main", label: "My submitted tasks" }, { key: "assigned", label: "Assigned by manager", badge: assignedOpen }];
+  const employeeTabs = [
+    { key: "main", label: "My submitted tasks" },
+    ...(canReview ? [{ key: "submitted", label: "Employee submitted tasks" }] : []),
+    { key: "assigned", label: "Assigned by manager", badge: assignedOpen },
+  ];
+  if (view === "submitted" && canReview) {
+    return (
+      <div className="space-y-5">
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Daily tasks</h1>
+        </header>
+        <ViewTabs value="submitted" onChange={setView} tabs={employeeTabs} />
+        <ReviewQueue />
+      </div>
+    );
+  }
   if (view === "assigned") {
     return (
       <div className="space-y-5">
@@ -363,6 +403,8 @@ export default function TasksPage() {
       </header>
 
       <ViewTabs value="main" onChange={setView} tabs={employeeTabs} />
+
+      <EmployeeRepetitionAlert />
 
       <DateFilter value={rangeKey} picked={picked} onChange={(k, p) => { setRangeKey(k); setPicked(p); }} />
       {rangeKey !== "today" && <RangeTasks {...rangeFor(rangeKey, picked)} choices={editChoices} latePolicy={latePolicy} reloadKey={rangeReload} onChanged={() => void load()} />}

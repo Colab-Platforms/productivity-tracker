@@ -35,3 +35,20 @@ export async function loadSettings(): Promise<Settings> {
     return { ...DEFAULT_SETTINGS };
   }
 }
+
+let notesValue = false;
+let notesCheckedAt = 0;
+/** Is the notes table there (migration 20261118120000)? Without it explanations, HR observations and escalation to Admin answer "not switched on yet". */
+export async function notesReady(): Promise<boolean> {
+  if (notesValue) return true;
+  if (Date.now() - notesCheckedAt < 15_000) return false;
+  notesCheckedAt = Date.now();
+  try {
+    await prisma.repetitionFlagNote.findFirst({ select: { id: true } });
+    notesValue = true;
+  } catch (e) {
+    if (!isMissingTable(e) && !/repetition_flag_notes/.test(e instanceof Error ? e.message : "")) throw e;
+    notesValue = false;
+  }
+  return notesValue;
+}

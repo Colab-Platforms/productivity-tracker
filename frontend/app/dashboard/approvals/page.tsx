@@ -1,825 +1,356 @@
-// ===========================================================================
-// APPROVALS — the manager's queue
-//
-// Two queues, in the order a manager works them: what needs agreeing to
-// before anyone starts, and what needs grading now it's finished.
-//
-// Grading is three buttons, not a form. A manager will do this twenty times
-// a day and every extra click is a reason not to bother.
-// ===========================================================================
-
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+// ===========================================================================
+// TASKS & PERFORMANCE: monitoring, analytics and reporting on employee-submitted tasks.
+//
+// This page only LOOKS. It has no approve, send back, rate, delete or assign buttons: all of those live in Daily Tasks (the "Employee submitted tasks"
+// and "Assigned by me" tabs), so the two pages no longer repeat each other.
+//
+// The numbers come from the SAME call and the SAME rows as that queue (GET /tasks/review/queue, same permissions, same filters), counted by the rules in
+// analytics.ts. Approving, assigning, editing or deleting a task in Daily Tasks therefore shows up here on the next reload (and live, through the task signal).
+// ===========================================================================
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { apiGet } from "@/lib/api";
+import { getPlatformTimezone, todayIso } from "@/lib/time";
 import { useTaskRealtime } from "@/lib/realtime";
-import { API_BASE } from "@/lib/api";
-import { todayIso, getPlatformTimezone } from "@/lib/time";
 import { plural } from "@/lib/plural";
 import { useMe } from "../layout";
-import { RevertModal } from "./RevertModal";
-import { RateControl, Stars } from "../_ratings/Stars";
-import { EmployeePicker } from "./EmployeePicker";
 import FilterBar from "../_filters/FilterBar";
 import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
-import { buildPeople } from "./people";
-import { LateNote, type LateInfo } from "../_late/Late";
-import { DeleteTaskModal } from "./DeleteTaskModal";
-import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL, PROGRESS_OPTIONS, normalProgress } from "../_progress/progress";
-import { DeletedTasks } from "./DeletedTasks";
-import { EditedChip } from "../_taskedit/EditedChip";
-import { TaskHistoryModal } from "../_taskedit/TaskHistoryModal";
-import { CorrectionRequests } from "../_taskedit/CorrectionRequests";
+import { PRESETS, addDays, rangeFor, type Preset } from "../reports/_team/ranges";
+import { describeFilters } from "../reports/_team/exportMeta";
+import { downloadReportXlsx, type Col, type Value } from "../reports/_team/reportXlsx";
+import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL } from "../_progress/progress";
+import RepetitionSummary from "../tasks/_repetition/RepetitionSummary";
 import RepetitionAlerts from "../tasks/_repetition/RepetitionAlerts";
+import { HistoryChart, StatusChart, WorkloadChart } from "./AnalyticsCharts";
+import { DEFAULT_OVERDUE_DAYS, NO_PROJECT, OVERDUE_CHOICES, byDay, byEmployee, byProject, countRows, narrow, overdueList, progressOf, type Counts, type Row as BaseRow } from "./analytics";
 
-const API = API_BASE;
+type Row = BaseRow & { title: string };
+type Queue = { date: string; scope?: { orgTotal: number; filteredTotal: number }; members: { id: string; name: string; employeeCode: string | null }[]; all: Row[] };
+type Assigned = { counts: { total: number; todo: number; inProgress: number; awaiting: number; confirmed: number; overdue: number } };
 
-async function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${
-        typeof window === "undefined" ? "" : localStorage.getItem("token") ?? ""
-      }`,
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? "That didn't work");
-  return data as T;
-}
+const APPROVAL_CHIP: Record<string, string> = { APPROVED: "bg-emerald-50 text-emerald-700", PENDING: "bg-amber-50 text-amber-700", REJECTED: "bg-rose-50 text-rose-700" };
+const APPROVAL_LABEL: Record<string, string> = { APPROVED: "Approved", PENDING: "Waiting for approval", REJECTED: "Rejected" };
+const dayShort = (iso: string) => new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+const dayFull = (iso: string) => new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const rating = (c: Counts) => (c.avgRating === null ? "Not rated" : `${c.avgRating.toFixed(1)} (${c.rated})`);
 
-type Task = {
-  id: string;
-  title: string;
-  description: string | null;
-  weight: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-  status: string;
-  approvalStatus: string;
-  // The manager's star rating (1-5) and comment; null = not rated yet.
-  rating: number | null;
-  ratingComment: string | null;
-  completionNote: string | null;
-  reviewNote: string | null;
-  rejectionNote: string | null;
-  // Set when a manager sent the task back (Partially / Not fully completed). resubmitted = the employee finished it again.
-  reopened?: { type: string; label: string; remark: string; resubmitted: boolean } | null;
-  personName: string | null;
-  isCarriedOver: boolean;
-  createdAt: string;
-  // Daily task entry: progress is separate from approval. canAct is false for HR/Admin and for managers the task is not tagged to.
-  progress?: "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED" | "NOT_STARTED";
-  hoursSpent?: number | null;
-  taggedManager?: string | null;
-  blockedNote?: string | null;
-  approvalNote?: string | null;
-  project?: string | null;
-  canAct?: boolean;
-  // Set when it was submitted for an earlier day: `date` is the original task day, `createdAt` the real submission time.
-  late?: LateInfo | null;
-  date?: string;
-  completedAt?: string | null;
-  // The employee edited this task, or asked for a correction (the manager can open the history).
-  edited?: { at: string | null; count: number } | null;
-  pendingCorrection?: boolean;
-};
-
-// Calendar day of a timestamp in the company timezone; used to flag work ticked off after its own day.
-function doneDay(iso: string): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: getPlatformTimezone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
-}
-
-// A task as the queue sends it: the task itself plus who it belongs to (an id, a name and an employee ID).
-type Row = Task & { userId: string; who: string; employeeCode: string | null; date: string };
-
-type Queue = {
-  date: string; // the company's "today"
-  // everyone this person may see, and how many the HR filters leave
-  scope?: { orgTotal: number; filteredTotal: number };
-  teamSize: number;
-  members: { id: string; name: string; employeeCode: string | null }[];
-  proposals: Task[];
-  toReview: Task[];
-  recent: Task[];
-  all: Row[];
-};
-
-// Every task belongs to exactly ONE of these, so the tab counts always add up to the total in view.
-type TabKey = "waiting" | "todo" | "inProgress" | "completed" | "closed" | "deleted";
-
-function bucketOf(t: { approvalStatus?: string | null; status?: string | null }): TabKey {
-  const a = String(t.approvalStatus ?? "");
-  const st = String(t.status ?? "");
-  if (a === "PENDING") return "waiting"; // not agreed yet, whatever its status says
-  if (a === "REJECTED" || st === "CANCELLED") return "closed"; // sent back, or cancelled
-  if (st === "IN_PROGRESS") return "inProgress";
-  if (st === "COMPLETED") return "completed"; // graded or not
-  return "todo";
-}
-
-// The dates to ask the server for. null = the default view (today, plus anything older still waiting).
-// Days are the company's calendar days, taken from the server's own "today".
-function rangeFor(preset: string, today: string, customFrom: string, customTo: string): { from: string; to: string } | null {
-  const plus = (iso: string, n: number) => {
-    const [y, m, d] = iso.split("-").map(Number);
-    return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
-  };
-  if (preset === "yesterday") return { from: plus(today, -1), to: plus(today, -1) };
-  if (preset === "week") return { from: plus(today, -6), to: today };
-  if (preset === "thisweek") {
-    const [y, m, d] = today.split("-").map(Number);
-    const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7; // Monday = 0
-    return { from: plus(today, -dow), to: today };
-  }
-  if (preset === "month") return { from: today.slice(0, 8) + "01", to: today };
-  if (preset === "custom") return customFrom && customTo ? { from: customFrom, to: customTo } : null;
-  return null;
-}
-
-const WEIGHTS = [
-  { value: "LOW", label: "Low", points: 1 },
-  { value: "MEDIUM", label: "Medium", points: 2 },
-  { value: "HIGH", label: "High", points: 3 },
-  { value: "CRITICAL", label: "Critical", points: 5 },
-];
-
-const WEIGHT_CHIP: Record<string, string> = {
-  LOW: "bg-[#E7F6F1] text-slate-600",
-  MEDIUM: "bg-sky-50 text-sky-700",
-  HIGH: "bg-amber-50 text-amber-700",
-  CRITICAL: "bg-rose-50 text-rose-700",
-};
-
-// The endpoint sends the person under several keys and the screen was reading
-// one it never sends, so every row showed a blank name. Reading all of them
-// means a rename on either side cannot silently empty this column again.
-type RowLike = {
-  personName?: string | null;
-  name?: string | null;
-  who?: string | null;
-  employee?: string | null;
-  employeeCode?: string | null;
-  date?: string | null;
-  status?: string | null;
-  approvalStatus?: string | null;
-  id?: string;
-  title?: string;
-};
-
-function dayLabel(iso?: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso + "T00:00:00Z");
-  const days = Math.round(
-    (new Date(todayIso() + "T00:00:00Z").getTime() - d.getTime()) / 86400000
+function Tile({ label, value, tone = "text-slate-900", hint, testId }: { label: string; value: string | number; tone?: string; hint?: string; testId?: string }) {
+  return (
+    <div className="rounded-2xl bg-white p-3.5 shadow-[var(--shadow-card)]" data-testid={testId}>
+      <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
+      <p className={`mt-1 text-2xl font-semibold tabular-nums ${tone}`}>{value}</p>
+      {hint && <p className="mt-0.5 text-[11px] text-slate-400">{hint}</p>}
+    </div>
   );
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  // Past two days an actual date is more useful than "day before yesterday",
-  // which stops meaning anything once you are chasing week-old work.
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 }
 
-function personLabel(t: RowLike): string {
-  const who = t.personName || t.name || t.who || t.employee || "Unknown";
-  const code = t.employeeCode ? ` (${t.employeeCode})` : "";
-  const when = dayLabel(t.date);
-  return when ? `${who}${code} · ${when}` : `${who}${code}`;
+function Panel({ title, sub, children, testId }: { title: string; sub?: string; children: React.ReactNode; testId?: string }) {
+  return (
+    <section className="rounded-2xl bg-white p-4 shadow-[var(--shadow-card)]" data-testid={testId}>
+      <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+      {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
+      <div className="mt-3">{children}</div>
+    </section>
+  );
 }
-export default function ApprovalsPage() {
+
+export default function TasksPerformancePage() {
   const me = useMe();
-  // HR and Admin see every employee of the companies they act on (and can narrow by company, project and reporting manager); a manager sees their
-  // own reporting team, as before. Seeing a task is not approving it: only the tagged manager gets the Approve / Send back buttons.
   const staff = me?.role === "HR" || me?.role === "ADMIN";
+  const allowed = ["MANAGER", "HR", "ADMIN"].includes(me?.role ?? "");
   const { filters, update, clear, ready } = useHrFilters();
   const { options: filterOptions } = useFilterOptions(filters, update, ready && staff);
+
+  // Opens on Today like every report screen; nothing is remembered between visits.
+  const [preset, setPreset] = useState<Preset>("today");
+  const [single, setSingle] = useState("");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [person, setPerson] = useState(""); // an employee id, "" = everyone
+  const [project, setProject] = useState(""); // a project name, "" = every project
+  const [overdueDays, setOverdueDays] = useState<number>(() => {
+    try {
+      const v = Number(typeof window === "undefined" ? "" : window.localStorage.getItem("hrms-overdue-days"));
+      return (OVERDUE_CHOICES as readonly number[]).includes(v) ? v : DEFAULT_OVERDUE_DAYS;
+    } catch {
+      return DEFAULT_OVERDUE_DAYS;
+    }
+  });
   const [queue, setQueue] = useState<Queue | null>(null);
+  const [assigned, setAssigned] = useState<Assigned | null>(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [rejecting, setRejecting] = useState<string | null>(null);
-  const [reason, setReason] = useState("");
-  const [revertFor, setRevertFor] = useState<Row | null>(null);
-  // Delete task (soft delete by the tagged manager): the task being deleted, the server's error, and a confirmation line afterwards.
-  const [deleteFor, setDeleteFor] = useState<Row | null>(null);
-  const [deleteError, setDeleteError] = useState("");
-  const [deletedNotice, setDeletedNotice] = useState("");
-  const [ratingEdit, setRatingEdit] = useState<string | null>(null); // the task whose saved rating is being changed
-  const [comments, setComments] = useState<Record<string, string>>({});
-  const [revertError, setRevertError] = useState("");
-  const [assignTo, setAssignTo] = useState("");
-  const [title, setTitle] = useState("");
-  const [weight, setWeight] = useState("MEDIUM");
-
-  // ONE source of truth. Every counter, chip and list on this page is computed from the same rows (the tasks the
-  // server returned for the chosen dates) by the same helpers below, so they cannot disagree:
-  //   person   - the selected employee's id ("" = Everyone). An id, never a display name: two people can share one.
-  //   bucketOf - the ONE tab a task belongs to, so the tabs add up to the total for the selected scope.
-  // Changing the person, the tab or the dates never resets the other two.
-  const [person, setPerson] = useState<string>("");
-  const [preset, setPreset] = useState<string>("default");
-  const [customFrom, setCustomFrom] = useState<string>("");
-  const [customTo, setCustomTo] = useState<string>("");
-  const [tab, setTab] = useState<TabKey>("waiting");
-  const [ratingFilter, setRatingFilter] = useState<"all" | "pending" | "rated">("all");
-  const [submission, setSubmission] = useState<"all" | "normal" | "late">("all");
-  // Progress filter (To Do / In Progress / Completed / Blocked). Progress is the work; approval is the manager's decision, a separate thing.
-  const [progressFilter, setProgressFilter] = useState<"all" | "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED">("all");
   const [reload, setReload] = useState(0);
-  const [historyFor, setHistoryFor] = useState<{ id: string; title: string } | null>(null);
-  // The company's "today" (from the server). Until the first answer arrives, the browser's own local date.
-  const [today, setToday] = useState<string>(() => todayIso());
+  const [today, setToday] = useState(() => todayIso());
+  const [busy, setBusy] = useState(false);
 
-  // Live updates: when a task of anyone in view changes, the server sends a signal and the SAME reload as an
-  // approve/grade click runs (same dates, same person, same tab). While the live connection is up the page
-  // polls only as a slow safety net; while it is down it polls every 30 seconds, as it always did.
   const { connected } = useTaskRealtime(() => setReload((n) => n + 1));
   const connectedRef = useRef(connected);
   useEffect(() => {
     connectedRef.current = connected;
   });
 
-  const rows: Row[] = queue?.all ?? [];
-  const ofPerson = person ? rows.filter((t) => t.userId === person) : rows;
-  const lateCount = ofPerson.filter((t) => !!t.late).length;
-  // Normal / Late submissions: narrows the tabs, their counts and the list together, so they still add up.
-  const afterSubmission = submission === "all" ? ofPerson : ofPerson.filter((t) => (submission === "late" ? !!t.late : !t.late));
-  // Progress filter: narrows the tabs, their counts and the list together; the counts per progress follow the other filters.
-  const progressCount = (p: string) => afterSubmission.filter((t) => normalProgress(t.progress) === p).length;
-  const inScope = progressFilter === "all" ? afterSubmission : afterSubmission.filter((t) => normalProgress(t.progress) === progressFilter);
-  const counts: Record<TabKey, number> = { waiting: 0, todo: 0, inProgress: 0, completed: 0, closed: 0, deleted: 0 };
-  for (const t of inScope) counts[bucketOf(t)] += 1;
-  // Rating status (Completed tab only): based on the saved rating itself (rating null = no rating saved), never on completion.
-  const completedRows = inScope.filter((t) => bucketOf(t) === "completed");
-  const pendingRatingCount = completedRows.filter((t) => t.rating == null).length;
-  const ratedCount = completedRows.length - pendingRatingCount;
-  const listed = inScope.filter((t) => {
-    if (bucketOf(t) !== tab) return false;
-    if (tab !== "completed" || ratingFilter === "all") return true;
-    return ratingFilter === "pending" ? t.rating == null : t.rating != null;
-  });
-
-  // The whole reporting team for the dropdown, each with the number of tasks they have in the dates being viewed.
-  const pickerPeople = buildPeople(queue?.members ?? [], rows, person);
-
-  const range = rangeFor(preset, today, customFrom, customTo);
+  const range = useMemo(() => {
+    if (preset === "single") return single ? { from: single, to: single } : null;
+    if (preset === "custom") return customFrom && customTo && customFrom <= customTo ? { from: customFrom, to: customTo } : null;
+    return rangeFor(preset, today);
+  }, [preset, single, customFrom, customTo, today]);
+  const tooLong = !!range && range.from < addDays(range.to, -92);
   const fq = staff ? filterQuery(filters) : "";
-  const path = range ? `/tasks/review/queue?from=${range.from}&to=${range.to}${fq ? `&${fq}` : ""}` : `/tasks/review/queue${fq ? `?${fq}` : ""}`;
-  const waitingForDates = preset === "custom" && !range; // custom needs both ends before anything is asked
+  const path = range && !tooLong ? `/tasks/review/queue?from=${range.from}&to=${range.to}${fq ? `&${fq}` : ""}` : null;
 
-  // The only place the queue is fetched. The same dates are used by the first load, the 30-second refresh and
-  // the reload after an approve/grade, so nothing quietly snaps back to "Today".
   useEffect(() => {
-    if (waitingForDates || !ready) return;
+    if (!path || !ready || !allowed) return;
     let cancelled = false;
-    let lastFetch = Date.now();
+    let last = Date.now();
     const go = async () => {
       try {
-        const next = await call<Queue>(path);
+        const q = await apiGet<Queue>(path);
         if (cancelled) return;
-        lastFetch = Date.now();
-        setQueue(next);
-        setToday(next.date);
+        last = Date.now();
+        setQueue(q);
+        setToday(q.date);
         setError("");
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load the queue");
+        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load the task figures");
       }
     };
     void go();
-    const poll = setInterval(() => {
-      if (!connectedRef.current || Date.now() - lastFetch > 5 * 60_000) void go();
-    }, 30000);
-    return () => {
-      cancelled = true;
-      clearInterval(poll);
-    };
-  }, [path, waitingForDates, reload, ready]);
+    const poll = setInterval(() => { if (!connectedRef.current || Date.now() - last > 5 * 60_000) void go(); }, 30000);
+    return () => { cancelled = true; clearInterval(poll); };
+  }, [path, ready, allowed, reload]);
 
-  async function run(fn: () => Promise<unknown>) {
+  // Tasks a manager assigned are counted on their own (they are not part of the employee-submitted figures above).
+  useEffect(() => {
+    if (me?.role !== "MANAGER") return;
+    apiGet<Assigned>("/tasks/assigned/by-me").then(setAssigned).catch(() => setAssigned(null));
+  }, [me?.role, reload]);
+
+  function chooseOverdue(n: number) {
+    setOverdueDays(n);
+    try { window.localStorage.setItem("hrms-overdue-days", String(n)); } catch { /* the choice just is not remembered */ }
+  }
+
+  const all = useMemo(() => queue?.all ?? [], [queue]);
+  const projects = useMemo(() => [...new Set(all.map((r) => r.project || NO_PROJECT))].sort(), [all]);
+  const rows = useMemo(() => narrow(all, person, project), [all, person, project]);
+  const totals = useMemo(() => countRows(rows, today, overdueDays), [rows, today, overdueDays]);
+  const employees = useMemo(() => byEmployee(narrow(all, "", project), today, overdueDays), [all, project, today, overdueDays]);
+  const shownEmployees = useMemo(() => (person ? employees.filter((g) => g.key === person) : employees), [employees, person]);
+  const projectRows = useMemo(() => byProject(narrow(all, person, ""), today, overdueDays), [all, person, today, overdueDays]);
+  const history = useMemo(() => byDay(rows).map((d) => ({ label: dayShort(d.day), submitted: d.submitted, completed: d.completed })), [rows]);
+  const old = useMemo(() => overdueList(rows, today, overdueDays), [rows, today, overdueDays]);
+  const personRow = person ? employees.find((g) => g.key === person) : null;
+
+  async function download() {
+    if (!range || busy) return;
     setBusy(true);
-    setError("");
     try {
-      await fn();
-      setReload((n) => n + 1); // re-ask for the SAME dates
+      const counts = (c: Counts): Value[] => [c.submitted, c.approved, c.pending, c.rejected, c.todo, c.inProgress, c.completed, c.blocked, c.open, c.overdue, c.rated, c.avgRating];
+      const countCols: Col[] = [
+        { header: "Submitted", kind: "int", width: 11 }, { header: "Approved", kind: "int", width: 10 }, { header: "Waiting for approval", kind: "int", width: 12 }, { header: "Rejected", kind: "int", width: 10 },
+        { header: "To Do", kind: "int", width: 8 }, { header: "In Progress", kind: "int", width: 11 }, { header: "Completed", kind: "int", width: 11 }, { header: "Blocked", kind: "int", width: 9 },
+        { header: "Open", kind: "int", width: 8 }, { header: `Overdue (open, older than ${overdueDays} days)`, kind: "int", width: 16 }, { header: "Tasks rated", kind: "int", width: 11 },
+        { header: "Average rating (rated tasks only)", kind: "decimal", width: 16 },
+      ];
+      const byEmp = employees.filter((g) => !person || g.key === person);
+      const taskCols: Col[] = [
+        { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Project", width: 22 }, { header: "Task day", kind: "date", width: 13 }, { header: "Task", width: 44, wrap: true },
+        { header: "Approval", width: 18 }, { header: "Progress", width: 13 }, { header: "Rating", kind: "int", width: 9 }, { header: `Overdue (open, older than ${overdueDays} days)`, width: 16 },
+      ];
+      const taskRows: Value[][] = [...rows].sort((a, b) => a.who.localeCompare(b.who) || a.date.localeCompare(b.date)).map((r): Value[] => [
+        r.employeeCode, r.who, r.project || NO_PROJECT, r.date, r.title ?? "", APPROVAL_LABEL[String(r.approvalStatus)] ?? String(r.approvalStatus),
+        String(r.status) === "CANCELLED" ? "Withdrawn" : PROGRESS_LABEL[progressOf(r)] ?? progressOf(r), r.rating ?? null,
+        overdueList([r], today, overdueDays).length > 0 ? "Yes" : "No",
+      ]);
+      const tz = getPlatformTimezone();
+      await downloadReportXlsx(`tasks-and-performance-${range.from}_to_${range.to}.xlsx`, [
+        { name: "By employee", cols: [{ header: "Employee ID", width: 14 }, { header: "Employee", width: 26 }, ...countCols], rows: byEmp.map((g) => [g.code, g.label, ...counts(g.counts)]) },
+        { name: "By project", cols: [{ header: "Project", width: 28 }, ...countCols], rows: projectRows.map((g) => [g.label, ...counts(g.counts)]) },
+        { name: "Tasks", cols: taskCols, rows: taskRows },
+      ], {
+        report: "Tasks & Performance (employee-submitted tasks)",
+        period: range.from === range.to ? dayFull(range.from) : `${dayFull(range.from)} to ${dayFull(range.to)}`,
+        filters: [...(staff ? await describeFilters(filters) : []), ["Employee", personRow ? `${personRow.label}${personRow.code ? ` (${personRow.code})` : ""}` : "Everyone"], ["Project", project || "All projects"], ["Overdue means", `open and older than ${overdueDays} days`]],
+        exportedAt: new Date(), exportedBy: me ? `${me.firstName} ${me.lastName}`.trim() : null, timezone: tz,
+        totals: [["Submitted", totals.submitted], ["Approved", totals.approved], ["Waiting for approval", totals.pending], ["Rejected", totals.rejected], ["To Do", totals.todo], ["In Progress", totals.inProgress], ["Completed", totals.completed], ["Blocked", totals.blocked], ["Tasks rated", totals.rated], ["Average rating (rated tasks only)", totals.avgRating === null ? "Not rated" : totals.avgRating]],
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "That didn't work");
+      setError(e instanceof Error ? e.message : "Could not create the Excel file");
     } finally {
       setBusy(false);
     }
   }
-
-  async function sendRevert(type: "PARTIAL" | "NOT_FULL", remark: string) {
-    if (!revertFor) return;
-    setBusy(true);
-    setRevertError("");
-    try {
-      await call<Queue>(`/tasks/review/${revertFor.id}/revert`, "POST", { type, remark });
-      setRevertFor(null);
-      setReload((n) => n + 1);
-    } catch (e) {
-      setRevertError(e instanceof Error ? e.message : "That didn't work");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function sendDelete(reasonCode: string, note: string) {
-    if (!deleteFor) return;
-    setBusy(true);
-    setDeleteError("");
-    try {
-      await call<{ ok: boolean }>(`/tasks/review/${deleteFor.id}/delete`, "POST", { reasonCode, note });
-      setDeletedNotice(`Deleted "${deleteFor.title}". It is out of the active records and is listed under Deleted tasks.`);
-      setDeleteFor(null);
-      setReload((n) => n + 1);
-    } catch (e) {
-      setDeleteError(e instanceof Error ? e.message : "That didn't work");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const allowed = ["MANAGER", "HR", "ADMIN"].includes(me?.role ?? "");
 
   if (me && !allowed) {
-    return (
-      <div>
-        <div className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-8 text-center text-sm text-slate-600">
-          Approvals are for managers.
-        </div>
-      </div>
-    );
+    return <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-600 shadow-[var(--shadow-card)]">Tasks &amp; Performance is for managers, HR and Admin. Your own tasks are in Daily Tasks and My History.</div>;
   }
+  if (!me) return <div aria-busy="true"><div className="skeleton h-10" /></div>;
 
+  const input = "h-9 rounded-xl border border-indigo-100 bg-white px-3 text-sm text-slate-800 outline-none focus:border-indigo-400";
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Team tasks</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Agree the work before it starts, grade it once it's done.
-          {queue ? (staff ? ` ${plural(queue.scope?.filteredTotal ?? queue.teamSize, "employee", "employees")} across your companies.` : ` ${plural(queue.teamSize, "person", "people")} in your teams.`) : ""}
-        </p>
-        <p className={"mt-1.5 inline-flex items-center gap-1.5 text-xs " + (connected ? "text-emerald-600" : "text-amber-600")} aria-live="polite">
-          <span className={"h-1.5 w-1.5 rounded-full " + (connected ? "bg-emerald-500" : "bg-amber-400")} />
-          {connected ? "Live: changes appear as they happen" : "Reconnecting… checking for changes every 30 seconds"}
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-2xl">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Tasks &amp; Performance</h1>
+          <p className="mt-1 text-sm text-slate-500">Monitoring and analytics for employee-submitted tasks. To approve, send back, rate or assign work, use <Link href="/dashboard/tasks?tab=submitted" className="font-medium text-indigo-700 hover:underline">Daily Tasks</Link>.</p>
+        </div>
+        <button type="button" onClick={() => void download()} disabled={busy || !range || !queue} className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40">Download Excel</button>
       </header>
 
-      {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-          {error}
-        </div>
-      )}
-
-      {historyFor && <TaskHistoryModal taskId={historyFor.id} title={historyFor.title} onClose={() => setHistoryFor(null)} />}
-      {/* Correction requests waiting for THIS person (the server lists only the ones they may decide; hidden when none). */}
-      <CorrectionRequests reloadKey={reload} onDecided={() => setReload((n) => n + 1)} />
-      {/* Repetitive task alerts: people who sent the same or very similar work several times (managers: their own people; HR/Admin: their companies). Hidden when nothing is flagged. */}
-      <RepetitionAlerts canEscalate={me?.role === "MANAGER" || me?.role === "ADMIN"} />
-
-      {deleteFor && (
-        <DeleteTaskModal
-          who={deleteFor.who || personLabel(deleteFor as RowLike)}
-          title={deleteFor.title}
-          date={deleteFor.date ?? null}
-          project={deleteFor.project ?? null}
-          rated={deleteFor.rating != null}
-          busy={busy}
-          error={deleteError}
-          onSubmit={(code, note) => void sendDelete(code, note)}
-          onCancel={() => setDeleteFor(null)}
-        />
-      )}
-      {deletedNotice && (
-        <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          <span className="break-words">{deletedNotice}</span>
-          <button type="button" onClick={() => setDeletedNotice("")} className="shrink-0 text-xs underline">Dismiss</button>
-        </div>
-      )}
-
-      {revertFor && (
-        <RevertModal title={revertFor.title} who={personLabel(revertFor as RowLike)} busy={busy} error={revertError} onSubmit={(type, remark) => void sendRevert(type, remark)} onCancel={() => setRevertFor(null)} />
-      )}
-
-      {staff && (
-        <FilterBar
-          filters={filters}
-          update={update}
-          clear={clear}
-          options={filterOptions}
-          show={{ company: true, project: true, manager: true }}
-          counts={queue?.scope ? { filtered: queue.scope.filteredTotal, total: queue.scope.orgTotal } : null}
-        />
-      )}
-
-      {/* --- assign ------------------------------------------------------- */}
-      {/* --- who, what state, when --------------------------------------- */}
-      <section className="rounded-2xl rounded-b-none border border-b-0 border-indigo-100 bg-white">
-        {/* who: one searchable dropdown (default Everyone) instead of a row of name chips */}
-        <div className="px-4 py-3">
-          <EmployeePicker people={pickerPeople} total={rows.length} value={person} onChange={setPerson} everyoneSub={staff ? "All authorized employees" : "The whole reporting team"} />
-        </div>
-
-        {/* state + when */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-indigo-50 px-4">
-          <div className="flex flex-wrap items-center gap-6">
-            {([
-              { key: "waiting", label: "Needs approval", n: counts.waiting },
-              { key: "todo", label: "To do", n: counts.todo },
-              { key: "inProgress", label: "In progress", n: counts.inProgress },
-              { key: "completed", label: "Completed", n: counts.completed },
-              { key: "closed", label: "Closed", n: counts.closed },
-              { key: "deleted", label: "Deleted tasks", n: null },
-            ] as { key: TabKey; label: string; n: number | null }[]).map((o) => (
-              <button
-                key={o.key}
-                onClick={() => setTab(o.key)}
-                className={`-mb-px flex items-center gap-2 border-b-2 py-3 text-sm transition ${
-                  tab === o.key
-                    ? "border-indigo-600 font-semibold text-indigo-700"
-                    : "border-transparent text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                {o.label}
-                {o.n !== null && <span
-                  className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${
-                    tab === o.key
-                      ? "bg-indigo-100 text-indigo-700"
-                      : "bg-[#E7F6F1] text-slate-500"
-                  }`}
-                >
-                  {o.n}
-                </span>}
-              </button>
-            ))}
-          </div>
-
-          <div className={`relative flex flex-wrap items-center gap-2 py-2 ${tab === "deleted" ? "hidden" : ""}`}>
-            <select
-              value={submission}
-              onChange={(e) => setSubmission(e.target.value as "all" | "normal" | "late")}
-              aria-label="Submission type"
-              className="rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-sm text-slate-700"
-            >
-              <option value="all">All submissions ({ofPerson.length})</option>
-              <option value="normal">Normal submissions ({ofPerson.length - lateCount})</option>
-              <option value="late">Late submissions ({lateCount})</option>
+      <div className="space-y-3 rounded-2xl bg-white p-4 shadow-[var(--shadow-card)]">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs text-slate-500">Period
+            <select value={preset} onChange={(e) => setPreset(e.target.value as Preset)} aria-label="Period" className={`${input} mt-1 block`}>
+              {PRESETS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
             </select>
-            <select
-              value={progressFilter}
-              onChange={(e) => setProgressFilter(e.target.value as typeof progressFilter)}
-              aria-label="Progress"
-              className="rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-sm text-slate-700"
-            >
-              <option value="all">All progress ({afterSubmission.length})</option>
-              {PROGRESS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label} ({progressCount(o.value)})</option>
-              ))}
+          </label>
+          {preset === "single" && <label className="text-xs text-slate-500">Date<input type="date" value={single} max={today} onChange={(e) => setSingle(e.target.value)} aria-label="Single date" className={`${input} mt-1 block`} /></label>}
+          {preset === "custom" && (
+            <>
+              <label className="text-xs text-slate-500">From<input type="date" value={customFrom} max={customTo || today} onChange={(e) => setCustomFrom(e.target.value)} aria-label="From date" className={`${input} mt-1 block`} /></label>
+              <label className="text-xs text-slate-500">To<input type="date" value={customTo} min={customFrom} max={today} onChange={(e) => setCustomTo(e.target.value)} aria-label="To date" className={`${input} mt-1 block`} /></label>
+            </>
+          )}
+          <label className="text-xs text-slate-500">Employee
+            <select value={person} onChange={(e) => setPerson(e.target.value)} aria-label="Employee" className={`${input} mt-1 block max-w-[16rem]`}>
+              <option value="">Everyone</option>
+              {employees.map((g) => <option key={g.key} value={g.key}>{g.label}{g.code ? ` (${g.code})` : ""}</option>)}
             </select>
-            {tab === "completed" && (
-              <select
-                value={ratingFilter}
-                onChange={(e) => setRatingFilter(e.target.value as "all" | "pending" | "rated")}
-                aria-label="Rating status"
-                className="rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-sm text-slate-700"
-              >
-                <option value="all">All Completed Tasks ({completedRows.length})</option>
-                <option value="pending">Pending Rating ({pendingRatingCount})</option>
-                <option value="rated">Rated ({ratedCount})</option>
-              </select>
+          </label>
+          <label className="text-xs text-slate-500">Project
+            <select value={project} onChange={(e) => setProject(e.target.value)} aria-label="Project" className={`${input} mt-1 block max-w-[14rem]`}>
+              <option value="">All projects</option>
+              {projects.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-slate-500">Overdue after
+            <select value={overdueDays} onChange={(e) => chooseOverdue(Number(e.target.value))} aria-label="Days before an unfinished task counts as overdue" className={`${input} mt-1 block`}>
+              {OVERDUE_CHOICES.map((n) => <option key={n} value={n}>{n} days</option>)}
+            </select>
+          </label>
+        </div>
+        {tooLong && <p role="alert" className="text-sm text-rose-700">Pick a range of at most 93 days.</p>}
+        {preset === "custom" && !range && !tooLong && <p className="text-sm text-slate-500">Choose both dates.</p>}
+        {staff && <FilterBar filters={filters} update={update} clear={clear} options={filterOptions} show={{ company: true, project: true, manager: true }} counts={queue?.scope ? { filtered: queue.scope.filteredTotal, total: queue.scope.orgTotal } : null} />}
+      </div>
+
+      {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div>}
+      {!queue && !error && path && <div className="skeleton h-40" aria-busy="true" />}
+
+      {queue && (
+        <>
+          <section aria-label="Task counts" className="space-y-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Tile testId="kpi-submitted" label="Submitted" value={totals.submitted} hint="withdrawn tasks left out" />
+              <Tile testId="kpi-approved" label="Approved" value={totals.approved} tone="text-emerald-700" />
+              <Tile testId="kpi-pending" label="Waiting for approval" value={totals.pending} tone="text-amber-700" hint="shown to the manager who decides" />
+              <Tile testId="kpi-rejected" label="Rejected" value={totals.rejected} tone="text-rose-700" />
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Tile testId="kpi-todo" label="To Do" value={totals.todo} />
+              <Tile testId="kpi-inprogress" label="In Progress" value={totals.inProgress} tone="text-sky-700" />
+              <Tile testId="kpi-completed" label="Completed" value={totals.completed} tone="text-emerald-700" />
+              <Tile testId="kpi-blocked" label="Blocked" value={totals.blocked} tone="text-violet-700" />
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Tile testId="kpi-rated" label="Rated tasks" value={totals.rated} hint="of the tasks in view" />
+              <Tile testId="kpi-avg" label="Average rating" value={totals.avgRating === null ? "Not rated" : totals.avgRating.toFixed(1)} hint="rated tasks only; unrated are never counted as 0" />
+              <Tile testId="kpi-open" label="Open tasks" value={totals.open} tone="text-amber-700" hint="not completed, not rejected" />
+              <Tile testId="kpi-overdue" label="Overdue" value={totals.overdue} tone="text-rose-700" hint={`open and older than ${overdueDays} days`} />
+            </div>
+            {assigned && (
+              <div data-testid="assigned-counts" className="rounded-2xl bg-white p-3.5 shadow-[var(--shadow-card)]">
+                <p className="text-[11px] font-medium text-[var(--text-secondary)]">Assigned by you (counted separately, never part of the figures above)</p>
+                <p className="mt-1 text-sm text-slate-700">{assigned.counts.total} assigned · {assigned.counts.todo} to do · {assigned.counts.inProgress} in progress · {assigned.counts.awaiting} waiting for your confirmation · {assigned.counts.confirmed} confirmed · {assigned.counts.overdue} past their due date. <Link href="/dashboard/tasks?tab=assigned" className="font-medium text-indigo-700 hover:underline">Manage in Daily Tasks</Link></p>
+              </div>
             )}
-            <select
-              value={preset}
-              onChange={(e) => setPreset(e.target.value)}
-              className="rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-sm text-slate-700"
-            >
-              <option value="default">Today</option>
-              <option value="yesterday">Yesterday</option>
-              <option value="week">Last 7 days</option>
-              <option value="thisweek">This week</option>
-              <option value="month">This month</option>
-              <option value="custom">Custom dates</option>
-            </select>
+          </section>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Panel title="Approval and progress" sub={`${plural(totals.submitted, "task")} submitted in the period`}><StatusChart c={totals} /></Panel>
+            <Panel title="Completion history" sub="By task day: tasks submitted and how many are completed">{history.length ? <HistoryChart rows={history} /> : <p className="text-sm text-slate-500">No tasks in this period.</p>}</Panel>
           </div>
-        </div>
 
-        {preset === "custom" && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-indigo-50 px-4 py-3">
-            <input
-              type="date"
-              value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              className="rounded-xl border border-indigo-100 px-2 py-1 text-xs"
-            />
-            <span className="text-xs text-slate-400">to</span>
-            <input
-              type="date"
-              value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-              className="rounded-xl border border-indigo-100 px-2 py-1 text-xs"
-            />
-          </div>
-        )}
-      </section>
+          <Panel title="Workload across employees" sub="Open tasks next to completed ones, most open first">
+            {employees.length ? <WorkloadChart rows={[...employees].filter((g) => !person || g.key === person).sort((a, b) => b.counts.open - a.counts.open).map((g) => ({ name: g.label, open: g.counts.open, completed: g.counts.completed }))} /> : <p className="text-sm text-slate-500">No tasks in this period.</p>}
+          </Panel>
 
-      {/* --- who and when ------------------------------------------------ */}
-      {/* --- proposals ---------------------------------------------------- */}
-      {tab === "deleted" && <DeletedTasks />}
-      {tab === "waiting" && (
-      <section className="overflow-hidden rounded-2xl rounded-t-none bg-white shadow-[var(--shadow-card)]">
-        <div className="border-b border-indigo-50 px-5 py-3.5">
-          <p className="mt-0.5 text-xs text-slate-400">
-            Until you approve these, they don't count for anyone.
-          </p>
-        </div>
+          <Panel testId="employee-table" title="Employee-wise task performance" sub="Click a name to see that person's task history below">
+            {shownEmployees.length === 0 ? <p className="text-sm text-slate-500">No tasks in this period.</p> : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="text-left text-xs text-slate-500"><tr>
+                    <th className="px-2 py-2">Employee</th><th className="px-2 py-2 text-right">Submitted</th><th className="px-2 py-2 text-right">Approved</th><th className="px-2 py-2 text-right">Waiting</th><th className="px-2 py-2 text-right">Rejected</th>
+                    <th className="px-2 py-2 text-right">To Do</th><th className="px-2 py-2 text-right">In Progress</th><th className="px-2 py-2 text-right">Completed</th><th className="px-2 py-2 text-right">Blocked</th><th className="px-2 py-2 text-right">Overdue</th><th className="px-2 py-2 text-right">Avg rating (rated)</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-indigo-50">
+                    {shownEmployees.map((g) => (
+                      <tr key={g.key} className={person === g.key ? "bg-indigo-50/60" : ""}>
+                        <td className="px-2 py-2"><button type="button" onClick={() => setPerson(person === g.key ? "" : g.key)} className="text-left font-medium text-indigo-700 hover:underline">{g.label}</button>{g.code && <span className="text-xs text-slate-500"> · {g.code}</span>}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{g.counts.submitted}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.approved}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.pending}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.rejected}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{g.counts.todo}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.inProgress}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.completed}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.blocked}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{g.counts.overdue}</td><td className="px-2 py-2 text-right tabular-nums">{rating(g.counts)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
 
-        <ul className="divide-y divide-indigo-50">
-          {listed.length === 0 && (
-            <li className="px-5 py-8 text-center text-sm text-slate-400">
-              Nothing waiting.
-            </li>
+          {personRow && (
+            <Panel testId="employee-detail" title={`${personRow.label}${personRow.code ? ` (${personRow.code})` : ""}: task history`} sub="Read only. Open Daily Tasks to act on any of these.">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div>{history.length ? <HistoryChart rows={history} /> : <p className="text-sm text-slate-500">No tasks in this period.</p>}</div>
+                <ul className="max-h-72 divide-y divide-indigo-50 overflow-y-auto text-sm">
+                  {[...rows].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100).map((r) => (
+                    <li key={r.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
+                      <span className="min-w-0"><span className="block break-words text-slate-900 [overflow-wrap:anywhere]">{r.title}</span><span className="block text-xs text-slate-500">{dayFull(r.date)}{r.project ? ` · ${r.project}` : ""}</span></span>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${APPROVAL_CHIP[String(r.approvalStatus)] ?? ""}`}>{APPROVAL_LABEL[String(r.approvalStatus)] ?? r.approvalStatus}</span>
+                        {String(r.approvalStatus) !== "REJECTED" && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PROGRESS_CHIP_CLASS[progressOf(r)] ?? ""}`}>{PROGRESS_LABEL[progressOf(r)]}</span>}
+                        <span className="text-xs text-slate-600">{r.rating != null ? `★ ${r.rating}` : "Not rated"}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </Panel>
           )}
 
-          {listed.map((t) => (
-            <li key={t.id} className="px-5 py-4">
-              <div className="flex flex-wrap items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-slate-900">{t.title}</p>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {personLabel(t as RowLike)}
-                    {t.isCarriedOver && " · carried over"}
-                  </p>
-                  <LateNote date={t.date} late={t.late} forManager />
-                <BlockedCallout t={t} />
-                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited || t.pendingCorrection ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
-                  {t.canAct && (
-                    <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
-                      Delete task
-                    </button>
-                  )}
-                  {t.description && (
-                    <p className="mt-1 text-xs text-slate-500">{t.description}</p>
-                  )}
-                  <TaskMeta t={t} />
-                </div>
-
-                <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-                    WEIGHT_CHIP[t.weight]
-                  }`}
-                >
-                  {t.weight.toLowerCase()}
-                </span>
-
-                {t.canAct === false ? (
-                  <span className="shrink-0 rounded-xl bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
-                    View only{t.taggedManager ? ` · ${t.taggedManager} decides` : ""}
-                  </span>
-                ) : (
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <input
-                    value={comments[t.id] ?? ""}
-                    onChange={(e) => setComments({ ...comments, [t.id]: e.target.value })}
-                    maxLength={300}
-                    aria-label="Comment (optional)"
-                    placeholder="Comment (optional)"
-                    className="w-40 rounded-xl border border-indigo-100 px-3 py-1.5 text-xs"
-                  />
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      run(() =>
-                        call<Queue>(`/tasks/review/${t.id}/approve`, "POST", {
-                          approve: true,
-                          ...(comments[t.id]?.trim() ? { comment: comments[t.id].trim() } : {}),
-                        })
-                      )
-                    }
-                    className="rounded-xl bg-emerald-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:opacity-40"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    disabled={busy}
-                    onClick={() => {
-                      setRejecting(rejecting === t.id ? null : t.id);
-                      setReason("");
-                    }}
-                    className="rounded-xl border border-indigo-200 px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:border-rose-300 hover:text-rose-700 disabled:opacity-40"
-                  >
-                    Send back
-                  </button>
-                </div>
-                )}
-              </div>
-
-              {rejecting === t.id && t.canAct !== false && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <input
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    autoFocus
-                    placeholder="Why are you sending it back? They'll see this."
-                    className="min-w-56 flex-1 rounded-xl border border-indigo-200 px-3 py-2 text-sm outline-none focus:border-indigo-500"
-                  />
-                  <button
-                    disabled={busy || !reason.trim()}
-                    onClick={() =>
-                      run(async () => {
-                        const next = await call<Queue>(
-                          `/tasks/review/${t.id}/approve`,
-                          "POST",
-                          { approve: false, rejectionNote: reason }
-                        );
-                        setRejecting(null);
-                        setReason("");
-                        return next;
-                      })
-                    }
-                    className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700 disabled:opacity-40"
-                  >
-                    Send back
-                  </button>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Panel testId="project-table" title="Project-wise summary">
+              {projectRows.length === 0 ? <p className="text-sm text-slate-500">No tasks in this period.</p> : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="text-left text-xs text-slate-500"><tr><th className="px-2 py-2">Project</th><th className="px-2 py-2 text-right">Submitted</th><th className="px-2 py-2 text-right">Approved</th><th className="px-2 py-2 text-right">Completed</th><th className="px-2 py-2 text-right">Blocked</th><th className="px-2 py-2 text-right">Avg rating</th></tr></thead>
+                    <tbody className="divide-y divide-indigo-50">{projectRows.map((g) => (
+                      <tr key={g.key}><td className="px-2 py-2 text-slate-900">{g.label}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.submitted}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.approved}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.completed}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.blocked}</td><td className="px-2 py-2 text-right tabular-nums">{rating(g.counts)}</td></tr>
+                    ))}</tbody>
+                  </table>
                 </div>
               )}
-            </li>
-          ))}
-        </ul>
-      </section>
-      )}
-
-      {/* --- to grade ------------------------------------------------------ */}
-      {/* --- work already approved -------------------------------------- */}
-      {["todo", "inProgress"].includes(tab) && (
-      <section className="overflow-hidden rounded-2xl rounded-t-none bg-white shadow-[var(--shadow-card)]">
-        <div className="border-b border-indigo-50 px-5 py-3.5">
-          <p className="mt-0.5 text-xs text-slate-400">
-            What you have already approved, and where it has got to.
-          </p>
-        </div>
-
-        <ul className="divide-y divide-indigo-50">
-          {listed.map((t) => (
-            <li key={t.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-slate-900">{t.title}</p>
-                <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
-                <LateNote date={t.date} late={t.late} forManager />
-                <BlockedCallout t={t} />
-                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited || t.pendingCorrection ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
-                {t.canAct && (
-                  <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
-                    Delete task
-                  </button>
-                )}
-                {t.reopened && !t.reopened.resubmitted && (
-                  <p className="mt-1 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-900"><span className="font-medium">Reopened · {t.reopened.label}:</span> {t.reopened.remark}</p>
-                )}
-              </div>
-            </li>
-          ))}
-
-          {listed.length === 0 && (
-            <li className="px-5 py-6 text-center text-xs text-slate-400">
-              Nothing here.
-            </li>
-          )}
-        </ul>
-      </section>
-      )}
-
-      {tab === "completed" && (
-      <section className="overflow-hidden rounded-2xl rounded-t-none bg-white shadow-[var(--shadow-card)]">
-        <div className="border-b border-indigo-50 px-5 py-3.5">
-          <p className="mt-0.5 text-xs text-slate-400">
-            Rate each finished task from 1 to 5 stars. A task you have not rated yet scores full marks; stars count as stars out of 5 (4 and 5 stars count as completed).
-          </p>
-        </div>
-
-        <ul className="divide-y divide-indigo-50">
-          {listed.length === 0 && (
-            <li className="px-5 py-8 text-center text-sm text-slate-400">
-              {ratingFilter === "pending" ? "No tasks are waiting for a rating." : ratingFilter === "rated" ? "No rated tasks." : "Nothing completed."}
-            </li>
-          )}
-
-          {listed.map((t) => (
-            <li key={t.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-900">{t.title}</p>
-                <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
-                <LateNote date={t.date} late={t.late} forManager />
-                <BlockedCallout t={t} />
-                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited || t.pendingCorrection ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
-                {t.canAct && (
-                  <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
-                    Delete task
-                  </button>
-                )}
-                {t.completionNote && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Their note: {t.completionNote}
-                  </p>
-                )}
-              </div>
-
-              <span
-                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-                  WEIGHT_CHIP[t.weight]
-                }`}
-              >
-                {t.weight.toLowerCase()}
-              </span>
-
-              {t.completedAt && t.date && doneDay(t.completedAt) > t.date && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Task was for ${t.date}; the employee ticked it done on ${doneDay(t.completedAt)}. Check their note and grade it as you see fit.`}>ticked later · {doneDay(t.completedAt)}</span>}
-              {t.reopened?.resubmitted && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Reopened (${t.reopened.label}) and finished again`}>resubmitted</span>}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => { setRevertError(""); setRevertFor(t as Row); }}
-                title="Send this task back to In Progress with a remark"
-                className="shrink-0 rounded-xl border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-50 disabled:opacity-40"
-              >
-                Revert / Reopen
-              </button>
-              {t.rating != null && ratingEdit !== t.id ? (
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <Stars value={t.rating} size={16} />
-                  {t.ratingComment && <p className="max-w-[16rem] break-words text-right text-xs text-slate-500 [overflow-wrap:anywhere]">“{t.ratingComment}”</p>}
-                  <button type="button" disabled={busy} onClick={() => setRatingEdit(t.id)} className="text-xs font-medium text-indigo-700 hover:underline disabled:opacity-40">Change rating</button>
-                </div>
-              ) : (
-                <RateControl
-                  key={`${t.id}:${t.rating ?? "none"}`}
-                  initial={t.rating}
-                  initialComment={t.ratingComment}
-                  busy={busy}
-                  saveLabel={t.rating != null ? "Update rating" : "Save rating"}
-                  onSave={(rating, comment) =>
-                    run(() => call<Queue>(`/tasks/review/${t.id}/rating`, "POST", { rating, comment: comment || undefined })).then(() => setRatingEdit(null))
-                  }
-                />
+            </Panel>
+            <Panel testId="overdue-panel" title="Overdue tasks" sub={`Open tasks whose task day is more than ${overdueDays} days ago. Submitted tasks have no due date, so this is the age of unfinished work.`}>
+              {old.length === 0 ? <p className="text-sm text-slate-500">Nothing is overdue.</p> : (
+                <ul className="max-h-64 divide-y divide-indigo-50 overflow-y-auto text-sm">
+                  {old.slice(0, 20).map((r) => (
+                    <li key={r.id} className="flex items-start justify-between gap-2 py-2"><span className="min-w-0"><span className="block break-words text-slate-900 [overflow-wrap:anywhere]">{r.title}</span><span className="block text-xs text-slate-500">{r.who}{r.employeeCode ? ` · ${r.employeeCode}` : ""} · {dayFull(r.date)}</span></span><span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">{r.age} days</span></li>
+                  ))}
+                </ul>
               )}
-            </li>
-          ))}
-        </ul>
-      </section>
-      )}
-
-      {/* --- recent -------------------------------------------------------- */}
-      {tab === "closed" && (
-        <section className="overflow-hidden rounded-2xl rounded-t-none bg-white shadow-[var(--shadow-card)]">
-          <div className="border-b border-indigo-50 px-5 py-3.5">
-            <p className="mt-0.5 text-xs text-slate-400">
-              Work that was sent back or cancelled. It does not count for anyone.
-            </p>
+              {old.length > 20 && <p className="mt-2 text-xs text-slate-500">Showing the oldest 20 of {old.length}.</p>}
+            </Panel>
           </div>
-          <ul className="divide-y divide-indigo-50">
-            {listed.map((t) => (
-              <li key={t.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm text-slate-900">{t.title}</p>
-                  <p className="mt-0.5 text-xs text-slate-500">{personLabel(t as RowLike)}</p>
-                <LateNote date={t.date} late={t.late} forManager />
-                <BlockedCallout t={t} />
-                <div className="mt-1"><EditedChip edited={t.edited} pending={t.pendingCorrection} onHistory={t.edited || t.pendingCorrection ? () => setHistoryFor({ id: t.id, title: t.title }) : undefined} /></div>
-                {t.canAct && (
-                  <button type="button" disabled={busy} onClick={() => { setDeleteError(""); setDeleteFor(t as Row); }} className="mt-1 text-xs font-medium text-rose-600 hover:underline disabled:opacity-40">
-                    Delete task
-                  </button>
-                )}
-                  {t.rejectionNote && <p className="mt-1 text-xs text-slate-500">Sent back: {t.rejectionNote}</p>}
-                </div>
-                <span className="shrink-0 rounded px-2 py-0.5 text-xs font-medium bg-rose-50 text-rose-700">
-                  {t.approvalStatus === "REJECTED" ? "sent back" : "cancelled"}
-                </span>
-              </li>
-            ))}
-            {listed.length === 0 && <li className="px-5 py-6 text-center text-xs text-slate-400">Nothing here.</li>}
-          </ul>
-        </section>
-      )}
-    </div>
-  );
-}
-// Why a Blocked task cannot go on, in the employee's own words: shown to the manager on every row, in every tab.
-function BlockedCallout({ t }: { t: { progress?: string; blockedNote?: string | null } }) {
-  if (t.progress !== "BLOCKED") return null;
-  return (
-    <p className="mt-1 break-words rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900 [overflow-wrap:anywhere]">
-      <span className="font-medium">Blocked:</span> {t.blockedNote ? t.blockedNote : "No reason was written (this task was blocked before a reason was required)."}
-    </p>
-  );
-}
 
-// The task's progress (is the work done?) next to its project, hours and tagged manager. Approval is what this screen decides.
-function TaskMeta({ t }: { t: Task }) {
-  if (!t.progress) return null;
-  const p = { label: PROGRESS_LABEL[t.progress] ?? t.progress, cls: PROGRESS_CHIP_CLASS[t.progress] ?? "bg-slate-100 text-slate-600" };
-  return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
-      <span className={`rounded-full px-2 py-0.5 font-medium ${p.cls}`}>{p.label}</span>
-      {t.hoursSpent != null && <span className="text-slate-500">{t.hoursSpent} h</span>}
-      {t.project && <span className="text-slate-500">· {t.project}</span>}
-      {t.taggedManager && <span className="text-slate-500">· Tagged to {t.taggedManager}</span>}
+          <RepetitionAlerts />
+          <RepetitionSummary />
+        </>
+      )}
     </div>
   );
 }

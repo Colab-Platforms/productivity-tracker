@@ -70,3 +70,19 @@ model RepetitionFlagEvent {
   @@index([flagId, createdAt])
   @@map("repetition_flag_events")
 }
+
+// Employee explanations, reviewer notes (each with a "who can read this" level) and the single escalation to Admin. NEW TABLE; the flag tables above are unchanged.
+// visibility: EMPLOYEE = everyone who can see the flag, STAFF = manager + HR + Admin, HR_ADMIN = HR + Admin only. Append-only (a trigger refuses edits).
+model RepetitionFlagNote {
+  id         String   @id @default(uuid()) @db.Uuid
+  flagId     String   @db.Uuid
+  authorId   String?  @db.Uuid
+  authorRole String
+  kind       String // EXPLANATION | MANAGER_COMMENT | HR_OBSERVATION | ADMIN_NOTE | ESCALATION_ADMIN
+  visibility String
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([flagId, createdAt])
+  @@map("repetition_flag_notes")
+}

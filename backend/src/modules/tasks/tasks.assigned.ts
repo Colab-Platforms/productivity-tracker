@@ -253,7 +253,7 @@ export async function editAssigned(managerId: string, taskId: string, body: Reco
   });
   auditNote({ summary: `Edited an assigned task: ${task.title}`, recordType: "DailyTask", recordId: taskId, targetUserId: task.userId, before: Object.fromEntries(changes.map((c) => [c.field, c.from])), after: Object.fromEntries(changes.map((c) => [c.field, c.to])) });
   tell(taskId, task.userId, managerId, "updated");
-  await notice([task.userId], { type: "ASSIGNED_TASK_UPDATED", title: "Assigned task changed", body: `Your manager changed: ${task.title}`, taskId, key: `asg:${taskId}:edit:${Date.now()}`, link: "/dashboard/tasks" });
+  await notice([task.userId], { type: "ASSIGNED_TASK_UPDATED", title: "Assigned task changed", body: `Your manager changed: ${task.title}`, taskId, key: `asg:${taskId}:edit:${Date.now()}`, link: "/dashboard/tasks?tab=assigned" });
   return listAssignedByMe(managerId);
 }
 
@@ -270,7 +270,7 @@ export async function confirmAssigned(managerId: string, taskId: string, note: u
   await writeEvent(taskId, task.platformId, managerId, "UPDATE", { v: 1, t: "confirmed", note: text });
   auditNote({ summary: `Confirmed an assigned task as complete: ${task.title}`, recordType: "DailyTask", recordId: taskId, targetUserId: task.userId });
   tell(taskId, task.userId, managerId, "status");
-  await notice([task.userId], { type: "ASSIGNED_TASK_CONFIRMED", title: "Task confirmed", body: `Your manager confirmed: ${task.title}`, taskId, key: `asg:${taskId}:confirmed`, link: "/dashboard/tasks" });
+  await notice([task.userId], { type: "ASSIGNED_TASK_CONFIRMED", title: "Task confirmed", body: `Your manager confirmed: ${task.title}`, taskId, key: `asg:${taskId}:confirmed`, link: "/dashboard/tasks?tab=assigned" });
   return listAssignedByMe(managerId);
 }
 
@@ -287,7 +287,7 @@ export async function sendBackAssigned(managerId: string, taskId: string, reason
   await writeEvent(taskId, task.platformId, managerId, "REOPENED", { v: 1, t: "sent_back", reason: why });
   auditNote({ summary: `Sent an assigned task back: ${task.title}`, recordType: "DailyTask", recordId: taskId, targetUserId: task.userId, after: { reason: why } });
   tell(taskId, task.userId, managerId, "status");
-  await notice([task.userId], { type: "ASSIGNED_TASK_SENT_BACK", title: "Task sent back", body: `${task.title}: ${why}`, taskId, key: `asg:${taskId}:sentback:${Date.now()}`, link: "/dashboard/tasks" });
+  await notice([task.userId], { type: "ASSIGNED_TASK_SENT_BACK", title: "Task sent back", body: `${task.title}: ${why}`, taskId, key: `asg:${taskId}:sentback:${Date.now()}`, link: "/dashboard/tasks?tab=assigned" });
   return listAssignedByMe(managerId);
 }
 
@@ -301,7 +301,7 @@ export async function cancelAssigned(managerId: string, taskId: string) {
   await writeEvent(taskId, task.platformId, managerId, "UPDATE", { v: 1, t: "cancelled" });
   auditNote({ summary: `Removed an assigned task before it started: ${task.title}`, recordType: "DailyTask", recordId: taskId, targetUserId: task.userId });
   tell(taskId, task.userId, managerId, "updated");
-  await notice([task.userId], { type: "ASSIGNED_TASK_UPDATED", title: "Assigned task removed", body: `Your manager removed: ${task.title}`, taskId, key: `asg:${taskId}:cancelled`, link: "/dashboard/tasks" });
+  await notice([task.userId], { type: "ASSIGNED_TASK_UPDATED", title: "Assigned task removed", body: `Your manager removed: ${task.title}`, taskId, key: `asg:${taskId}:cancelled`, link: "/dashboard/tasks?tab=assigned" });
   return listAssignedByMe(managerId);
 }
 
@@ -331,8 +331,8 @@ export async function moveAssigned(userId: string, taskId: string, toRaw: unknow
   const who = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true } });
   if (task.assignedById) {
     await notice([task.assignedById], to === "COMPLETED"
-      ? { type: "ASSIGNED_TASK_DONE", title: "Assigned task waiting for confirmation", body: `${fullName(who)} marked it done: ${task.title}`, taskId, key: `asg:${taskId}:done:${Date.now()}`, link: "/dashboard/tasks" }
-      : { type: "ASSIGNED_TASK_PROGRESS", title: "Assigned task progress", body: `${fullName(who)} set it to ${to === "IN_PROGRESS" ? "In progress" : "To do"}: ${task.title}`, taskId, key: `asg:${taskId}:progress:${Date.now()}`, link: "/dashboard/tasks" });
+      ? { type: "ASSIGNED_TASK_DONE", title: "Assigned task waiting for confirmation", body: `${fullName(who)} marked it done: ${task.title}`, taskId, key: `asg:${taskId}:done:${Date.now()}`, link: "/dashboard/tasks?tab=assigned" }
+      : { type: "ASSIGNED_TASK_PROGRESS", title: "Assigned task progress", body: `${fullName(who)} set it to ${to === "IN_PROGRESS" ? "In progress" : "To do"}: ${task.title}`, taskId, key: `asg:${taskId}:progress:${Date.now()}`, link: "/dashboard/tasks?tab=assigned" });
   }
   return listAssignedToMe(userId);
 }
@@ -347,7 +347,7 @@ export async function commentAssigned(actorId: string, taskId: string, textRaw: 
   const other = actorId === task.userId ? task.assignedById : task.userId;
   tell(taskId, task.userId, task.assignedById ?? task.userId, "updated");
   const who = await prisma.user.findUnique({ where: { id: actorId }, select: { firstName: true, lastName: true } });
-  if (other) await notice([other], { type: "ASSIGNED_TASK_COMMENT", title: "New comment on an assigned task", body: `${fullName(who)} on ${task.title}: ${text.slice(0, 120)}`, taskId, key: `asg:${taskId}:comment:${Date.now()}`, link: "/dashboard/tasks" });
+  if (other) await notice([other], { type: "ASSIGNED_TASK_COMMENT", title: "New comment on an assigned task", body: `${fullName(who)} on ${task.title}: ${text.slice(0, 120)}`, taskId, key: `asg:${taskId}:comment:${Date.now()}`, link: "/dashboard/tasks?tab=assigned" });
   return actorId === task.userId ? listAssignedToMe(actorId) : listAssignedByMe(actorId);
 }
 

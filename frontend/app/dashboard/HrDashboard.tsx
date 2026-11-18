@@ -366,7 +366,7 @@ export default function HrDashboard() {
     pendingTickets.length > 0 && `${pendingTickets.length} open ticket${pendingTickets.length === 1 ? "" : "s"}`,
   ].filter(Boolean) as string[];
   const attentionReady = !queue.loading && !candidates.loading && !tickets.loading;
-  const reviewHref = proposals > 0 ? "/dashboard/approvals" : docsToReview > 0 ? "/dashboard/candidates" : "/dashboard/queries";
+  const reviewHref = proposals > 0 ? "/dashboard/tasks?tab=submitted" : docsToReview > 0 ? "/dashboard/candidates" : "/dashboard/queries";
 
   const rangeTag = from && to ? rangeLabel(from, to) : "…";
   const dim = report.loading && report.data ? "opacity-60 transition-opacity" : "transition-opacity";
@@ -465,7 +465,7 @@ export default function HrDashboard() {
                 <p className="px-1 py-2 text-xs text-slate-500">You&apos;re all caught up.</p>
               ) : (
                 <>
-                  {proposals > 0 && <ApprovalRow href="/dashboard/approvals" label="Task proposals" count={proposals} tone="violet" />}
+                  {proposals > 0 && <ApprovalRow href="/dashboard/tasks?tab=submitted" label="Task proposals" count={proposals} tone="violet" />}
                   {docsToReview > 0 && <ApprovalRow href="/dashboard/candidates" label="Joiner documents" count={docsToReview} tone="sky" />}
                   {pendingTickets.length > 0 && <ApprovalRow href="/dashboard/queries" label="Open queries" count={pendingTickets.length} tone="amber" />}
                   {corrections > 0 && <ApprovalRow href="/dashboard/queries?category=ATTENDANCE_CORRECTION" label="Attendance corrections" count={corrections} tone="indigo" />}
@@ -704,7 +704,7 @@ export default function HrDashboard() {
               <EmptyNote>Nothing is waiting for approval.</EmptyNote>
             ) : (
               <div className="space-y-2">
-                {proposals > 0 && <ApprovalRow href="/dashboard/approvals" label="Task proposals" detail="Employees' proposed work for today" count={proposals} tone="violet" />}
+                {proposals > 0 && <ApprovalRow href="/dashboard/tasks?tab=submitted" label="Task proposals" detail="Employees' proposed work for today" count={proposals} tone="violet" />}
                 {docsToReview > 0 && <ApprovalRow href="/dashboard/candidates" label="Joiner documents" detail="Submitted, waiting for HR review" count={docsToReview} tone="sky" />}
                 {corrections > 0 && <ApprovalRow href="/dashboard/queries?category=ATTENDANCE_CORRECTION" label="Attendance corrections" detail="Employees asking HR to correct attendance" count={corrections} tone="indigo" />}
                 {pendingTickets.length > 0 && (

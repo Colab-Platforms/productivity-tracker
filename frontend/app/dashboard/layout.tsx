@@ -273,8 +273,8 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/attendance-calendar", label: "Calendar", ready: true, roles: ["HR"], icon: I.holidays },
       { href: "/dashboard/leave", label: "Leave Management", ready: true, roles: ["HR"], icon: I.holidays },
       { href: "/dashboard/payroll", label: "Payroll", ready: true, roles: ["HR"], icon: I.payroll },
-      // An HR person who is someone's reporting manager approves that person's tasks; the page lists only what is theirs to decide, plus approved work (view only).
-      { href: "/dashboard/approvals", label: "Task Approvals", ready: true, roles: ["HR"], icon: I.approvals },
+      // HR: task figures and performance. An HR person who is someone's reporting manager approves that person's tasks in Daily Tasks > Employee submitted tasks.
+      { href: "/dashboard/approvals", label: "Tasks & Performance", ready: true, roles: ["HR"], icon: I.approvals },
       // ---- Manager and Employee ----
       { href: "/dashboard/manager", label: "Today", ready: true, roles: ["MANAGER"], icon: I.today },
       { href: "/dashboard/employee", label: "Today", ready: true, roles: ["EMPLOYEE"], icon: I.today },

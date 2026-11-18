@@ -70,7 +70,7 @@ const RULES: Rule[] = [
   { method: "PATCH", re: /^\/api\/tasks\/:id$/, module: "Tasks", action: "UPDATE", summary: "Updated a task", recordType: "Task" },
   { method: "DELETE", re: /^\/api\/tasks\/:id$/, module: "Tasks", action: "DELETE", summary: "Deleted a task", recordType: "Task" },
   { method: "POST", re: /^\/api\/tasks\/review\/assign$/, module: "Tasks", action: "CREATE", summary: "Assigned a task" },
-  { method: "POST", re: /^\/api\/tasks\/repetition\/flags\/:id\/(status|comment|escalate)$/, module: "Tasks", action: "UPDATE", summary: "Reviewed a repetitive task flag", recordType: "RepetitionFlag" },
+  { method: "POST", re: /^\/api\/tasks\/repetition\/flags\/:id\/(status|comment|escalate|escalate-admin|explain)$/, module: "Tasks", action: "UPDATE", summary: "Reviewed a repetitive task flag", recordType: "RepetitionFlag" },
   { method: "PUT", re: /^\/api\/tasks\/repetition\/settings$/, module: "Tasks", action: "UPDATE", summary: "Changed the repetitive task detection settings", recordType: "RepetitionSettings" },
   { method: "POST", re: /^\/api\/tasks\/repetition\/scan$/, module: "Tasks", action: "OTHER", summary: "Scanned recent tasks for repetition" },
   { method: "POST", re: /^\/api\/tasks\/assigned$/, module: "Tasks", action: "CREATE", summary: "Assigned a task" },
