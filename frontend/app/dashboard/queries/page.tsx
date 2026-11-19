@@ -9,6 +9,7 @@ import { Modal } from "../_employees/Modal";
 import RequestCorrectionModal from "../_corrections/RequestModal";
 import DeptRequests from "./_dept/DeptRequests";
 import { DeptRaiseModal } from "./_dept/RaiseForm";
+import { DeleteButton, DeleteDialog } from "./DeleteQuery";
 
 // ---------------------------------------------------------------------------
 // QUERY DESK (every role; employees used to see it as "Complaint Centre")
@@ -148,6 +149,7 @@ function ClassicQueries({ tabs }: { tabs: React.ReactNode }) {
   const cats = useApi<{ categories: Cat[] }>("/queries/categories", 0);
   const depts = useApi<{ ready: boolean; departments: { id: string; name: string }[] }>("/queries/dept/departments", 0);
   const [deptRaising, setDeptRaising] = useState(false);
+  const [deleting, setDeleting] = useState<Item | null>(null);
   const filtersOn = !!(category || status || from || to || employee.trim() || q.trim() || mineOnly);
   const clear = () => { setCategory(""); setStatus(""); setFrom(""); setTo(""); setEmployee(""); setQ(""); setQApplied(""); setMineOnly(false); };
 
@@ -223,8 +225,8 @@ function ClassicQueries({ tabs }: { tabs: React.ReactNode }) {
         )}
         <ul className="divide-y divide-indigo-50">
           {d?.items.map((i) => (
-            <li key={`${i.kind}-${i.id}`}>
-              <button onClick={() => openItem(i)} className="flex w-full flex-wrap items-start justify-between gap-3 px-4 py-4 text-left hover:bg-indigo-50/40 sm:px-6">
+            <li key={`${i.kind}-${i.id}`} className="flex items-stretch hover:bg-indigo-50/40">
+              <button onClick={() => openItem(i)} className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-3 px-4 py-4 text-left sm:px-6">
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span className="rounded-full bg-[#F3F7F6] px-2 py-0.5 font-medium text-slate-600">{i.categoryLabel}</span>
@@ -243,6 +245,9 @@ function ClassicQueries({ tabs }: { tabs: React.ReactNode }) {
                   {i.subStatus && <span className="text-xs text-slate-500">{i.subStatus}</span>}
                 </div>
               </button>
+              {i.kind === "TICKET" && i.category !== "ATTENDANCE_CORRECTION" && (
+                <div className="flex items-center pr-3 sm:pr-5"><DeleteButton onClick={() => setDeleting(i)} /></div>
+              )}
             </li>
           ))}
         </ul>
@@ -272,6 +277,15 @@ function ClassicQueries({ tabs }: { tabs: React.ReactNode }) {
         />
       )}
       {openId && <DetailModal id={openId} onClose={() => setOpenId(null)} onChanged={() => setReload((n) => n + 1)} />}
+      {deleting && (
+        <DeleteDialog
+          reference={deleting.reference}
+          subject={deleting.subject}
+          path={`/queries/${deleting.id}/delete`}
+          onClose={() => setDeleting(null)}
+          onDone={() => { setDeleting(null); setReload((n) => n + 1); }}
+        />
+      )}
     </div>
   );
 }
@@ -359,6 +373,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
   const [assignee, setAssignee] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function act(fn: () => Promise<unknown>, after?: () => void) {
     if (busy) return;
@@ -382,7 +397,16 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
     e.kind === "CREATED" ? "Raised" : e.kind === "ASSIGNED" ? `Assigned to ${e.note ?? "someone"}` : e.kind === "STATUS" ? `Status changed from ${e.from ?? "?"} to ${e.to ?? "?"}` : e.kind === "INFO_REQUESTED" ? "More information requested" : "Information received";
 
   return (
-    <Modal title={d ? d.subject : "Query"} subtitle={d ? `${d.reference} · ${d.categoryLabel}` : undefined} onClose={onClose} width="max-w-3xl">
+    <Modal
+      title={d ? d.subject : "Query"}
+      subtitle={d ? `${d.reference} · ${d.categoryLabel}` : undefined}
+      onClose={onClose}
+      width="max-w-3xl"
+      footer={d && !d.legacyCorrection ? <DeleteButton onClick={() => setConfirmDelete(true)} label="Delete query" /> : undefined}
+    >
+      {confirmDelete && d && (
+        <DeleteDialog reference={d.reference} subject={d.subject} path={`/queries/${d.id}/delete`} onClose={() => setConfirmDelete(false)} onDone={() => { setConfirmDelete(false); onChanged(); onClose(); }} />
+      )}
       {error && <p className="text-sm text-red-600">{error}</p>}
       {d && p && (
         <div className="space-y-5">

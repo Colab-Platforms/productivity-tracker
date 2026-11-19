@@ -98,6 +98,8 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/queries\/dept\/:id\/manager-decision$/, module: "Queries", action: "UPDATE", summary: "Manager decided a department request", recordType: "DeptRequest" },
   { method: "POST", re: /^\/api\/queries\/dept\/:id\/admin-decision$/, module: "Queries", action: "UPDATE", summary: "Admin decided a department request", recordType: "DeptRequest" },
   { method: "POST", re: /^\/api\/queries\/dept\/:id\/(accept|progress|reassign|comments|confirm|reopen)$/, module: "Queries", action: "UPDATE", summary: "Worked on a department request", recordType: "DeptRequest" },
+  { method: "POST", re: /^\/api\/queries\/:id\/delete$/, module: "Queries", action: "DELETE", summary: "Deleted a query", recordType: "Ticket" },
+  { method: "POST", re: /^\/api\/queries\/dept\/:id\/delete$/, module: "Queries", action: "DELETE", summary: "Deleted a department request", recordType: "DeptRequest" },
   { method: "POST", re: /^\/api\/queries\/:id\/assign$/, module: "Queries", action: "UPDATE", summary: "Assigned a query", recordType: "Ticket" },
   { method: "PUT", re: /^\/api\/admin\/employees\/:id\/additional-managers$/, module: "Employees", action: "UPDATE", summary: "Changed additional reporting managers", recordType: "User", targetIsId: true },
   { method: "POST", re: /^\/api\/admin\/designations$/, module: "Employees", action: "CREATE", summary: "Added a designation", recordType: "Designation" },

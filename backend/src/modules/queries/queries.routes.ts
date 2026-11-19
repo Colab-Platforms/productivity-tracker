@@ -10,6 +10,8 @@ guardUuidParams(router, ["id", "messageId", "deptId", "eventId"]);
 // Every service error code needs an entry here, otherwise it becomes a 500.
 const MESSAGES: Record<string, { status: number; message: string }> = {
   NOT_FOUND: { status: 404, message: "That query was not found." },
+  CONFIRM_REQUIRED: { status: 400, message: "Please confirm that you want to delete this permanently." },
+  CANNOT_DELETE_CORRECTION: { status: 400, message: "An attendance correction request cannot be deleted here. It is evidence for an attendance change." },
   FORBIDDEN: { status: 403, message: "You can't do that on this query." },
   USE_CORRECTION_FORM: { status: 400, message: "An attendance correction is requested with its own form, so it can be approved properly." },
   BAD_CATEGORY: { status: 400, message: "Choose a category." },
@@ -95,6 +97,7 @@ router.post("/dept/:id/progress", run((req) => dept.setProgress(uid(req), pid(re
 router.post("/dept/:id/reassign", run((req) => dept.reassign(uid(req), pid(req), req.body ?? {})));
 router.post("/dept/:id/comments", run((req) => dept.comment(uid(req), pid(req), req.body ?? {})));
 router.post("/dept/:id/confirm", run((req) => dept.confirm(uid(req), pid(req))));
+router.post("/dept/:id/delete", run((req) => dept.deleteRequest(uid(req), pid(req), req.body ?? {})));
 router.post("/dept/:id/reopen", run((req) => dept.reopen(uid(req), pid(req), req.body ?? {})));
 router.get("/dept/:id/events/:eventId/attachment", async (req, res) => {
   try {
@@ -110,6 +113,7 @@ router.get("/dept/:id/events/:eventId/attachment", async (req, res) => {
 });
 
 router.get("/:id", run((req) => queries.getQuery(uid(req), pid(req))));
+router.post("/:id/delete", run((req) => queries.deleteQuery(uid(req), pid(req), req.body ?? {})));
 router.post("/:id/messages", run((req) => queries.reply(uid(req), pid(req), req.body ?? {})));
 router.post("/:id/request-info", run((req) => queries.requestInfo(uid(req), pid(req), req.body ?? {})));
 router.post("/:id/status", run((req) => queries.setStatus(uid(req), pid(req), req.body ?? {})));
