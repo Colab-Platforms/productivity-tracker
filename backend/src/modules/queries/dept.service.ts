@@ -1,6 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { accessFor } from "../../lib/companyAccess.js";
-import { saveUpload, readStored, contentTypeFor } from "../../lib/storage.js";
+import { saveUpload, readStored, contentTypeFor, deleteStored } from "../../lib/storage.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
@@ -608,4 +608,41 @@ export async function openAttachment(userId: string, id: string, eventId: string
   const e = await prisma.deptRequestEvent.findFirst({ where: { id: eventId, requestId: id }, select: { attachmentKey: true, attachmentName: true, visibility: true } });
   if (!e?.attachmentKey || !L.canSeeNote(me.viewer, facts, e.visibility as L.NoteVisibility)) throw new Error("NOT_FOUND");
   return { buffer: await readStored(e.attachmentKey), fileName: e.attachmentName ?? "attachment", mimeType: contentTypeFor(e.attachmentKey) };
+}
+
+// DELETE (permanent). Anyone who may SEE a department request may delete it; an id they may not see answers "not found". It removes the request,
+// its whole history and attachment files, and notifications pointing at it. A readable copy of what was removed is written to the audit log
+// (immutable), so the deletion always leaves a trace.
+export async function deleteRequest(userId: string, id: string, body: { confirm?: unknown }) {
+  if (body?.confirm !== true) throw new Error("CONFIRM_REQUIRED");
+  await needReady();
+  const me = await who(userId);
+  const { r } = await load(me, id);
+  const events = await prisma.deptRequestEvent.findMany({ where: { requestId: id }, select: { attachmentKey: true } });
+  const keys = events.map((e) => e.attachmentKey).filter((k): k is string => !!k);
+  const dept = await prisma.department.findUnique({ where: { id: r.departmentId }, select: { name: true } });
+  auditNote({
+    recordType: "DeptRequest",
+    recordId: id,
+    targetUserId: r.raisedById,
+    summary: `Permanently deleted department request ${r.reference}: ${r.title.slice(0, 80)}`,
+    before: {
+      reference: r.reference,
+      title: r.title.slice(0, 200),
+      description: r.description.slice(0, 280),
+      department: dept?.name ?? null,
+      approvalStatus: r.approvalStatus,
+      workStatus: r.workStatus,
+      priority: r.priority,
+      historyEntries: events.length,
+      attachments: keys.length,
+      createdAt: r.createdAt,
+    },
+  });
+  await prisma.$transaction(async (tx) => {
+    await tx.deptRequest.delete({ where: { id } }); // its history goes with it (cascade)
+    await tx.notification.deleteMany({ where: { link: { contains: id } } });
+  });
+  for (const k of keys) await deleteStored(k).catch((e) => console.error("[dept] could not remove a file:", e));
+  return { ok: true };
 }

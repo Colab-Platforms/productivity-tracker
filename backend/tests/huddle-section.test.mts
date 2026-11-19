@@ -47,7 +47,8 @@ try { HuddlesRedirect(); } catch (e) { target = String((e as { digest?: string }
 ok("/dashboard/huddles redirects to the Participation tab of the unified page", target.includes("NEXT_REDIRECT") && target.includes("/dashboard/meetings?tab=participation"), );
 
 console.log("\n## the sidebar");
-const layout = readFileSync(new URL("../../frontend/app/dashboard/layout.tsx", import.meta.url), "utf8");
+// The Productivity Supervisor has a menu of its own (its Meetings entry is named by the owner); this test is about the main role menu.
+const layout = readFileSync(new URL("../../frontend/app/dashboard/layout.tsx", import.meta.url), "utf8").split("// The Productivity Supervisor's own menu")[0];
 const items = layout.split("\n").filter((l) => /href: "\/dashboard\/(huddles|meetings)"/.test(l));
 ok("exactly one item points at the unified section", items.length === 1, );
 ok("it is named Team Huddle", /label: "Team Huddle"/.test(items[0] ?? ""));

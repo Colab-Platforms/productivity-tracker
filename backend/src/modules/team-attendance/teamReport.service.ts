@@ -10,6 +10,7 @@
 // is limited to those ids, so a manager can never receive somebody who does not report to them. Nothing here changes any figure: rows carry the
 // stored or engine values, and meeting time is a label inside productive time (never added on top).
 
+import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
 import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay, platformToday, zonedToUtc } from "../../lib/dates.js";
 import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
@@ -43,7 +44,7 @@ const nameOf = (u: { firstName: string; lastName: string } | null | undefined) =
 export async function getTeamReport(viewerId: string, q: { from?: string; to?: string; filters?: HrFilters }) {
   const viewer = await prisma.user.findUnique({ where: { id: viewerId }, select: { id: true, role: true, platform: { select: { timezone: true } } } });
   if (!viewer) throw new Error("USER_NOT_FOUND");
-  if (!["MANAGER", "HR", "ADMIN"].includes(String(viewer.role))) throw new Error("NOT_ALLOWED");
+  if (!["MANAGER", "HR", "ADMIN"].includes(String(viewer.role)) && !(await isSupervisor(viewer.id))) throw new Error("NOT_ALLOWED");
   const tz = viewer.platform.timezone;
   const today = platformToday(tz).toISOString().slice(0, 10);
   const fromIso = q.from ? parseIsoDay(q.from).toISOString().slice(0, 10) : today;

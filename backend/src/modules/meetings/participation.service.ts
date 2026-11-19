@@ -7,6 +7,7 @@ import { auditNote } from "../../lib/auditContext.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { emitMeetingChange } from "../../lib/realtime.js";
+import { isSupervisor, monitoringWhere } from "../../lib/supervisor.js";
 import * as L from "./participation.logic.js";
 
 // ---------------------------------------------------------------------------
@@ -629,8 +630,10 @@ export async function history(userId: string, personId?: string) {
 export async function counts(viewerId: string, meetingId: string) {
   await requireReady();
   const v = await who(viewerId);
-  if (!OVERSIGHT.includes(v.role)) throw new Error("NOT_ALLOWED");
-  const m = await prisma.meeting.findFirst({ where: { id: meetingId, platformId: v.platformId }, select: { id: true, organizerId: true, _count: { select: { attendees: true } } } });
+  const watching = !OVERSIGHT.includes(v.role) && v.role === "EMPLOYEE" && (await isSupervisor(viewerId));
+  if (!OVERSIGHT.includes(v.role) && !watching) throw new Error("NOT_ALLOWED");
+  // HR: the meetings of their own company, as before. A Productivity Supervisor: any company, counts only.
+  const m = await prisma.meeting.findFirst({ where: { id: meetingId, ...(watching ? await monitoringWhere() : { platformId: v.platformId }) }, select: { id: true, organizerId: true, _count: { select: { attendees: true } } } });
   if (!m) throw new Error("NOT_FOUND");
   if (!(await prisma.meetingTracking.findUnique({ where: { meetingId } }))) throw new Error("NOT_TRACKED");
   const [joined, accepted, declined] = await Promise.all([

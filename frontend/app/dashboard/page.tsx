@@ -15,7 +15,7 @@ export default function DashboardPage() {
   const me = useMe();
   const router = useRouter();
   useEffect(() => {
-    if (me) router.replace(homeFor(me.role));
+    if (me) router.replace(homeFor(me.role, me.supervisor));
   }, [me, router]);
   return null;
 }

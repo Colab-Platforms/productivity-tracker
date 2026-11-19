@@ -60,10 +60,11 @@ function Panel({ title, sub, children, testId }: { title: string; sub?: string; 
 
 export default function TasksPerformancePage() {
   const me = useMe();
-  const staff = me?.role === "HR" || me?.role === "ADMIN";
-  const allowed = ["MANAGER", "HR", "ADMIN"].includes(me?.role ?? "");
+  const supervisor = me?.supervisor === true; // Productivity Supervisor: every company, read only
+  const staff = me?.role === "HR" || me?.role === "ADMIN" || supervisor;
+  const allowed = ["MANAGER", "HR", "ADMIN"].includes(me?.role ?? "") || supervisor;
   const { filters, update, clear, ready } = useHrFilters();
-  const { options: filterOptions } = useFilterOptions(filters, update, ready && staff);
+  const { options: filterOptions } = useFilterOptions(filters, update, ready && staff, supervisor);
 
   // Opens on Today like every report screen; nothing is remembered between visits.
   const [preset, setPreset] = useState<Preset>("today");
@@ -186,7 +187,7 @@ export default function TasksPerformancePage() {
   }
 
   if (me && !allowed) {
-    return <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-600 shadow-[var(--shadow-card)]">Tasks &amp; Performance is for managers, HR and Admin. Your own tasks are in Daily Tasks and My History.</div>;
+    return <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-600 shadow-[var(--shadow-card)]">Tasks &amp; Performance is for managers, HR, Admin and Productivity Supervisors. Your own tasks are in Daily Tasks and My History.</div>;
   }
   if (!me) return <div aria-busy="true"><div className="skeleton h-10" /></div>;
 
@@ -235,7 +236,7 @@ export default function TasksPerformancePage() {
         </div>
         {tooLong && <p role="alert" className="text-sm text-rose-700">Pick a range of at most 93 days.</p>}
         {preset === "custom" && !range && !tooLong && <p className="text-sm text-slate-500">Choose both dates.</p>}
-        {staff && <FilterBar filters={filters} update={update} clear={clear} options={filterOptions} show={{ company: true, project: true, manager: true }} counts={queue?.scope ? { filtered: queue.scope.filteredTotal, total: queue.scope.orgTotal } : null} />}
+        {staff && <FilterBar filters={filters} update={update} clear={clear} options={filterOptions} show={{ company: true, project: true, manager: true, department: supervisor }} counts={queue?.scope ? { filtered: queue.scope.filteredTotal, total: queue.scope.orgTotal } : null} />}
       </div>
 
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div>}
@@ -347,8 +348,8 @@ export default function TasksPerformancePage() {
             </Panel>
           </div>
 
-          <RepetitionAlerts />
-          <RepetitionSummary />
+          {!supervisor && <RepetitionAlerts />}
+          {!supervisor && <RepetitionSummary />}
         </>
       )}
     </div>

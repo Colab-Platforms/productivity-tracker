@@ -1,3 +1,4 @@
+import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
 import { linkedEmployeesOfManagers } from "../../lib/reportingLinks.js";
 import { prisma } from "../../lib/prisma.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
@@ -23,6 +24,8 @@ export async function authorizedPeople(viewerId: string): Promise<{ role: string
     return { role, platformId: viewer.platformId, ids: rows.map((r) => r.id) };
   }
   if (role === "MANAGER") return { role, platformId: viewer.platformId, ids: await visibleUserIds({ id: viewer.id, role, platformId: viewer.platformId }) };
+  // A Productivity Supervisor: every active person of every company, read-only (the role stays EMPLOYEE; this only widens what is VISIBLE).
+  if (role === "EMPLOYEE" && (await isSupervisor(viewer.id))) return { role: "SUPERVISOR", platformId: viewer.platformId, ids: await monitoringIds() };
   throw new Error("NOT_ALLOWED");
 }
 
@@ -43,11 +46,23 @@ export function personWhere(f: HrFilters, linkedIds: string[] = []) {
 }
 
 /** The unique people the viewer may see who pass the filters, and both totals (organization = everyone the viewer may see). */
+/** The people in the chosen Query Desk departments, or null when no department is chosen. A missing table means nobody is in a department. */
+async function departmentMembers(f: HrFilters): Promise<Set<string> | null> {
+  if (f.departmentIds.length === 0) return null;
+  try {
+    const rows = await prisma.departmentMember.findMany({ where: { departmentId: { in: f.departmentIds } }, select: { userId: true } });
+    return new Set(rows.map((r) => r.userId));
+  } catch {
+    return new Set();
+  }
+}
+
 export async function resolvePeople(viewerId: string, f: HrFilters) {
   const scope = await authorizedPeople(viewerId);
+  const inDept = await departmentMembers(f);
   const linked = f.managerIds.length ? await linkedEmployeesOfManagers(f.managerIds) : [];
   const rows = scope.ids.length
-    ? await prisma.user.findMany({ where: { id: { in: scope.ids }, ...personWhere(f, linked) }, select: { id: true } })
+    ? await prisma.user.findMany({ where: { id: { in: inDept ? scope.ids.filter((id) => inDept.has(id)) : scope.ids }, ...personWhere(f, linked) }, select: { id: true } })
     : [];
   return { role: scope.role, orgIds: scope.ids, ids: rows.map((r) => r.id), orgTotal: scope.ids.length, filteredTotal: rows.length };
 }
@@ -71,7 +86,8 @@ export async function narrowIds(ids: string[], f: HrFilters | undefined, opts?: 
 async function narrowAll(ids: string[], f: HrFilters | undefined): Promise<{ ids: string[]; scope: { orgTotal: number; filteredTotal: number } }> {
   if (!f || !isFiltering(f) || ids.length === 0) return { ids, scope: { orgTotal: ids.length, filteredTotal: ids.length } };
   const linked = f.managerIds.length ? await linkedEmployeesOfManagers(f.managerIds) : [];
-  const rows = await prisma.user.findMany({ where: { id: { in: ids }, ...personWhere(f, linked) }, select: { id: true } });
+  const inDept = await departmentMembers(f);
+  const rows = await prisma.user.findMany({ where: { id: { in: inDept ? ids.filter((id) => inDept.has(id)) : ids }, ...personWhere(f, linked) }, select: { id: true } });
   return { ids: rows.map((r) => r.id), scope: { orgTotal: ids.length, filteredTotal: rows.length } };
 }
 
@@ -81,7 +97,7 @@ const nameOf = (u: { firstName: string; lastName: string }) => `${u.firstName} $
  * The choices for the filter bar, all from real records and narrowed step by step: companies; projects of the chosen companies; managers of the people
  * in the chosen companies and projects; designations of the people left. Only what the viewer may see is ever listed.
  */
-export async function options(viewerId: string, f: HrFilters) {
+export async function options(viewerId: string, f: HrFilters, withDepartments = false) {
   const scope = await authorizedPeople(viewerId);
   const base = scope.ids.length
     ? await prisma.user.findMany({
@@ -141,8 +157,33 @@ export async function options(viewerId: string, f: HrFilters) {
   const desigCount = new Map<string, number>();
   for (const p of base.filter((x) => inCompany(x) && inProject(x) && inManager(x))) if (p.designation) desigCount.set(p.designation, (desigCount.get(p.designation) ?? 0) + 1);
 
+  // Departments (Query Desk): only when asked for, with how many of the people the viewer may see are in each.
+  let departments: { id: string; name: string; companyId: string; company: string; people: number }[] = [];
+  if (withDepartments) {
+    try {
+      const members = await prisma.departmentMember.findMany({
+        where: { userId: { in: scope.ids } },
+        select: { departmentId: true, userId: true },
+      });
+      const depts = await prisma.department.findMany({
+        where: { isActive: true, id: { in: [...new Set(members.map((m) => m.departmentId))] } },
+        select: { id: true, name: true, platformId: true },
+      });
+      const names = new Map(base.map((p) => [p.platformId, p.platform.name]));
+      const count = new Map<string, number>();
+      for (const m of members) count.set(m.departmentId, (count.get(m.departmentId) ?? 0) + 1);
+      departments = depts
+        .filter((d) => !f.companyIds.length || f.companyIds.includes(d.platformId))
+        .map((d) => ({ id: d.id, name: d.name, companyId: d.platformId, company: names.get(d.platformId) ?? "", people: count.get(d.id) ?? 0 }))
+        .sort((a, b) => a.name.localeCompare(b.name) || a.company.localeCompare(b.company));
+    } catch {
+      departments = [];
+    }
+  }
+
   const filtered = await resolvePeople(viewerId, f);
   return {
+    departments,
     companies: [...companyMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
     projects: [...projectMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
     managers,

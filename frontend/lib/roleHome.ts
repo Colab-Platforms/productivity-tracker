@@ -15,8 +15,13 @@ export const ROLE_HOME: Record<string, string> = {
   EMPLOYEE: "/dashboard/employee",
 };
 
-/** The home address for a stored role. An unknown or missing role gets the least-privileged home (the employee page), never Admin. */
-export function homeFor(role: string | null | undefined): string {
+/** A Productivity Supervisor is an EMPLOYEE account with a read-only monitoring view on top; their own home is the supervisor dashboard. */
+export const SUPERVISOR_HOME = "/dashboard/supervisor";
+
+/** The home address for a stored role. An unknown or missing role gets the least-privileged home (the employee page), never Admin.
+ *  `supervisor` (sent by the server for the two Productivity Supervisor accounts) only changes an EMPLOYEE's home; every other role keeps its own. */
+export function homeFor(role: string | null | undefined, supervisor?: boolean): string {
+  if (supervisor && role === "EMPLOYEE") return SUPERVISOR_HOME;
   return (role && ROLE_HOME[role]) || ROLE_HOME.EMPLOYEE;
 }
 

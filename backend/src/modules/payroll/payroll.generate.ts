@@ -15,7 +15,8 @@
 // no attendance thinking of its own.
 
 import { prisma } from "../../lib/prisma.js";
-import { viewerIsOwner } from "../../lib/owner.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
+import { canAccess } from "../../lib/companyAccess.logic.js";
 import { notifyUsers } from "../../lib/notify.js";
 import {
   getMonthAttendance,
@@ -63,46 +64,35 @@ export type GenerateResult = {
   skipped: SkippedEmployee[];
 };
 
-async function resolvePlatform(
-  actorId: string,
-  requestedPlatformId?: string,
-): Promise<string> {
-  const actor = await prisma.user.findUnique({
-    where: { id: actorId },
-    select: { platformId: true },
-  });
-  if (!actor) throw new Error("USER_NOT_FOUND");
-
-  // Only an owner may run payroll for a company other than their own. HR of
-  // one company must never be able to generate another company's salaries.
-  if (requestedPlatformId && requestedPlatformId !== actor.platformId) {
-    if (!(await viewerIsOwner(actorId))) throw new Error("NOT_YOUR_COMPANY");
-    return requestedPlatformId;
+/** The companies payroll may be run for: the one asked for (must be inside the viewer's access), otherwise every company they act on. */
+async function resolveScope(actorId: string, requestedPlatformId?: string) {
+  const access = await accessFor(actorId);
+  if (requestedPlatformId) {
+    if (!canAccess(access, requestedPlatformId)) throw new Error("NOT_YOUR_COMPANY");
+    return { access, where: { platformId: requestedPlatformId } as { platformId?: string | { in: string[] } } };
   }
-  return actor.platformId;
+  return { access, where: scopeWhere(access) as { platformId?: string | { in: string[] } } };
 }
 
-/** Every team id must exist in this company. Empty list = whole company. */
-async function validateTeams(platformId: string, teamIds: string[]): Promise<string[]> {
+/** Every team id must exist in a company in scope. Empty list = everyone in scope. */
+async function validateTeams(where: { platformId?: string | { in: string[] } }, teamIds: string[]): Promise<string[]> {
   const ids = [...new Set(teamIds.map(String).filter(Boolean))];
   if (ids.length === 0) return [];
-  const found = await prisma.team.count({ where: { id: { in: ids }, platformId } });
+  const found = await prisma.team.count({ where: { id: { in: ids }, ...where } });
   if (found !== ids.length) throw new Error("NOT_YOUR_COMPANY");
   return ids;
 }
 
-/** Teams of the viewer's company, for the department picker. */
+/** Teams of every company the viewer acts on, for the department picker (the company is added when there is more than one). */
 export async function listPayrollTeams(actorId: string) {
-  const actor = await prisma.user.findUnique({
-    where: { id: actorId },
-    select: { platformId: true },
+  const { where } = await resolveScope(actorId);
+  const rows = await prisma.team.findMany({
+    where: { ...where, isActive: true },
+    select: { id: true, name: true, platform: { select: { name: true } } },
+    orderBy: [{ platform: { name: "asc" } }, { name: "asc" }],
   });
-  if (!actor) throw new Error("USER_NOT_FOUND");
-  return prisma.team.findMany({
-    where: { platformId: actor.platformId, isActive: true },
-    select: { id: true, name: true },
-    orderBy: { name: "asc" },
-  });
+  const companies = new Set(rows.map((r) => r.platform.name));
+  return rows.map((r) => ({ id: r.id, name: companies.size > 1 ? `${r.name} · ${r.platform.name}` : r.name }));
 }
 
 /**
@@ -119,15 +109,11 @@ export async function releaseMonth(
   if (month < 1 || month > 12) throw new Error("BAD_MONTH");
   if (year < 2020 || year > 2100) throw new Error("BAD_YEAR");
 
-  const actor = await prisma.user.findUnique({
-    where: { id: actorId },
-    select: { platformId: true },
-  });
-  if (!actor) throw new Error("USER_NOT_FOUND");
-  const teams = await validateTeams(actor.platformId, teamIds);
+  const scoped = await resolveScope(actorId);
+  const teams = await validateTeams(scoped.where, teamIds);
 
-  const scopeWhere = {
-    platformId: actor.platformId,
+  const slipScope = {
+    ...scoped.where,
     month,
     year,
     storageKey: null,
@@ -139,11 +125,11 @@ export async function releaseMonth(
   const now = new Date();
   const released = await prisma.$transaction(async (tx) => {
     const approved = await tx.salarySlip.updateMany({
-      where: { ...scopeWhere, status: "DRAFT" },
+      where: { ...slipScope, status: "DRAFT" },
       data: { status: "APPROVED", approvedAt: now },
     });
     const toPublish = await tx.salarySlip.findMany({
-      where: { ...scopeWhere, status: "APPROVED", publishedAt: null },
+      where: { ...slipScope, status: "APPROVED", publishedAt: null },
       select: { id: true, userId: true },
     });
     if (toPublish.length) {
@@ -156,7 +142,7 @@ export async function releaseMonth(
   });
 
   await notifySlipsPublished(
-    actor.platformId,
+    scoped.access.ownPlatformId,
     released.slips.map((s) => ({ ...s, month, year })),
   );
 
@@ -178,15 +164,11 @@ export async function unreleaseMonth(
   if (month < 1 || month > 12) throw new Error("BAD_MONTH");
   if (year < 2020 || year > 2100) throw new Error("BAD_YEAR");
 
-  const actor = await prisma.user.findUnique({
-    where: { id: actorId },
-    select: { platformId: true },
-  });
-  if (!actor) throw new Error("USER_NOT_FOUND");
-  const teams = await validateTeams(actor.platformId, teamIds);
+  const scoped = await resolveScope(actorId);
+  const teams = await validateTeams(scoped.where, teamIds);
 
   const where = {
-    platformId: actor.platformId,
+    ...scoped.where,
     month,
     year,
     storageKey: null,
@@ -202,7 +184,7 @@ export async function unreleaseMonth(
   await prisma.salarySlip.updateMany({ where: { id: { in: ids } }, data: { publishedAt: null } });
 
   try {
-    await prisma.$executeRaw`DELETE FROM notifications WHERE "platformId" = ${actor.platformId}::uuid AND type = 'PAYSLIP_PUBLISHED' AND data->>'dedupeKey' = ANY(${ids.map((i) => `payslip:${i}:published`)})`;
+    await prisma.$executeRaw`DELETE FROM notifications WHERE type = 'PAYSLIP_PUBLISHED' AND data->>'dedupeKey' = ANY(${ids.map((i) => `payslip:${i}:published`)})`;
   } catch (err) {
     console.error("[payroll] could not clear notifications", err);
   }
@@ -258,8 +240,8 @@ export async function generateMonth(
   if (month < 1 || month > 12) throw new Error("BAD_MONTH");
   if (year < 2020 || year > 2100) throw new Error("BAD_YEAR");
 
-  const scope = await resolvePlatform(actorId, platformId);
-  const teams = await validateTeams(scope, teamIds);
+  const scoped = await resolveScope(actorId, platformId);
+  const teams = await validateTeams(scoped.where, teamIds);
 
   // A month that has not finished can still be generated — HR often wants a
   // preview — but the result says so, because the remaining days are counted
@@ -271,7 +253,7 @@ export async function generateMonth(
 
   const employees = await prisma.user.findMany({
     where: {
-      platformId: scope,
+      ...scoped.where,
       status: "ACTIVE",
       ...(teams.length
         ? { teamMemberships: { some: { teamId: { in: teams }, isActive: true } } }
@@ -283,6 +265,7 @@ export async function generateMonth(
       lastName: true,
       employeeCode: true,
       monthlySalary: true,
+      platformId: true,
     },
     orderBy: { employeeCode: "asc" },
   });
@@ -290,7 +273,7 @@ export async function generateMonth(
   if (employees.length === 0) {
     return {
       month, year, monthComplete,
-      warning: "No active employees in this company.",
+      warning: "No active employees in the companies you can run payroll for.",
       created: 0, updated: 0, slips: [], skipped: [],
     };
   }
@@ -298,12 +281,12 @@ export async function generateMonth(
   const nameOf = (e: (typeof employees)[number]) =>
     [e.firstName, e.lastName].filter(Boolean).join(" ").trim() || "Unnamed";
 
-  // One attendance pass for the whole company.
-  const attendance = await getMonthAttendanceBulk(
-    employees.map((e) => e.id),
-    year,
-    month,
-  );
+  // One attendance pass per company (each company has its own shifts, holidays and working days).
+  const byCompany = new Map<string, string[]>();
+  for (const e of employees) byCompany.set(e.platformId, [...(byCompany.get(e.platformId) ?? []), e.id]);
+  const attendance = (
+    await Promise.all([...byCompany.values()].map((ids) => getMonthAttendanceBulk(ids, year, month)))
+  ).flat();
   const attByUser = new Map(attendance.map((a) => [a.userId, a]));
 
   const existing = await prisma.salarySlip.findMany({
@@ -339,7 +322,7 @@ export async function generateMonth(
     if (!Number.isFinite(salary) || salary <= 0) {
       skipped.push({
         userId: emp.id, name: nameOf(emp), employeeCode: emp.employeeCode,
-        reason: "No monthly salary set",
+        reason: "Payroll setup required: no monthly salary set",
       });
       continue;
     }
@@ -396,7 +379,7 @@ export async function generateMonth(
       const made = await prisma.salarySlip.create({
         data: {
           ...figures,
-          platformId: scope,
+          platformId: emp.platformId,
           userId: emp.id,
           month,
           year,
@@ -446,11 +429,7 @@ export async function generateMonth(
 
 /** One slip beside the attendance it was calculated from. The review screen. */
 export async function getSlipWithAttendance(actorId: string, slipId: string) {
-  const actor = await prisma.user.findUnique({
-    where: { id: actorId },
-    select: { platformId: true },
-  });
-  if (!actor) throw new Error("USER_NOT_FOUND");
+  const access = await accessFor(actorId);
 
   const slip = await prisma.salarySlip.findUnique({
     where: { id: slipId },
@@ -465,9 +444,7 @@ export async function getSlipWithAttendance(actorId: string, slipId: string) {
   });
   if (!slip) throw new Error("SLIP_NOT_FOUND");
 
-  if (slip.platformId !== actor.platformId && !(await viewerIsOwner(actorId))) {
-    throw new Error("NOT_YOUR_COMPANY");
-  }
+  if (!canAccess(access, slip.platformId)) throw new Error("NOT_YOUR_COMPANY");
 
   // Recalculated live, so HR can see whether the stored figure still matches
   // the attendance. If somebody corrected a day after generation, the two
@@ -537,12 +514,7 @@ export async function approveSlips(actorId: string, slipIds: string[]) {
   const ids = slipIds.map(String).filter(Boolean);
   if (ids.length === 0) throw new Error("NO_SLIPS");
 
-  const actor = await prisma.user.findUnique({
-    where: { id: actorId },
-    select: { platformId: true },
-  });
-  if (!actor) throw new Error("USER_NOT_FOUND");
-  const isOwner = await viewerIsOwner(actorId);
+  const access = await accessFor(actorId);
 
   const rows = await prisma.salarySlip.findMany({
     where: { id: { in: ids } },
@@ -551,7 +523,7 @@ export async function approveSlips(actorId: string, slipIds: string[]) {
 
   const approvable = rows
     .filter((r) => r.status === "DRAFT")
-    .filter((r) => isOwner || r.platformId === actor.platformId)
+    .filter((r) => canAccess(access, r.platformId))
     .map((r) => r.id);
 
   if (approvable.length === 0) throw new Error("NOTHING_TO_APPROVE");

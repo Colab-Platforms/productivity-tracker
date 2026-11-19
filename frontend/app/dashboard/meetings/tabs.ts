@@ -34,15 +34,17 @@ export function tabCounts(meetings: TabMeeting[]) {
 }
 
 /** Which tabs this person gets. Participation is the manager's own huddles; Company overview is HR/Admin's counts-only view. */
-export function tabsFor(role: string | undefined): TabKey[] {
+export function tabsFor(role: string | undefined, supervisor?: boolean): TabKey[] {
   const base: TabKey[] = ["upcoming", "ongoing", "invitations", "history"];
   if (role === "MANAGER") return [...base, "participation"];
   if (role === "HR" || role === "ADMIN") return [...base, "overview"];
+  // A Productivity Supervisor stays an Employee for their own meetings and also reads the company overview (counts only).
+  if (role === "EMPLOYEE" && supervisor) return [...base, "overview"];
   return base;
 }
 
 /** The tab a ?tab= link asks for, if this person may have it (an unknown or not-allowed tab means the default). */
-export function tabFromUrl(param: string | null | undefined, role: string | undefined): TabKey | null {
+export function tabFromUrl(param: string | null | undefined, role: string | undefined, supervisor?: boolean): TabKey | null {
   const wanted = TAB_KEYS.find((k) => k === param);
-  return wanted && tabsFor(role).includes(wanted) ? wanted : null;
+  return wanted && tabsFor(role, supervisor).includes(wanted) ? wanted : null;
 }

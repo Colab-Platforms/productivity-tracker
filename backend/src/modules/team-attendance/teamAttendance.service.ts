@@ -7,6 +7,7 @@
 // company) — the same function Live Team and Reports use, so the three can never disagree.
 // "Today" and every calendar day are the VIEWER'S company day (platform timezone).
 
+import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds, resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { NO_FILTERS, type HrFilters } from "../hr-filters/hrFilters.logic.js";
@@ -53,7 +54,7 @@ async function getViewer(viewerId: string, self = false) {
   });
   if (!viewer) throw new Error("USER_NOT_FOUND");
   // `self` = the person's own report: any role may read their own figures, nobody else's.
-  if (!self && !["MANAGER", "HR", "ADMIN"].includes(String(viewer.role))) throw new Error("NOT_ALLOWED");
+  if (!self && !["MANAGER", "HR", "ADMIN"].includes(String(viewer.role)) && !(await isSupervisor(viewer.id))) throw new Error("NOT_ALLOWED");
   return viewer;
 }
 

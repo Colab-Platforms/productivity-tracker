@@ -193,11 +193,12 @@ function ReportsPageInner() {
     params.set("tab", next);
     router.replace(`?${params.toString()}`, { scroll: false });
   };
-  const canSeeTeam = !!me && ["MANAGER", "HR", "ADMIN"].includes(me.role);
+  const supervisor = me?.supervisor === true; // Productivity Supervisor: the same reports, every company, read only
+  const canSeeTeam = !!me && (["MANAGER", "HR", "ADMIN"].includes(me.role) || supervisor);
   // Company, project, reporting manager and name/ID search narrow all three reports to the SAME people (the server builds the tables, KPIs and charts from
   // that one list, so the exports match). HR and Admin: every company they act on; a manager: their own people.
   const { filters, update, clear, ready } = useHrFilters();
-  const { options } = useFilterOptions(filters, update, ready && canSeeTeam);
+  const { options } = useFilterOptions(filters, update, ready && canSeeTeam, supervisor);
   const [scope, setScope] = useState<{ orgTotal: number; filteredTotal: number } | null>(null);
   const tabs: [Exclude<Tab, "summary">, string][] = [
     ["attendance", "Attendance report"],
@@ -232,7 +233,7 @@ function ReportsPageInner() {
         update={update}
         clear={clear}
         options={options}
-        show={{ search: true, company: me?.role !== "MANAGER" || (options?.companies.length ?? 0) > 1, project: true, manager: me?.role !== "MANAGER" }}
+        show={{ search: true, company: me?.role !== "MANAGER" || (options?.companies.length ?? 0) > 1, project: true, manager: me?.role !== "MANAGER", department: supervisor }}
         counts={scope ? { filtered: scope.filteredTotal, total: scope.orgTotal } : null}
       />
       <TeamExport filters={filters} ready={ready} />
@@ -243,7 +244,7 @@ function ReportsPageInner() {
       ) : (
         <>
           <ProductivityReport canSetTargets={!!me && ["HR", "ADMIN"].includes(me.role)} filters={filters} ready={ready} onScope={setScope} />
-          <RepetitionSummary />
+          {!supervisor && <RepetitionSummary />}
         </>
       )}
     </div>

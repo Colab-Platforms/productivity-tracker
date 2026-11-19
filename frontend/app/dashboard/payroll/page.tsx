@@ -31,8 +31,17 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<T>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? "That didn't work");
+  if (!res.ok) throw new Error(friendly((data as { error?: string }).error));
   return data as T;
+}
+
+// The API answers with short codes; people get sentences.
+function friendly(code?: string) {
+  const map: Record<string, string> = {
+    PAYROLL_SETUP_REQUIRED: "Payroll setup is required for this person: their monthly salary is missing, so a payslip cannot be created yet. Ask an Admin to add it in Edit Employee.",
+    NOT_FOUND: "That person or payslip is not in the companies you can run payroll for.",
+  };
+  return (code && map[code]) || "That didn't work";
 }
 
 type Row = {
@@ -40,6 +49,10 @@ type Row = {
   name: string;
   employeeCode: string | null;
   designation: string | null;
+  company: string;
+  companyId: string;
+  employmentStatus: string;
+  payroll: { ready: boolean; status: string; reason: string | null };
   slip: {
     id: string;
     fileName: string | null;
@@ -57,6 +70,10 @@ type Payload = {
   year: number;
   label: string;
   rows: Row[];
+  employees: number;
+  eligible: number;
+  setupRequired: number;
+  companies: { id: string; name: string }[];
   uploaded: number;
   published: number;
 };
@@ -81,6 +98,7 @@ export default function PayrollPage() {
   const [data, setData] = useState<Payload | null>(null);
   const [net, setNet] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [company, setCompany] = useState(""); // "" = every company I can run payroll for
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
 
@@ -200,6 +218,8 @@ export default function PayrollPage() {
   }
 
   const pending = data ? data.uploaded - data.published : 0;
+  const shownRows = (data?.rows ?? []).filter((r) => !company || r.companyId === company);
+  const multi = (data?.companies.length ?? 0) > 1;
 
   return (
     <div className="space-y-5">
@@ -252,9 +272,31 @@ export default function PayrollPage() {
           <p className="text-sm text-slate-700">
             <span className="font-medium">{data.label}</span>
             <span className="ml-3 text-slate-500">
-              {data.uploaded} of {data.rows.length} uploaded · {data.published} released
+              {data.employees} employee{data.employees === 1 ? "" : "s"} · {data.eligible} ready for payroll ·{" "}
+              {data.uploaded} uploaded · {data.published} released
             </span>
+            {data.setupRequired > 0 && (
+              <span className="ml-3 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700" data-testid="setup-required-count">
+                {data.setupRequired} need payroll setup
+              </span>
+            )}
           </p>
+
+          {multi && (
+            <select
+              value={company}
+              onChange={(e) => setCompany(e.target.value)}
+              aria-label="Company"
+              className="rounded-xl border border-indigo-200 px-3 py-1.5 text-sm"
+            >
+              <option value="">All companies ({data.employees})</option>
+              {data.companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({data.rows.filter((r) => r.companyId === c.id).length})
+                </option>
+              ))}
+            </select>
+          )}
 
           {pending > 0 && (
             <button
@@ -281,10 +323,14 @@ export default function PayrollPage() {
 
       <section className="overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)]">
         <ul className="divide-y divide-indigo-50">
-          {data?.rows.map((row) => (
+          {data && shownRows.length === 0 && (
+            <li className="px-5 py-6 text-center text-sm text-slate-400">No employees to show for this selection.</li>
+          )}
+          {shownRows.map((row) => (
             <PayrollRow
               key={row.userId}
               row={row}
+              showCompany={multi}
               busy={busyId === row.userId}
               net={net[row.userId] ?? ""}
               onNet={(v) => setNet((s) => ({ ...s, [row.userId]: v }))}
@@ -301,6 +347,7 @@ export default function PayrollPage() {
 
 function PayrollRow({
   row,
+  showCompany,
   busy,
   net,
   onNet,
@@ -309,6 +356,7 @@ function PayrollRow({
   onRemove,
 }: {
   row: Row;
+  showCompany: boolean;
   busy: boolean;
   net: string;
   onNet: (v: string) => void;
@@ -332,6 +380,8 @@ function PayrollRow({
         <p className="mt-0.5 text-xs text-slate-400">
           {row.employeeCode}
           {row.designation ? ` · ${row.designation}` : ""}
+          {showCompany ? ` · ${row.company}` : ""}
+          {row.employmentStatus !== "ACTIVE" ? ` · ${row.employmentStatus.toLowerCase()}` : ""}
         </p>
       </div>
 
@@ -374,6 +424,23 @@ function PayrollRow({
             className="shrink-0 text-xs text-slate-300 transition hover:text-rose-600 disabled:opacity-40"
           >
             Remove
+          </button>
+        </>
+      ) : !row.payroll.ready ? (
+        <>
+          <span
+            className="shrink-0 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
+            title={row.payroll.reason ?? undefined}
+            data-testid="payroll-setup-required"
+          >
+            Payroll setup required · salary details missing
+          </span>
+          <button
+            disabled
+            title="A payslip cannot be created until the monthly salary is added."
+            className="shrink-0 cursor-not-allowed rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white opacity-40"
+          >
+            Upload PDF
           </button>
         </>
       ) : (

@@ -5,7 +5,8 @@
 
 import PDFDocument from "pdfkit";
 import { prisma } from "../../lib/prisma.js";
-import { viewerIsOwner } from "../../lib/owner.js";
+import { accessFor } from "../../lib/companyAccess.js";
+import { canAccess } from "../../lib/companyAccess.logic.js";
 import { getMonthAttendance } from "../attendance/attendance.service.js";
 import { LOGOS } from "./payroll.logos.js";
 
@@ -124,8 +125,8 @@ export async function buildPayslipPdf(
 
   const isSelf = slip.userId === actorId;
   const isHr = actor.role === "HR" || actor.role === "ADMIN";
-  const sameCompany = actor.platformId === slip.platformId;
-  const isOwner = await viewerIsOwner(actorId);
+  const sameCompany = canAccess(await accessFor(actorId), slip.platformId);
+  const isOwner = false; // company reach now comes from the shared company-access rule
 
   if (isSelf) {
     // An employee may not read a figure HR has not released yet.

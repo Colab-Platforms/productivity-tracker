@@ -2,6 +2,7 @@
 import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma.js";
 import { getPinnedCompany } from "../lib/deployment.js";
+import { isSupervisor } from "../lib/supervisor.js";
 
 // Every route past /auth/login runs through requireAuth. It reads the bearer
 // token, verifies it, and hangs the result on req.user — which is what every
@@ -93,6 +94,28 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     console.error("[auth]", error);
     res.status(500).json({ error: "Something went wrong." });
   }
+}
+
+/** Manager, HR or Admin, OR a Productivity Supervisor. Only for routers whose every route is a READ: a supervisor stays an EMPLOYEE, so any route
+ *  that still uses requireRole("MANAGER"/"HR"/"ADMIN") refuses them. */
+export async function requireMonitor(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    res.status(401).json({ error: "NOT_AUTHENTICATED" });
+    return;
+  }
+  if (["MANAGER", "HR", "ADMIN"].includes(req.user.role)) {
+    next();
+    return;
+  }
+  try {
+    if (req.user.role === "EMPLOYEE" && (await isSupervisor(req.user.userId))) {
+      next();
+      return;
+    }
+  } catch (e) {
+    console.error("[auth] supervisor check failed", e);
+  }
+  res.status(403).json({ error: "NOT_ALLOWED" });
 }
 
 export function requireRole(...roles: string[]) {

@@ -43,8 +43,8 @@ export default function LoginPage() {
       // The role comes from the server (never from the form); each role has its own home address.
       let home = "/dashboard";
       try {
-        const me = await apiGet<{ role: string }>("/auth/me");
-        home = homeFor(me.role);
+        const me = await apiGet<{ role: string; supervisor?: boolean }>("/auth/me");
+        home = homeFor(me.role, me.supervisor);
       } catch {
         // /dashboard works too: it sends the person to their own home once the page knows who they are
       }

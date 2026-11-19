@@ -6,6 +6,7 @@
 // The server decides who sees and does what (and enforces every rule); this screen only shows what comes back.
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE, apiGet, apiPost, getToken } from "@/lib/api";
+import { DeleteButton, DeleteDialog } from "../DeleteQuery";
 import { Modal } from "../../_employees/Modal";
 import { useMe } from "../../layout";
 import { DeptRaiseModal } from "./RaiseForm";
@@ -77,6 +78,7 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
   const [raising, setRaising] = useState(false);
   const [managing, setManaging] = useState(false);
   const [notice, setNotice] = useState("");
+  const [deleting, setDeleting] = useState<{ id: string; reference: string; title: string } | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [closedLink, setClosedLink] = useState<string | null>(null);
   const openId = chosen ?? (linkedId && linkedId !== closedLink ? linkedId : null);
@@ -157,8 +159,8 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
         {d && d.ready && d.items.length === 0 && <p className="px-6 py-14 text-center text-sm text-slate-500">{filtersOn || view !== "ALL" ? "Nothing matches this view." : "No department requests yet."}</p>}
         <ul className="divide-y divide-indigo-50">
           {d?.items.map((i) => (
-            <li key={i.id}>
-              <button onClick={() => setChosen(i.id)} className="flex w-full flex-wrap items-start justify-between gap-3 px-4 py-4 text-left hover:bg-indigo-50/40 sm:px-6">
+            <li key={i.id} className="flex items-stretch hover:bg-indigo-50/40">
+              <button onClick={() => setChosen(i.id)} className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-3 px-4 py-4 text-left sm:px-6">
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span className="rounded-full bg-[#F3F7F6] px-2 py-0.5 font-medium text-slate-600">{i.department}</span>
@@ -174,6 +176,7 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
                   {i.workLabel && <Pill cls={WORK_CHIP[i.workStatus ?? ""] ?? ""}>{i.workLabel}</Pill>}
                 </div>
               </button>
+              <div className="flex items-center pr-3 sm:pr-5"><DeleteButton onClick={() => setDeleting({ id: i.id, reference: i.reference, title: i.title })} /></div>
             </li>
           ))}
         </ul>
@@ -181,6 +184,15 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
 
       {raising && <DeptRaiseModal departments={depts.data?.departments ?? []} onClose={() => setRaising(false)} onDone={(ref, stage) => { setRaising(false); setNotice(`Sent as ${ref}. ${stage === "PENDING_MANAGER" ? "Your reporting manager decides first." : "It goes to an Admin for approval."}`); setReload((n) => n + 1); }} />}
       {managing && <ManageDepartments onClose={() => { setManaging(false); setReload((n) => n + 1); }} />}
+      {deleting && (
+        <DeleteDialog
+          reference={deleting.reference}
+          subject={deleting.title}
+          path={`/queries/dept/${deleting.id}/delete`}
+          onClose={() => setDeleting(null)}
+          onDone={() => { if (deleting.id === openId) setChosen(null); setDeleting(null); setReload((n) => n + 1); }}
+        />
+      )}
       {openId && <DetailModal id={openId} onClose={() => { setChosen(null); if (!chosen) setClosedLink(linkedId); }} onChanged={() => setReload((n) => n + 1)} />}
     </div>
   );
@@ -223,6 +235,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
   const [progressNote, setProgressNote] = useState("");
   const [assignee, setAssignee] = useState("");
   const [comment, setComment] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [mode, setMode] = useState("ALL");
   const [file, setFile] = useState<File | null>(null);
   const [reopening, setReopening] = useState(false);
@@ -238,7 +251,16 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
   const base = `/queries/dept/${id}`;
 
   return (
-    <Modal title={d ? d.title : "Department request"} subtitle={d ? `${d.reference} · ${d.department}` : undefined} onClose={onClose} width="max-w-3xl">
+    <Modal
+      title={d ? d.title : "Department request"}
+      subtitle={d ? `${d.reference} · ${d.department}` : undefined}
+      onClose={onClose}
+      width="max-w-3xl"
+      footer={d ? <DeleteButton onClick={() => setConfirmDelete(true)} label="Delete request" /> : undefined}
+    >
+      {confirmDelete && d && (
+        <DeleteDialog reference={d.reference} subject={d.title} path={`/queries/dept/${d.id}/delete`} onClose={() => setConfirmDelete(false)} onDone={() => { setConfirmDelete(false); onChanged(); onClose(); }} />
+      )}
       {error && <p className="text-sm text-red-600">{error}</p>}
       {d && p && (
         <div className="space-y-5">

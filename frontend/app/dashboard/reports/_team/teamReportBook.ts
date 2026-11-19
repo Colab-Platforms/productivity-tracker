@@ -6,7 +6,7 @@
 // There is no productivity percentage and no new formula. Meeting participation is shown as a recorded duration and as the Team Huddle label that
 // already sits INSIDE productive time; it is never added to anything. Break time stays its own column (and its own sheet of break rows).
 
-import { lateRemarkText, NO_REMARK } from "./lateRemark";
+import { hasTypedRemark, isLateArrival, lateRemarkText, NO_REMARK } from "./lateRemark";
 import { dayLabel, hm } from "./format";
 import { dayOf, secondsOfDay, type Col, type InfoSpec, type SheetSpec, type Value } from "./reportXlsx";
 
@@ -106,7 +106,7 @@ export function summaryOf(data: TeamReportData, ix: Index, id: string): Summary 
     present: att.filter((r) => r.status === "PRESENT").length, halfDays: att.filter((r) => r.status === "HALF_DAY").length, absent: att.filter((r) => r.status === "ABSENT").length,
     leaveDays: att.filter((r) => r.status === "LEAVE").length, holidays: att.filter((r) => r.status === "HOLIDAY").length, weekOffs: att.filter((r) => r.status === "WEEK_OFF").length,
     notTracked: att.filter((r) => r.status === "NOT_TRACKED").length,
-    lateLogins: att.filter((r) => (r.lateMinutes ?? 0) > 0).length, lateRemarks: att.filter((r) => !!r.lateReason).length,
+    lateLogins: att.filter(isLateArrival).length, lateRemarks: att.filter(hasTypedRemark).length,
     workedSec: sum(att.map((r) => sec(r.workedHours))), productiveSec: sum(att.map((r) => sec(r.productiveHours))), breakSec: sum(att.map((r) => sec(r.breakHours))),
     washroomSec: sum(att.map((r) => sec(r.washroomHours))), huddleSec: sum(att.map((r) => sec(r.huddleHours))),
     meetingsJoined: mt.length, meetingSec: sum(mt.map((m) => m.participationSeconds)),
@@ -294,8 +294,7 @@ function leaveSheet(data: TeamReportData, ix: Index): SheetSpec {
       ]);
     }
     for (const r of ix.att.get(id) ?? []) {
-      const late = r.arrival === "LATE" || r.arrival === "HALF_DAY" || (r.lateMinutes ?? 0) > 0;
-      if (!late) continue;
+      if (!isLateArrival(r)) continue;
       const minutes = (r.lateMinutes ?? 0) > 0 ? (r.lateMinutes as number) : r.arrivalMinutes && r.arrivalMinutes > 0 ? r.arrivalMinutes : null;
       rows.push([
         ...who(ix, id), "Late arrival", r.date, r.date, lateRemarkText({ arrival: r.arrival ?? null, loginAt: r.loginAt, arrivalMinutes: r.arrivalMinutes, arrivalLimit: r.arrivalLimit, lateReason: r.lateReason, correctedBy: r.correctedBy }, tz),

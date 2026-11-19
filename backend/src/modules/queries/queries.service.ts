@@ -1,7 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay } from "../../lib/dates.js";
 import { accessFor, deciderIdsForCompany } from "../../lib/companyAccess.js";
-import { saveUpload, readStored, contentTypeFor } from "../../lib/storage.js";
+import { saveUpload, readStored, contentTypeFor, deleteStored } from "../../lib/storage.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
@@ -491,3 +491,47 @@ export async function openAttachment(userId: string, ticketId: string, messageId
 export const categories = () => ({
   categories: L.PICKER_CATEGORIES.map((key) => ({ key, label: L.CATEGORY_LABEL[key], opensCorrectionForm: key === "ATTENDANCE_CORRECTION" })),
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// DELETE (permanent). Anyone who may SEE a query may delete it (an employee sees only their own); an id they may not see answers "not found".
+// It removes the query, its replies, notes, history and attachment files, and any notification pointing at it. A readable copy of what was
+// removed is written to the audit log (rows there can never be edited), so a deletion always leaves a trace of who removed what.
+// The old attendance-correction ticket is refused: it is evidence for an attendance change and has its own screen.
+// ---------------------------------------------------------------------------------------------------------------------------
+export async function deleteQuery(userId: string, ticketId: string, body: { confirm?: unknown }) {
+  if (body?.confirm !== true) throw new Error("CONFIRM_REQUIRED");
+  const me = await who(userId);
+  const { t, facts } = await load(me, ticketId);
+  void facts;
+  if (String(t.category) === "ATTENDANCE_CORRECTION") throw new Error("CANNOT_DELETE_CORRECTION");
+
+  const keys = t.messages.map((m) => m.attachmentKey).filter((k): k is string => !!k);
+  const eventCount = (await queriesReady()) ? await prisma.queryEvent.count({ where: { ticketId } }) : 0;
+  auditNote({
+    recordType: "Ticket",
+    recordId: ticketId,
+    targetUserId: t.raisedById,
+    summary: `Permanently deleted query ${t.reference}: ${t.subject.slice(0, 80)}`,
+    before: {
+      reference: t.reference,
+      subject: t.subject.slice(0, 200),
+      description: t.description.slice(0, 280),
+      status: String(t.status),
+      priority: String(t.priority),
+      raisedBy: nameOf(t.raisedBy),
+      assignedTo: t.assignedTo ? nameOf(t.assignedTo) : null,
+      replies: t.messages.length,
+      internalNotes: t.messages.filter((m) => m.isInternal).length,
+      attachments: keys.length,
+      historyEntries: eventCount,
+      createdAt: t.createdAt,
+    },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.ticket.delete({ where: { id: ticketId } }); // replies, meta and history go with it (cascade)
+    await tx.notification.deleteMany({ where: { link: { contains: ticketId } } });
+  });
+  for (const k of keys) await deleteStored(k).catch((e) => console.error("[queries] could not remove a file:", e));
+  return { ok: true };
+}

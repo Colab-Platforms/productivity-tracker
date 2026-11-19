@@ -16,18 +16,25 @@ const isMissingTable = (e: unknown) => {
 };
 let readyValue = false;
 let readyCheckedAt = 0;
+let readyChecking: Promise<boolean> | null = null;
 export async function ratingReady(): Promise<boolean> {
   if (readyValue) return true;
+  // A check already running: wait for ITS answer. (Before, a second caller that arrived while the very first check was still in flight was told "not
+  // ready", so the first report after a server start silently came back with no ratings at all.)
+  if (readyChecking) return readyChecking;
   if (Date.now() - readyCheckedAt < 15_000) return false;
   readyCheckedAt = Date.now();
-  try {
-    await prisma.taskRating.findFirst({ select: { taskId: true } });
-    readyValue = true;
-  } catch (e) {
-    if (!isMissingTable(e)) throw e;
-    readyValue = false;
-  }
-  return readyValue;
+  readyChecking = (async () => {
+    try {
+      await prisma.taskRating.findFirst({ select: { taskId: true } });
+      readyValue = true;
+    } catch (e) {
+      if (!isMissingTable(e)) throw e;
+      readyValue = false;
+    }
+    return readyValue;
+  })().finally(() => { readyChecking = null; });
+  return readyChecking;
 }
 
 export type RatingInfo = { rating: number; comment: string | null; ratedById: string | null; ratedAt: Date | null };

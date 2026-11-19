@@ -12,13 +12,15 @@ import { apiGet } from "@/lib/api";
 //  * Filtering is never authorization: the server narrows only what the person may already see.
 // ---------------------------------------------------------------------------
 
-export type Filters = { company: string; project: string[]; manager: string; q: string; designation: string; status: string };
-export const NO_FILTERS: Filters = { company: "", project: [], manager: "", q: "", designation: "", status: "" };
+export type Filters = { company: string; project: string[]; manager: string; department: string; q: string; designation: string; status: string };
+export const NO_FILTERS: Filters = { company: "", project: [], manager: "", department: "", q: "", designation: "", status: "" };
 
 export type Options = {
   companies: { id: string; name: string; people: number }[];
   projects: { id: string; name: string; companyId: string; people: number }[];
   managers: { id: string; name: string; employeeCode: string | null; reports: number }[];
+  /** Query Desk departments; only sent when the page asks for them (the Productivity Supervisor screens). */
+  departments?: { id: string; name: string; companyId: string; company: string; people: number }[];
   designations: { name: string; people: number }[];
   statuses: string[];
 };
@@ -37,6 +39,7 @@ function readUrl(): Filters {
     company: UUID.test(company) ? company : "",
     project: one("project").split(",").map((x) => x.trim()).filter((x) => UUID.test(x)),
     manager: UUID.test(manager) ? manager : "",
+    department: UUID.test(one("department")) ? one("department") : "",
     q: one("q").slice(0, 80),
     designation: one("designation").slice(0, 80),
     status: one("status").slice(0, 20),
@@ -49,6 +52,7 @@ function writeUrl(f: Filters) {
   set("company", f.company);
   set("project", f.project.join(","));
   set("manager", f.manager);
+  set("department", f.department);
   set("q", f.q);
   set("designation", f.designation);
   set("status", f.status);
@@ -77,14 +81,14 @@ export function useHrFilters() {
   const clear = useCallback(() => update({ ...NO_FILTERS }), [update]);
 
   const active = useMemo(
-    () => (filters.company ? 1 : 0) + (filters.project.length ? 1 : 0) + (filters.manager ? 1 : 0) + (filters.q ? 1 : 0) + (filters.designation ? 1 : 0) + (filters.status ? 1 : 0),
+    () => (filters.company ? 1 : 0) + (filters.project.length ? 1 : 0) + (filters.manager ? 1 : 0) + (filters.department ? 1 : 0) + (filters.q ? 1 : 0) + (filters.designation ? 1 : 0) + (filters.status ? 1 : 0),
     [filters]
   );
   return { filters, update, clear, ready, active };
 }
 
 /** The choices for the bar. Narrowed by the company, project and manager already chosen; stale selections are dropped once the choices load. */
-export function useFilterOptions(filters: Filters, update: (p: Partial<Filters>) => void, enabled: boolean) {
+export function useFilterOptions(filters: Filters, update: (p: Partial<Filters>) => void, enabled: boolean, withDepartments = false) {
   const [options, setOptions] = useState<Options | null>(null);
   const [error, setError] = useState("");
   const key = `${filters.company}|${filters.project.join(",")}|${filters.manager}`;
@@ -100,6 +104,7 @@ export function useFilterOptions(filters: Filters, update: (p: Partial<Filters>)
     if (filters.company) qs.set("company", filters.company);
     if (filters.project.length) qs.set("project", filters.project.join(","));
     if (filters.manager) qs.set("manager", filters.manager);
+    if (withDepartments) qs.set("withDepartments", "1");
     const t = setTimeout(() => {
       apiGet<Options>(`/hr-filters/options${qs.toString() ? `?${qs.toString()}` : ""}`)
         .then((o) => {
@@ -114,6 +119,7 @@ export function useFilterOptions(filters: Filters, update: (p: Partial<Filters>)
           if (keep.length !== f.project.length) patch.project = keep;
           if (f.manager && !o.managers.some((m) => m.id === f.manager)) patch.manager = "";
           if (f.company && !o.companies.some((c) => c.id === f.company)) patch.company = "";
+          if (withDepartments && f.department && !(o.departments ?? []).some((d) => d.id === f.department)) patch.department = "";
           if (Object.keys(patch).length) update(patch);
         })
         .catch((e: Error) => live && setError(e.message));
@@ -136,6 +142,7 @@ export function filterQuery(f: Filters, names: Partial<Record<keyof Filters, str
   if (f.company) qs.set(n("company", "company"), f.company);
   if (f.project.length) qs.set(n("project", "project"), f.project.join(","));
   if (f.manager) qs.set(n("manager", "manager"), f.manager);
+  if (f.department) qs.set(n("department", "department"), f.department);
   if (f.q) qs.set(n("q", "q"), f.q);
   if (f.designation) qs.set(n("designation", "designation"), f.designation);
   if (f.status) qs.set(n("status", "status"), f.status);
