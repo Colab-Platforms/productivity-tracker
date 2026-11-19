@@ -14,6 +14,8 @@
 import { prisma } from "../../lib/prisma.js";
 import { notifySlipsPublished } from "./payroll.generate.js";
 import { saveUpload, readStored, deleteStored, contentTypeFor } from "../../lib/storage.js";
+import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
+import { canAccess } from "../../lib/companyAccess.logic.js";
 
 const PAYROLL_ROLES = new Set(["HR", "ADMIN"]);
 
@@ -29,6 +31,12 @@ async function actor(viewerId: string) {
   });
   if (!viewer) throw new Error("NOT_FOUND");
   return viewer;
+}
+
+/** The companies this HR/Admin may run payroll for (own, assigned, or all for top management; a pinned deployment limits it). */
+async function reach(viewerId: string) {
+  const a = await accessFor(viewerId);
+  return { a, where: scopeWhere(a), can: (platformId: string | null | undefined) => !!platformId && canAccess(a, platformId) };
 }
 
 function assertPayrollStaff(role: string) {
@@ -110,76 +118,106 @@ export async function listSlipsForMonth(viewerId: string, month: number, year: n
   const viewer = await actor(viewerId);
   assertPayrollStaff(String(viewer.role));
   assertPeriod(month, year);
+  const { where: companies } = await reach(viewerId);
 
-  // Everyone who could have a payslip — candidates never do.
-  const people = await prisma.user.findMany({
-    where: {
-      platformId: viewer.platformId,
-      status: { in: ["ACTIVE", "INVITED", "SUSPENDED", "EXITED"] },
-    },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      employeeCode: true,
-      designation: true,
-    },
-    orderBy: { firstName: "asc" },
+  // Everyone in the companies this person acts on who is part of THIS payroll cycle: active people, plus anybody who already has a slip for the
+  // month (so an earlier record of someone who has since left is never hidden). Candidates never have a payslip. No paging and no cap: the
+  // totals below are of this one list.
+  const [withSlip, active] = await Promise.all([
+    prisma.salarySlip.findMany({ where: { ...companies, month, year }, select: { userId: true } }),
+    prisma.user.findMany({ where: { ...companies, status: "ACTIVE" }, select: { id: true } }),
+  ]);
+  const ids = [...new Set([...withSlip.map((x) => x.userId), ...active.map((x) => x.id)])];
+
+  const people = ids.length
+    ? await prisma.user.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          employeeCode: true,
+          designation: true,
+          status: true,
+          monthlySalary: true,
+          platformId: true,
+          platform: { select: { name: true } },
+        },
+        orderBy: [{ platform: { name: "asc" } }, { firstName: "asc" }, { lastName: "asc" }],
+      })
+    : [];
+
+  const slips = ids.length
+    ? await prisma.salarySlip.findMany({
+        where: { userId: { in: ids }, month, year },
+        select: {
+          id: true,
+          userId: true,
+          fileName: true,
+          fileSize: true,
+          grossAmount: true,
+          deductions: true,
+          netAmount: true,
+          publishedAt: true,
+          status: true,
+          payableDays: true,
+          otherDeduction: true,
+          storageKey: true,
+          createdAt: true,
+          uploadedBy: { select: { firstName: true, lastName: true } },
+        },
+      })
+    : [];
+
+  const byUser = new Map(slips.map((x) => [x.userId, x]));
+
+  const rows = people.map((p) => {
+    const slip = byUser.get(p.id);
+    const salary = p.monthlySalary === null ? 0 : Number(p.monthlySalary);
+    const salaryOk = Number.isFinite(salary) && salary > 0;
+    return {
+      userId: p.id,
+      name: `${p.firstName} ${p.lastName}`.trim(),
+      employeeCode: p.employeeCode,
+      designation: p.designation,
+      company: p.platform.name,
+      companyId: p.platformId,
+      employmentStatus: String(p.status),
+      // Never the amount: only whether payroll can be run for this person.
+      payroll: salaryOk
+        ? { ready: true, status: "READY", reason: null as string | null }
+        : { ready: false, status: "SALARY_MISSING", reason: "Salary details missing. Ask an Admin to add the monthly salary in Edit Employee." },
+      slip: slip
+        ? {
+            id: slip.id,
+            fileName: slip.fileName,
+            fileSize: slip.fileSize,
+            grossAmount: money(slip.grossAmount),
+            deductions: money(slip.deductions),
+            netAmount: money(slip.netAmount),
+            publishedAt: slip.publishedAt,
+            status: slip.status,
+            payableDays: slip.payableDays === null ? null : Number(slip.payableDays),
+            otherDeduction: slip.otherDeduction === null ? null : Number(slip.otherDeduction),
+            hasFile: Boolean(slip.storageKey),
+            uploadedBy: `${slip.uploadedBy.firstName} ${slip.uploadedBy.lastName}`.trim(),
+          }
+        : null,
+    };
   });
-
-  const slips = await prisma.salarySlip.findMany({
-    where: { platformId: viewer.platformId, month, year },
-    select: {
-      id: true,
-      userId: true,
-      fileName: true,
-      fileSize: true,
-      grossAmount: true,
-      deductions: true,
-      netAmount: true,
-      publishedAt: true,
-      status: true,
-      payableDays: true,
-      otherDeduction: true,
-      storageKey: true,
-      createdAt: true,
-      uploadedBy: { select: { firstName: true, lastName: true } },
-    },
-  });
-
-  const byUser = new Map(slips.map((s) => [s.userId, s]));
 
   return {
     month,
     year,
     label: label(month, year),
-    rows: people.map((p) => {
-      const slip = byUser.get(p.id);
-      return {
-        userId: p.id,
-        name: `${p.firstName} ${p.lastName}`.trim(),
-        employeeCode: p.employeeCode,
-        designation: p.designation,
-        slip: slip
-          ? {
-              id: slip.id,
-              fileName: slip.fileName,
-              fileSize: slip.fileSize,
-              grossAmount: money(slip.grossAmount),
-              deductions: money(slip.deductions),
-              netAmount: money(slip.netAmount),
-              publishedAt: slip.publishedAt,
-              status: slip.status,
-              payableDays: slip.payableDays === null ? null : Number(slip.payableDays),
-              otherDeduction: slip.otherDeduction === null ? null : Number(slip.otherDeduction),
-              hasFile: Boolean(slip.storageKey),
-              uploadedBy: `${slip.uploadedBy.firstName} ${slip.uploadedBy.lastName}`.trim(),
-            }
-          : null,
-      };
-    }),
+    rows,
+    // Totals of THIS list (the same rows the screen shows): never of a page.
+    employees: rows.length,
+    eligible: rows.filter((r) => r.payroll.ready).length,
+    setupRequired: rows.filter((r) => !r.payroll.ready).length,
+    companies: [...new Map(rows.map((r) => [r.companyId, r.company])).entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
     uploaded: slips.length,
-    published: slips.filter((s) => s.publishedAt).length,
+    published: slips.filter((x) => x.publishedAt).length,
   };
 }
 
@@ -204,14 +242,23 @@ export async function uploadSlip(
   const year = Number(data.year);
   assertPeriod(month, year);
 
+  const { can } = await reach(viewerId);
   const target = await prisma.user.findUnique({
     where: { id: data.userId },
-    select: { platformId: true },
+    select: { platformId: true, monthlySalary: true },
   });
-  if (!target || target.platformId !== viewer.platformId) throw new Error("NOT_FOUND");
+  if (!target || !can(target.platformId)) throw new Error("NOT_FOUND");
+
+  // One slip per person per month: look first, so a person with no payroll details cannot get a NEW slip, while an existing one can still be replaced.
+  const existing = await prisma.salarySlip.findFirst({
+    where: { userId: data.userId, month, year },
+    select: { id: true, storageKey: true },
+  });
+  const salary = target.monthlySalary === null ? 0 : Number(target.monthlySalary);
+  if (!existing && !(Number.isFinite(salary) && salary > 0)) throw new Error("PAYROLL_SETUP_REQUIRED");
 
   const stored = await saveUpload({
-    platformId: viewer.platformId,
+    platformId: target.platformId,
     folder: "payslips",
     originalName: data.fileName,
     data: data.data,
@@ -224,13 +271,7 @@ export async function uploadSlip(
     netAmount: data.netAmount ? data.netAmount : null,
   };
 
-  // One slip per person per month, enforced by the unique constraint.
-  // Re-uploading October replaces October rather than creating a second one.
-  const existing = await prisma.salarySlip.findFirst({
-    where: { userId: data.userId, month, year },
-    select: { id: true, storageKey: true },
-  });
-
+  // Re-uploading October replaces October rather than creating a second one (the unique constraint backs this up).
   if (existing) {
     await prisma.salarySlip.update({
       where: { id: existing.id },
@@ -249,7 +290,7 @@ export async function uploadSlip(
 
   await prisma.salarySlip.create({
     data: {
-      platformId: viewer.platformId,
+      platformId: target.platformId,
       userId: data.userId,
       month,
       year,
@@ -276,11 +317,12 @@ export async function publishSlips(
   const viewer = await actor(viewerId);
   assertPayrollStaff(String(viewer.role));
   if (slipIds.length === 0) return { updated: 0 };
+  const { where: companies } = await reach(viewerId);
 
   // Slips that are about to become visible for the first time get a notification.
   const fresh = publish
     ? await prisma.salarySlip.findMany({
-        where: { id: { in: slipIds }, platformId: viewer.platformId, publishedAt: null, NOT: NOT_YET_APPROVED },
+        where: { id: { in: slipIds }, ...companies, publishedAt: null, NOT: NOT_YET_APPROVED },
         select: { id: true, userId: true, month: true, year: true },
       })
     : [];
@@ -288,7 +330,7 @@ export async function publishSlips(
   const result = await prisma.salarySlip.updateMany({
     where: {
       id: { in: slipIds },
-      platformId: viewer.platformId,
+      ...companies,
       ...(publish ? { NOT: NOT_YET_APPROVED } : {}),
     },
     data: { publishedAt: publish ? new Date() : null },
@@ -303,15 +345,16 @@ export async function publishMonth(viewerId: string, month: number, year: number
   const viewer = await actor(viewerId);
   assertPayrollStaff(String(viewer.role));
   assertPeriod(month, year);
+  const { where: companies } = await reach(viewerId);
 
   const fresh = await prisma.salarySlip.findMany({
-    where: { platformId: viewer.platformId, month, year, publishedAt: null, NOT: NOT_YET_APPROVED },
+    where: { ...companies, month, year, publishedAt: null, NOT: NOT_YET_APPROVED },
     select: { id: true, userId: true, month: true, year: true },
   });
 
   const result = await prisma.salarySlip.updateMany({
     where: {
-      platformId: viewer.platformId,
+      ...companies,
       month,
       year,
       publishedAt: null,
@@ -323,7 +366,7 @@ export async function publishMonth(viewerId: string, month: number, year: number
   await notifySlipsPublished(viewer.platformId, fresh);
 
   const waiting = await prisma.salarySlip.count({
-    where: { platformId: viewer.platformId, month, year, publishedAt: null, ...NOT_YET_APPROVED },
+    where: { ...companies, month, year, publishedAt: null, ...NOT_YET_APPROVED },
   });
 
   return { updated: result.count, waitingForApproval: waiting };
@@ -337,7 +380,7 @@ export async function deleteSlip(viewerId: string, slipId: string) {
     where: { id: slipId },
     select: { platformId: true, storageKey: true },
   });
-  if (!slip || slip.platformId !== viewer.platformId) throw new Error("NOT_FOUND");
+  if (!slip || !(await reach(viewerId)).can(slip.platformId)) throw new Error("NOT_FOUND");
 
   await prisma.salarySlip.delete({ where: { id: slipId } });
   if (slip.storageKey) await deleteStored(slip.storageKey);
@@ -365,10 +408,10 @@ export async function downloadSlip(viewerId: string, slipId: string) {
       year: true,
     },
   });
-  if (!slip || slip.platformId !== viewer.platformId) throw new Error("NOT_FOUND");
-
-  const isOwner = slip.userId === viewer.id;
+  const isOwner = !!slip && slip.userId === viewer.id;
   const isStaff = PAYROLL_ROLES.has(String(viewer.role));
+  // The person always reaches their own slip; HR/Admin reach the slips of the companies they act on; nobody else.
+  if (!slip || !(isOwner || (isStaff && (await reach(viewerId)).can(slip.platformId)))) throw new Error("NOT_FOUND");
 
   // Nobody else. Not a manager, not a colleague — pay is between the person
   // and HR.
