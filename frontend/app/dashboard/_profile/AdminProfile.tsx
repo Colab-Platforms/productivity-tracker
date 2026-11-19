@@ -6,6 +6,7 @@ import { roleLabel } from "@/lib/roles";
 import { apiGet } from "@/lib/api";
 import Avatar, { PhotoEditor } from "../_photos/Avatar";
 import type { Me } from "../layout";
+import LoginActivity from "../_security/LoginActivity";
 
 // ---------------------------------------------------------------------------
 // ADMIN PROFILE
@@ -162,6 +163,10 @@ export default function AdminProfile({ me }: { me: Me }) {
               </Link>
             </div>
             <Fields rows={[["Sign in with", me.employeeCode ?? me.email], ["Last sign-in", stamp(details?.admin?.lastLoginAt)]]} />
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-slate-900">My login activity</h3>
+              <LoginActivity mode="mine" />
+            </div>
             <p className="rounded-xl bg-[#F3F7F6] px-4 py-3 text-xs leading-relaxed text-slate-500">
               Every Admin has an individual sign-in. What you do is recorded in the audit log under your own name, so please do not share your password.
             </p>

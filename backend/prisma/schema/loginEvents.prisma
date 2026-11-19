@@ -1,0 +1,36 @@
+// One row per authentication attempt: success, failed, or blocked by the network rule, plus the session's later life (last activity, logout).
+// New table only. No relations on User/Platform here (the foreign keys live in the migration, which also installs the rule that keeps rows
+// from being edited or removed early). Written by the server only; there is no route that edits or deletes a row.
+model LoginEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  createdAt      DateTime  @default(now())
+  result         String // SUCCESS | FAILED | BLOCKED
+  reason         String?
+  wouldBlock     Boolean   @default(false)
+  mode           String?
+  userId         String?   @db.Uuid
+  platformId     String?   @db.Uuid
+  employeeCode   String?
+  username       String?
+  ip             String?
+  country        String?
+  region         String?
+  city           String?
+  locationSource String?
+  browserName    String?
+  browserVersion String?
+  osName         String?
+  osVersion      String?
+  deviceType     String?
+  userAgent      String?
+  sessionId      String?   @unique @db.Uuid
+  expiresAt      DateTime?
+  lastActiveAt   DateTime?
+  loggedOutAt    DateTime?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([platformId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([ip])
+  @@map("login_events")
+}

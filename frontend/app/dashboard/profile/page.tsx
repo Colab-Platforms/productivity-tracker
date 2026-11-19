@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { identityLabel } from "@/lib/roles";
+import LoginActivity from "../_security/LoginActivity";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import { MyDocuments } from "../_documents/MyDocuments";
@@ -58,7 +59,7 @@ type Details = {
   company: string; dateOfJoining: string | null; probationEndDate: string | null; employmentType: string | null;
   reportsTo: { name: string; designation: string | null } | null; shift: { name: string; startTime: string; endTime: string } | null; departments: string[];
 };
-const TABS = ["Personal", "Contact", "Address", "Emergency contact", "Employment", "My Documents"] as const;
+const TABS = ["Personal", "Contact", "Address", "Emergency contact", "Employment", "Login Activity", "My Documents"] as const;
 type Tab = (typeof TABS)[number];
 const TYPE_NAME: Record<string, string> = { PERMANENT: "Permanent", PROBATION: "Probation", CONTRACT: "Contract", INTERN: "Intern" };
 const showDay = (s: string | null) => (s ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${s}T00:00:00Z`)) : null);
@@ -242,6 +243,7 @@ function StaffProfile() {
             ]}
           />
         )}
+        {tab === "Login Activity" && <LoginActivity mode="mine" />}
         {tab === "My Documents" && !me.documentsExempt && <MyDocuments />}
       </section>
 

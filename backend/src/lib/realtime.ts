@@ -58,6 +58,9 @@ let io: Server | null = null;
 export const roomOf = (personId: string) => `person:${personId}`;
 // A room only the person themselves is in (joined by the server, never by the client). Notification signals go
 // here and nowhere else, so a manager who can see an employee's tasks does NOT learn that the employee got a notification.
+import { currentPolicy, recordBlockedSession } from "./securityLog.js";
+import { evaluate, ipBehindProxy } from "./ipPolicy.js";
+
 export const inboxRoom = (userId: string) => `inbox:${userId}`;
 
 // Same checks as middlewares/auth.ts, for a token string.
@@ -104,6 +107,16 @@ export function startRealtime(httpServer: HttpServer, deps: RealtimeDeps): Serve
     const token = typeof socket.handshake.auth?.token === "string" ? socket.handshake.auth.token : "";
     const user = token ? await authenticate(token) : null;
     if (!user) return next(new Error("NOT_AUTHENTICATED"));
+    // Network access policy: the same rule as every other request, with the address worked out by the same hop rule Express uses.
+    const policy = currentPolicy();
+    if (policy.mode !== "off") {
+      const ip = ipBehindProxy(String(socket.handshake.headers["x-forwarded-for"] ?? ""), socket.handshake.address, Number(process.env.TRUST_PROXY_HOPS ?? 1));
+      const verdict = evaluate(ip, policy);
+      if (!verdict.allowed) {
+        void recordBlockedSession(ip, verdict, { userId: user.userId, platformId: user.platformId }, { method: "GET", path: "/socket.io" });
+        if (verdict.blocked) return next(new Error("NOT_AUTHENTICATED"));
+      }
+    }
     socket.data.user = user;
     socket.data.token = token;
     next();

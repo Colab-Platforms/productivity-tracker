@@ -16,7 +16,7 @@ import { ThemeIconButton, ThemeRow } from "./_theme/ThemeToggle";
 import { resetTheme } from "@/lib/theme";
 import Link from "next/link";
 import Avatar from "./_photos/Avatar";
-import { apiGet, clearToken, getToken } from "@/lib/api";
+import { apiGet, apiPost, clearToken, getToken } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
 import { desktopAlert, ping } from "@/lib/chatAlert";
 import { setPlatformTimezone } from "@/lib/time";
@@ -322,6 +322,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       // Admin only: organisation-wide controls. HR has none of these.
       { href: "/dashboard/audit-logs", label: "Audit Logs", ready: true, roles: ["ADMIN"], icon: I.list },
+      { href: "/dashboard/login-activity", label: "Login Activity", ready: true, roles: ["ADMIN", "HR"], icon: I.shield },
       { href: "/dashboard/employees?tab=Teams", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
     ],
@@ -500,7 +501,11 @@ export default function DashboardLayout({
     setOpen(false);
   }, [pathname]);
 
-  function signOut() {
+  async function signOut() {
+    // Tell the server this sign-in is ending (it stamps the logout time in the login history). Best effort: a slow or failed call never stops the sign-out.
+    try {
+      await Promise.race([apiPost("/auth/logout"), new Promise((resolve) => setTimeout(resolve, 1500))]);
+    } catch { /* signing out still happens */ }
     clearToken();
     resetTheme(); // the next person on this computer starts in light until their own choice loads
     router.replace("/login");

@@ -35,6 +35,8 @@ import attendanceCalendarRoutes from "./modules/team-attendance/attendanceCalend
 import adminConsoleRoutes from "./modules/admin-console/adminConsole.routes.js";
 import hrFiltersRoutes from "./modules/hr-filters/hrFilters.routes.js";
 import supervisorRoutes from "./modules/supervisor/supervisor.routes.js";
+import loginActivityRoutes from "./modules/login-activity/loginActivity.routes.js";
+import { startLoginActivityPurge } from "./modules/login-activity/loginEvents.js";
 import { typingAudience } from "./modules/chat/chat.service.js";
 import { startRealtime } from "./lib/realtime.js";
 import { manageableUserIds } from "./modules/tasks/tasks.service.js";
@@ -129,6 +131,7 @@ app.use("/api/attendance-calendar", attendanceCalendarRoutes);
 app.use("/api/admin-console", adminConsoleRoutes);
 app.use("/api/hr-filters", hrFiltersRoutes);
 app.use("/api/supervisor", supervisorRoutes);
+app.use("/api/login-activity", loginActivityRoutes);
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
 });
@@ -150,5 +153,6 @@ try {
 httpServer.listen(PORT, () => {
   console.log(`Tracker backend listening on http://localhost:${PORT}`);
   startTrackerScheduler();
+  startLoginActivityPurge();
   startOnboardingScheduler();
 });

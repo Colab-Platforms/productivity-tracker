@@ -59,7 +59,7 @@ async function findByIdentifier(identifier: string) {
   return matches;
 }
 
-export async function login(identifier: string, password: string) {
+export async function login(identifier: string, password: string, sessionId?: string) {
   // A pinned deployment only signs in people of that company. Others get the same
   // error as an unknown account, so nothing reveals who exists elsewhere.
   const pinned = await getPinnedCompany();
@@ -81,7 +81,8 @@ export async function login(identifier: string, password: string) {
   }
 
   const token = jwt.sign(
-    { userId: user.id, platformId: user.platformId, role: user.role },
+    // sid: this sign-in's own id. It lets the login history follow the session to its last activity and its logout. An older token without it keeps working.
+    { userId: user.id, platformId: user.platformId, role: user.role, ...(sessionId ? { sid: sessionId } : {}) },
     process.env.JWT_SECRET as string,
     { expiresIn: process.env.JWT_EXPIRES_IN ?? "1d" } as jwt.SignOptions
   );

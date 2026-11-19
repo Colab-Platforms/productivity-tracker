@@ -1,5 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { clientIp } from "../lib/clientIp.js";
+import { check } from "../lib/securityLog.js";
+import { recordAuthAttempt } from "../modules/login-activity/loginEvents.js";
 
 // ---------------------------------------------------------------------------
 // RATE LIMIT
@@ -51,6 +53,8 @@ export function loginLimiter(req: Request, res: Response, next: NextFunction) {
   const entry = attempts.get(key);
 
   if (entry && now < entry.blockedUntil) {
+    const net = check(req);
+    void recordAuthAttempt(req, net.ip, net.verdict, { username: req.body?.email ?? req.body?.identifier, outcome: "FAILED", reason: "TOO_MANY_ATTEMPTS", credentialsOk: null });
     const mins = Math.ceil((entry.blockedUntil - now) / 60000);
     res.status(429).json({
       error: "TOO_MANY_ATTEMPTS",
