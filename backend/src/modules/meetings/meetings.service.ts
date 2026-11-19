@@ -198,8 +198,7 @@ export async function listMine(userId: string, f: { scope?: unknown; q?: unknown
   // A huddle you joined and have not ended stays in "upcoming" after its scheduled end, so the End Huddle button never disappears.
   const stillIn = scope === "upcoming" ? await part.openMeetingIds(userId) : [];
   const where = {
-    platformId: v.platformId,
-    ...mine,
+    ...mine, // organizer or invited: the person is the link, so a manager's invitee from another company sees it too
     ...(q ? { title: { contains: q, mode: "insensitive" as const } } : {}),
     ...(scope === "upcoming" ? { status: "SCHEDULED" as const, ...(stillIn.length ? { AND: [{ OR: [{ endsAt: { gte: now } }, { id: { in: stillIn } }] }] } : { endsAt: { gte: now } }) } : scope === "past" ? { status: "SCHEDULED" as const, endsAt: { lt: now } } : { status: "CANCELLED" as const }),
   };
