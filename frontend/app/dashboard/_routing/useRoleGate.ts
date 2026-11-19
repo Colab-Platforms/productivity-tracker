@@ -15,7 +15,18 @@ export function useRoleGate(roles: string[], enabled = true) {
   const router = useRouter();
   const allowed = !!me && roles.includes(me.role);
   useEffect(() => {
-    if (enabled && me && !allowed) router.replace(homeFor(me.role));
+    if (enabled && me && !allowed) router.replace(homeFor(me.role, me.supervisor));
   }, [enabled, me, allowed, router]);
+  return { me, allowed };
+}
+
+/** The guard for the Productivity Supervisor's own pages: anyone else is sent to THEIR own home. The server checks the same thing on every call. */
+export function useSupervisorGate() {
+  const me = useMe();
+  const router = useRouter();
+  const allowed = !!me && me.supervisor === true;
+  useEffect(() => {
+    if (me && !allowed) router.replace(homeFor(me.role, me.supervisor));
+  }, [me, allowed, router]);
   return { me, allowed };
 }

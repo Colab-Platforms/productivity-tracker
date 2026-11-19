@@ -700,11 +700,15 @@ export async function endMeeting(userId: string) {
 // Shared by Live Team and the alerts panel so the two can never disagree
 // about who is on screen.
 // ---------------------------------------------------------------------------
+import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
+
 export async function visibleUserIds(viewer: {
   id: string;
   role: string;
   platformId: string;
 }): Promise<string[]> {
+  // A Productivity Supervisor (an Employee with a monitoring row) sees every active person of every company, read-only.
+  if (viewer.role === "EMPLOYEE" && (await isSupervisor(viewer.id))) return monitoringIds();
   // HR and Admin see every company they act on (company access: their own, the ones assigned to them, or all for top management; a deployment
   // pinned to one company allows only that one). Seeing is not deciding: approvals keep their own rules.
   if (viewer.role === "HR" || viewer.role === "ADMIN") {

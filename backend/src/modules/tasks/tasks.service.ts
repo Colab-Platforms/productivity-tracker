@@ -8,6 +8,7 @@ import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { detailsFor, recordEvent, selfTasksReady, shapeSelf } from "./tasks.self.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
+import { isSupervisor, monitoringIds, monitoringWhere } from "../../lib/supervisor.js";
 import { resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { isFiltering, type HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { entryDetailsFor, entryFormChoices, entryReady, entryView, resolveTaggedManager, selectableProjects, type EntryDetail } from "./tasks.entry.js";
@@ -775,7 +776,10 @@ export async function listForApproval(
   filters?: HrFilters
 ) {
   const ctx = await userContext(managerId);
-  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  // A Productivity Supervisor (an Employee with a monitoring row) reads every task of every company, strictly read-only: no row is ever actionable
+  // for them, and the approve / rate / delete / revert / assign routes keep refusing the EMPLOYEE role.
+  const supervisor = ctx.role === "EMPLOYEE" && (await isSupervisor(managerId));
+  if (!MANAGING_ROLES.includes(ctx.role) && !supervisor) throw new Error("NOT_ALLOWED");
 
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
   const date = platformToday(ctx.timezone);
@@ -810,7 +814,7 @@ export async function listForApproval(
         };
   // Everyone this person may see, and (HR/Admin filters: company, project, reporting manager) the ones who pass the filters. The filters only
   // narrow the authorised list, never widen it; the people, the task counts and the rows below all come from the same narrowed list.
-  const allIds = await manageableUserIds(actor);
+  const allIds = supervisor ? await monitoringIds() : await manageableUserIds(actor);
   let userIds = allIds;
   if (filters && isFiltering(filters)) {
     const keep = new Set((await resolvePeople(managerId, filters)).ids);
@@ -823,7 +827,7 @@ export async function listForApproval(
   // are active (filters only narrow the authorised list).
   let extraTaskIds: string[] = [];
   let extraOwnerIds: string[] = [];
-  if (!(filters && isFiltering(filters)) && (await entryReady())) {
+  if (!supervisor && !(filters && isFiltering(filters)) && (await entryReady())) {
     const tagged = await prisma.taskEntryDetail.findMany({ where: { taggedManagerId: managerId }, select: { taskId: true } });
     if (tagged.length > 0) {
       const outside = await prisma.dailyTask.findMany({
@@ -889,8 +893,9 @@ export async function listForApproval(
       orderBy: { title: "asc" },
     }),
     prisma.team.findMany({
-      where:
-        ctx.role === "MANAGER"
+      where: supervisor
+        ? { ...(await monitoringWhere()), isActive: true }
+        : ctx.role === "MANAGER"
           ? { ...(await managedByWhere(managerId)), isActive: true }
           : { ...scopeWhere(await accessFor(managerId)), isActive: true },
       select: { id: true, name: true, platform: { select: { name: true } } },
@@ -922,7 +927,9 @@ export async function listForApproval(
       decidedBy: t.approvedById ? deciders.get(t.approvedById) ?? null : null,
       decidedAt: t.approvedAt ? t.approvedAt.toISOString() : null,
       // HR can act only on a task tagged to them (no legacy reporting-line fallback); everyone else follows mayReview.
-      canAct: ctx.role === "HR"
+      canAct: supervisor
+        ? false
+        : ctx.role === "HR"
         ? !!d?.taggedManagerId && d.taggedManagerActive && d.taggedManagerId === managerId
         : mayReview({ actorId: managerId, taggedId: d?.taggedManagerId ?? null, taggedActive: d?.taggedManagerActive ?? false, legacyOk: acting.has(t.userId) }),
       userId: t.userId,
@@ -936,7 +943,7 @@ export async function listForApproval(
 
   // A task that is still waiting for its manager must not reach anyone who cannot decide it, except the Admin, who may monitor it:
   // HR sees it only after approval, and another manager never sees a task tagged to someone else.
-  const all = everyRow.filter((t) => t.approvalStatus !== "PENDING" || pendingTaskVisibleTo(ctx.role, t.canAct));
+  const all = everyRow.filter((t) => t.approvalStatus !== "PENDING" || pendingTaskVisibleTo(supervisor ? "ADMIN" : ctx.role, t.canAct));
 
   const roster = people.map((p) => ({
     id: p.id,

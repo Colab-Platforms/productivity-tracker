@@ -7,6 +7,7 @@ import { meetingEmail } from "../../lib/emails.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
 import * as part from "./participation.service.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
+import { isSupervisor, monitoringWhere } from "../../lib/supervisor.js";
 
 // ---------------------------------------------------------------------------
 // MEETINGS (scheduled meetings with a pasted link)
@@ -238,11 +239,13 @@ export async function getOne(userId: string, id: string) {
 // HR/Admin oversight: no description, link or names.
 export async function oversight(userId: string, f: { scope?: unknown }) {
   const v = await who(userId);
-  if (!OVERSIGHT.includes(v.role)) throw new Error("NOT_ALLOWED");
+  const watching = !OVERSIGHT.includes(v.role) && v.role === "EMPLOYEE" && (await isSupervisor(userId));
+  if (!OVERSIGHT.includes(v.role) && !watching) throw new Error("NOT_ALLOWED");
   const now = new Date();
   const scope = (["upcoming", "past", "cancelled"] as const).find((s) => s === f.scope) ?? "upcoming";
-  // HR/Admin see the meetings of every company they act on (company access), still only title, organizer, time and head-count.
-  const companyScope = scopeWhere(await accessFor(userId));
+  // HR/Admin see the meetings of every company they act on (company access), still only title, organizer, time and head-count. A Productivity
+  // Supervisor sees the same overview for every company (counts only; cancelling stays with the organizer and HR/Admin).
+  const companyScope = watching ? await monitoringWhere() : scopeWhere(await accessFor(userId));
   const rows = await prisma.meeting.findMany({
     where: { ...companyScope, ...(scope === "upcoming" ? { status: "SCHEDULED", endsAt: { gte: now } } : scope === "past" ? { status: "SCHEDULED", endsAt: { lt: now } } : { status: "CANCELLED" }) },
     select: { id: true, title: true, startsAt: true, endsAt: true, status: true, organizer: { select: { firstName: true, lastName: true } }, _count: { select: { attendees: true } } },

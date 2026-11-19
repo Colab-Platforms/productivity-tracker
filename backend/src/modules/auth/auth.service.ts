@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { isOwnerAdmin } from "../../lib/owner.js";
+import { isSupervisor } from "../../lib/supervisor.js";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../lib/prisma.js";
 import { photoStamps } from "../photos/photos.service.js";
@@ -93,7 +94,7 @@ export async function login(identifier: string, password: string) {
   // The sign-in is attributed to the person who signed in, in their company.
   auditNote({ actorId: user.id, platformId: user.platformId, targetUserId: user.id, summary: "Signed in" });
 
-  return { token, user: publicUser(user) };
+  return { token, user: { ...publicUser(user), supervisor: await isSupervisor(user.id).catch(() => false) } };
 }
 
 export async function getMe(userId: string) {
@@ -105,7 +106,9 @@ export async function getMe(userId: string) {
   if (!user) return null;
   const photoAt = (await photoStamps([user.id])).get(user.id) ?? null;
   const documentsExempt = await isOwnerAdmin(user.id).catch(() => false);
-  return { ...publicUser(user), photoAt, documentsExempt };
+  // A Productivity Supervisor keeps role EMPLOYEE; this flag only tells the app to show the monitoring home and menu (the server re-checks on every request).
+  const supervisor = await isSupervisor(user.id).catch(() => false);
+  return { ...publicUser(user), photoAt, documentsExempt, supervisor };
 }
 
 function publicUser(user: any) {

@@ -33,6 +33,8 @@ export type Me = {
   trackerAccessEnabled: boolean;
   /** Company owner (Admin with the all-companies grant): owes no personal documents. Decided by the server. */
   documentsExempt?: boolean;
+  /** Productivity Supervisor: stays an EMPLOYEE for everything personal and gets a read-only monitoring view on top. Decided by the server. */
+  supervisor?: boolean;
     mustChangePassword?: boolean;
   platform: { id: string; name: string; slug: string; timezone?: string };
 };
@@ -243,7 +245,7 @@ type NavItem = {
 // scan. "Me" is my own day, "My team" is other people, "Setup" is config
 // that HR touches once a month.
 // The HR pages that understand the shared company / project / manager filters. Moving between two of them keeps the choice.
-const CARRY_PAGES = new Set(["/dashboard/team-attendance", "/dashboard/attendance-calendar", "/dashboard/employees", "/dashboard/employee-overview", "/dashboard/organization-hierarchy", "/dashboard/reports", "/dashboard/leave", "/dashboard/approvals"]);
+const CARRY_PAGES = new Set(["/dashboard/supervisor/employees", "/dashboard/team-attendance", "/dashboard/attendance-calendar", "/dashboard/employees", "/dashboard/employee-overview", "/dashboard/organization-hierarchy", "/dashboard/reports", "/dashboard/leave", "/dashboard/approvals"]);
 
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
@@ -326,6 +328,32 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+// The Productivity Supervisor's own menu (instead of the Employee menu): my own work first, then read-only monitoring of everyone.
+const SUPERVISOR_GROUPS: { title: string; items: NavItem[] }[] = [
+  {
+    title: "My Workspace",
+    items: [
+      { href: "/dashboard/profile", label: "My Profile", ready: true, icon: I.admin },
+      { href: "/dashboard/employee", label: "Clock In / Clock Out", ready: true, icon: I.today },
+      { href: "/dashboard/attendance-calendar", label: "My Attendance", ready: true, icon: I.holidays },
+      { href: "/dashboard/tasks", label: "My Daily Tasks", ready: true, icon: I.tasks },
+      { href: "/dashboard/leave", label: "My Leave", ready: true, icon: I.holidays },
+      { href: "/dashboard/meetings", label: "Meetings", ready: true, icon: I.huddle },
+    ],
+  },
+  {
+    title: "Organization Monitoring",
+    items: [
+      { href: "/dashboard/supervisor", label: "Supervisor Dashboard", ready: true, icon: I.grid },
+      { href: "/dashboard/supervisor/employees", label: "All Employees", ready: true, icon: I.team },
+      { href: "/dashboard/reports?tab=productivity", label: "Productivity Tracker", ready: true, icon: I.trend },
+      { href: "/dashboard/approvals", label: "Tasks & Performance", ready: true, icon: I.approvals },
+      { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, icon: I.reports },
+    ],
+  },
+];
+const SUPERVISOR_ITEMS = SUPERVISOR_GROUPS.flatMap((g) => g.items);
+
 function initials(name: string) {
   return name
     .split(/\s+/)
@@ -404,8 +432,8 @@ export default function DashboardLayout({
       document.title = "Avatar HRMS";
       return;
     }
-    const home = pathname === homeFor(role) ? (dashboardTitle(role) ?? "Today") : null;
-    const name = pathname === "/dashboard/attendance-calendar" ? "Attendance Calendar" : pageTitle(GROUPS.flatMap((g) => g.items), pathname, role, home);
+    const home = pathname === homeFor(role, me?.supervisor) ? (dashboardTitle(role, me?.supervisor) ?? "Today") : null;
+    const name = pathname === "/dashboard/attendance-calendar" ? (me?.supervisor ? "My Attendance" : "Attendance Calendar") : pageTitle(me?.supervisor ? SUPERVISOR_ITEMS : GROUPS.flatMap((g) => g.items), pathname, role, home);
     const full = `${name} | Avatar HRMS`;
     const apply = () => {
       if (document.title !== full) document.title = full;
@@ -417,7 +445,7 @@ export default function DashboardLayout({
     const watch = new MutationObserver(apply);
     watch.observe(document.head, { childList: true, characterData: true, subtree: true });
     return () => watch.disconnect();
-  }, [pathname, me?.role]);
+  }, [pathname, me?.role, me?.supervisor]);
 
   // Query Desk / Complaint Centre: how many items are waiting for this person (queries to answer, corrections to decide, information asked of them).
   // Refreshed every minute and when the tab is focused.
@@ -522,15 +550,17 @@ export default function DashboardLayout({
 
   const fullName = `${me.firstName} ${me.lastName}`.trim();
   // The page title for the header: the sidebar label of the current page, the dashboard name on the person's own home.
-  const headerTitle = pageTitle(GROUPS.flatMap((g) => g.items), pathname, me.role, pathname === homeFor(me.role) ? (dashboardTitle(me.role) ?? "Today") : null);
-  const groups = GROUPS.map((g) => ({
-    ...g,
-    items: g.items.filter(
-      (i) =>
-        (!i.roles || i.roles.includes(me.role)) &&
-        !(i.notRoles && i.notRoles.includes(me.role))
-    ),
-  })).filter((g) => g.items.length > 0);
+  const headerTitle = pageTitle(me.supervisor ? SUPERVISOR_ITEMS : GROUPS.flatMap((g) => g.items), pathname, me.role, pathname === homeFor(me.role, me.supervisor) ? (dashboardTitle(me.role, me.supervisor) ?? "Today") : null);
+  const groups = me.supervisor
+    ? SUPERVISOR_GROUPS
+    : GROUPS.map((g) => ({
+        ...g,
+        items: g.items.filter(
+          (i) =>
+            (!i.roles || i.roles.includes(me.role)) &&
+            !(i.notRoles && i.notRoles.includes(me.role))
+        ),
+      })).filter((g) => g.items.length > 0);
 
   const allHrefs = groups.flatMap((g) => g.items.map((i) => i.href));
   const renderSidebar = (compact: boolean) => (

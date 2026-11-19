@@ -13,7 +13,7 @@ import type { Filters, Options } from "./useHrFilters";
 const label = "mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400";
 const control = "h-9 w-full rounded-xl border border-indigo-100 bg-white px-3 text-sm text-slate-800 outline-none focus:border-indigo-400";
 
-export type Show = { search?: boolean; company?: boolean; project?: boolean; manager?: boolean; designation?: boolean; status?: boolean };
+export type Show = { search?: boolean; company?: boolean; project?: boolean; manager?: boolean; department?: boolean; designation?: boolean; status?: boolean };
 
 export default function FilterBar({
   filters,
@@ -43,12 +43,14 @@ export default function FilterBar({
 }) {
   const companyName = options?.companies.find((c) => c.id === filters.company)?.name;
   const managerName = options?.managers.find((m) => m.id === filters.manager)?.name;
+  const departmentName = options?.departments?.find((d) => d.id === filters.department)?.name;
   const projectNames = filters.project.map((id) => options?.projects.find((p) => p.id === id)?.name ?? "Project");
 
   const chips: { key: string; text: string; remove: () => void }[] = [];
   if (show.company && filters.company) chips.push({ key: "company", text: `Company: ${companyName ?? "…"}`, remove: () => update({ company: "" }) });
   if (show.project) filters.project.forEach((id, i) => chips.push({ key: `p-${id}`, text: `Project: ${projectNames[i]}`, remove: () => update({ project: filters.project.filter((x) => x !== id) }) }));
   if (show.manager && filters.manager) chips.push({ key: "manager", text: `Manager: ${managerName ?? "…"}`, remove: () => update({ manager: "" }) });
+  if (show.department && filters.department) chips.push({ key: "department", text: `Department: ${departmentName ?? "…"}`, remove: () => update({ department: "" }) });
   if (show.designation && filters.designation) chips.push({ key: "designation", text: `Designation: ${filters.designation}`, remove: () => update({ designation: "" }) });
   if (show.status && filters.status) chips.push({ key: "status", text: `${statusLabel}: ${titleCase(filters.status)}`, remove: () => update({ status: "" }) });
   if (show.search && filters.q) chips.push({ key: "q", text: `Search: “${filters.q}”`, remove: () => update({ q: "" }) });
@@ -84,6 +86,15 @@ export default function FilterBar({
             <select id="hf-manager" value={filters.manager} onChange={(e) => update({ manager: e.target.value })} className={control}>
               <option value="">All Managers</option>
               {options?.managers.map((m) => <option key={m.id} value={m.id}>{m.name}{m.employeeCode ? ` (${m.employeeCode})` : ""} · {m.reports}</option>)}
+            </select>
+          </div>
+        )}
+        {show.department && (
+          <div className="w-48">
+            <label className={label} htmlFor="hf-department">Department</label>
+            <select id="hf-department" value={filters.department} onChange={(e) => update({ department: e.target.value })} className={control}>
+              <option value="">All Departments</option>
+              {options?.departments?.map((d) => <option key={d.id} value={d.id}>{d.name}{(options?.companies.length ?? 0) > 1 ? ` · ${d.company}` : ""} · {d.people}</option>)}
             </select>
           </div>
         )}

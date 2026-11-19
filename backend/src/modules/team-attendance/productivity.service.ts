@@ -11,6 +11,7 @@
 //
 // Who is on screen is the same list as everywhere else in the manager views (visibleUserIds).
 
+import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds } from "../hr-filters/hrFilters.service.js";
 import { ratingsFor, starsFor } from "../tasks/tasks.rating.js";
@@ -37,7 +38,7 @@ async function getViewer(viewerId: string, self = false) {
     select: { id: true, role: true, platformId: true, platform: { select: { timezone: true } } },
   });
   if (!viewer) throw new Error("USER_NOT_FOUND");
-  if (!self && !["MANAGER", "HR", "ADMIN"].includes(String(viewer.role))) throw new Error("NOT_ALLOWED");
+  if (!self && !["MANAGER", "HR", "ADMIN"].includes(String(viewer.role)) && !(await isSupervisor(viewer.id))) throw new Error("NOT_ALLOWED");
   return viewer;
 }
 

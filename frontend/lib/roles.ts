@@ -14,7 +14,13 @@ export function roleLabel(role: string | null | undefined): string {
   return ROLE_LABEL[role] ?? role;
 }
 
-/** "HR Dashboard", "Admin Dashboard" ... for the two roles that have a home dashboard of their own; null for everyone else. */
-export function dashboardTitle(role: string | null | undefined): string | null {
+/** "HR Dashboard", "Admin Dashboard" ... for the roles that have a home dashboard of their own; null for everyone else. */
+export function dashboardTitle(role: string | null | undefined, supervisor?: boolean): string | null {
+  if (supervisor && role === "EMPLOYEE") return "Productivity Supervisor Dashboard";
   return role === "ADMIN" || role === "HR" ? `${roleLabel(role)} Dashboard` : null;
+}
+
+/** The identity to show people: a Productivity Supervisor is still stored as EMPLOYEE, but is presented under their own name. */
+export function identityLabel(role: string | null | undefined, supervisor?: boolean): string {
+  return supervisor && role === "EMPLOYEE" ? "Productivity Supervisor" : roleLabel(role);
 }

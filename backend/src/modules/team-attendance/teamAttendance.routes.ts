@@ -1,6 +1,6 @@
 import { Router, type Response } from "express";
 import { parseFilters } from "../hr-filters/hrFilters.logic.js";
-import { requireAuth, requireRole } from "../../middlewares/auth.js";
+import { requireAuth, requireRole, requireMonitor } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import * as svc from "./teamAttendance.service.js";
 import * as productivity from "./productivity.service.js";
@@ -8,7 +8,7 @@ import { getTeamReport } from "./teamReport.service.js";
 
 const router = Router();
 guardUuidParams(router);
-router.use(requireAuth, requireRole("MANAGER", "HR", "ADMIN"));
+router.use(requireAuth, requireMonitor);
 
 const MESSAGES: Record<string, { status: number; message: string }> = {
   USER_NOT_FOUND: { status: 404, message: "Account not found." },

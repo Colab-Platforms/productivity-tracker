@@ -52,11 +52,11 @@ function useApi<T>(path: string | null, reload: number) {
 
 function MeetingsInner() {
   const me = useMe();
-  const isHr = me?.role === "HR" || me?.role === "ADMIN";
+  const isHr = me?.role === "HR" || me?.role === "ADMIN" || me?.supervisor === true;
   const params = useSearchParams();
   const linked = params.get("id");
   // A link like /dashboard/meetings?tab=participation opens that tab (if this person has it). Clicking a tab wins until the link changes.
-  const urlTab = tabFromUrl(params.get("tab"), me?.role);
+  const urlTab = tabFromUrl(params.get("tab"), me?.role, me?.supervisor);
   const [picked, setPicked] = useState<{ tab: TabKey; forUrl: TabKey | null } | null>(null);
   const tab: TabKey = picked && picked.forUrl === urlTab ? picked.tab : (urlTab ?? "upcoming");
   const setTab = (k: TabKey) => setPicked({ tab: k, forUrl: urlTab });
@@ -103,7 +103,7 @@ function MeetingsInner() {
     participation: "Participation",
     overview: "Company overview",
   };
-  const tabs = tabsFor(me?.role).map((k) => [k, tabLabels[k]] as [TabKey, string]);
+  const tabs = tabsFor(me?.role, me?.supervisor).map((k) => [k, tabLabels[k]] as [TabKey, string]);
   const shown = list.data ? (tab === "history" ? list.data.meetings : forTab(list.data.meetings, tab)) : null;
   const canCreate = counts.data?.canCreate ?? false;
 

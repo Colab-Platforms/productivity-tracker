@@ -11,7 +11,7 @@ import Avatar from "../_photos/Avatar";
 import { roleLabel } from "@/lib/roles";
 import { homeFor } from "@/lib/roleHome";
 
-type Person = { id: string; firstName: string; lastName: string; role: string; employeeCode: string | null; photoAt?: string | null };
+type Person = { id: string; firstName: string; lastName: string; role: string; employeeCode: string | null; photoAt?: string | null; supervisor?: boolean };
 
 const iconBtn = "flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-[var(--nav-hover)] hover:text-indigo-600";
 
@@ -50,7 +50,7 @@ export default function TopBar({ me, title, onSignOut, collapsed, onToggleSideba
       <div className="min-w-0">
         <h1 className="truncate text-[17px] font-semibold leading-tight tracking-tight text-slate-900">{title}</h1>
         <nav aria-label="Breadcrumb" className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]">
-          <Link href={homeFor(me.role)} className="hover:text-indigo-600 hover:underline">Home</Link>
+          <Link href={homeFor(me.role, me.supervisor)} className="hover:text-indigo-600 hover:underline">Home</Link>
           <span aria-hidden="true">/</span>
           <span className="truncate text-slate-700">{title}</span>
         </nav>

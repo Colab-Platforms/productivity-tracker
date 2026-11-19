@@ -13,12 +13,14 @@ export type HrFilters = {
   companyIds: string[];
   projectIds: string[];
   managerIds: string[];
+  /** Query Desk departments (a person can be in several). Only the Productivity Supervisor screens offer this filter. */
+  departmentIds: string[];
   designation: string | null;
   status: string | null;
   q: string | null;
 };
 
-export const NO_FILTERS: HrFilters = { companyIds: [], projectIds: [], managerIds: [], designation: null, status: null, q: null };
+export const NO_FILTERS: HrFilters = { companyIds: [], projectIds: [], managerIds: [], departmentIds: [], designation: null, status: null, q: null };
 
 const STATUSES = ["ACTIVE", "INVITED", "SUSPENDED", "EXITED", "CANDIDATE"];
 
@@ -45,13 +47,14 @@ export function parseFilters(query: Record<string, unknown>): HrFilters {
     companyIds: idList(query.companyId ?? query.company),
     projectIds: idList(query.projectId ?? query.project ?? query.teamId),
     managerIds: idList(query.managerId ?? query.manager),
+    departmentIds: idList(query.departmentId ?? query.department),
     designation: text(query.designation, 80),
     status: status && STATUSES.includes(status) ? status : null,
     q: text(query.q ?? query.search, 80),
   };
 }
 
-export const isFiltering = (f: HrFilters) => f.companyIds.length + f.projectIds.length + f.managerIds.length > 0 || !!f.designation || !!f.status || !!f.q;
+export const isFiltering = (f: HrFilters) => f.companyIds.length + f.projectIds.length + f.managerIds.length + f.departmentIds.length > 0 || !!f.designation || !!f.status || !!f.q;
 
 /** The same filters as query-string pairs (for links that carry them to a related page). Only company, project and manager travel between pages. */
 export function carried(f: Pick<HrFilters, "companyIds" | "projectIds" | "managerIds">): Record<string, string> {
@@ -67,12 +70,13 @@ export function carried(f: Pick<HrFilters, "companyIds" | "projectIds" | "manage
  * for the multi-valued ones (company, project, manager) when they match ANY of the chosen values. A person on three of the chosen projects is still ONE person.
  */
 export function matches(
-  person: { id: string; platformId: string; reportsToId: string | null; projectIds: string[]; designation: string | null; status: string; name: string; employeeCode: string | null },
+  person: { id: string; platformId: string; reportsToId: string | null; projectIds: string[]; departmentIds?: string[]; designation: string | null; status: string; name: string; employeeCode: string | null },
   f: HrFilters
 ): boolean {
   if (f.companyIds.length && !f.companyIds.includes(person.platformId)) return false;
   if (f.projectIds.length && !person.projectIds.some((p) => f.projectIds.includes(p))) return false;
   if (f.managerIds.length && !(person.reportsToId && f.managerIds.includes(person.reportsToId))) return false;
+  if (f.departmentIds.length && !(person.departmentIds ?? []).some((d) => f.departmentIds.includes(d))) return false;
   if (f.designation && (person.designation ?? "").toLowerCase() !== f.designation.toLowerCase()) return false;
   if (f.status && person.status !== f.status) return false;
   if (f.q) {

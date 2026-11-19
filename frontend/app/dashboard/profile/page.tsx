@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { roleLabel } from "@/lib/roles";
+import { identityLabel } from "@/lib/roles";
 import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import { MyDocuments } from "../_documents/MyDocuments";
@@ -167,7 +167,7 @@ function StaffProfile() {
                 {me.platform.name}
               </span>
               <span className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-medium text-white">
-                {roleLabel(me.role)}
+                {identityLabel(me.role, me.supervisor)}
               </span>
               {me.employeeCode && (
                 <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white">
@@ -232,7 +232,7 @@ function StaffProfile() {
           <Fields
             rows={[
               ["Designation", me.designation],
-              ["System role", roleLabel(me.role)],
+              ["System role", identityLabel(me.role, me.supervisor)],
               ["Department / team", details?.departments.join(", ")],
               ["Reporting manager", details?.reportsTo ? `${details.reportsTo.name}${details.reportsTo.designation ? ` (${details.reportsTo.designation})` : ""}` : null],
               ["Date of joining", showDay(details?.dateOfJoining ?? null)],

@@ -1,12 +1,12 @@
 import { Router, type Response } from "express";
-import { requireAuth, requireRole } from "../../middlewares/auth.js";
+import { requireAuth, requireMonitor } from "../../middlewares/auth.js";
 import { isBadInput } from "../../lib/params.js";
 import { parseFilters } from "./hrFilters.logic.js";
 import { options } from "./hrFilters.service.js";
 
 const router = Router();
 // HR and Admin (the companies they act on) and managers (their own people). Everyone else has nothing to filter.
-router.use(requireAuth, requireRole("HR", "ADMIN", "MANAGER"));
+router.use(requireAuth, requireMonitor);
 
 const MESSAGES: Record<string, { status: number; message: string }> = {
   NOT_ALLOWED: { status: 403, message: "You do not have people to filter." },
@@ -23,7 +23,7 @@ function fail(res: Response, error: unknown) {
 // The filter bar's choices and counts. Read-only; everything is limited to the people the viewer may already see.
 router.get("/options", async (req, res) => {
   try {
-    res.json(await options(req.user!.userId, parseFilters(req.query as Record<string, unknown>)));
+    res.json(await options(req.user!.userId, parseFilters(req.query as Record<string, unknown>), req.query.withDepartments === "1"));
   } catch (e) {
     fail(res, e);
   }
