@@ -26,6 +26,23 @@ export type ArrivalFields = {
   correctedBy?: string | null;
 };
 
+/**
+ * The ONE rule for "this day is a late arrival", used by every summary count and the late-arrival sheet so they can never disagree with the daily rows.
+ * The daily rows classify the first check-in against the arrival rule (on time up to 09:45, Late up to 10:15, Half Day after), so Late and Half Day both
+ * count. Only when a row carries no arrival classification at all (an older answer) does the shift-based late minutes decide. A typed remark is NEVER
+ * part of this: a late day with no remark is still a late arrival. HR-approved corrections already change the check-in time the classification is made from.
+ */
+export function isLateArrival(r: { arrival?: string | null; lateMinutes?: number | null }): boolean {
+  if (r.arrival === "LATE" || r.arrival === "HALF_DAY") return true;
+  if (r.arrival) return false; // classified as on time (or absent, leave, holiday ...): the arrival rule has spoken
+  return (r.lateMinutes ?? 0) > 0;
+}
+
+/** A reason the person actually typed (not the words "No remark provided"). Counted on its own, apart from late arrivals. */
+export function hasTypedRemark(r: { lateReason?: string | null }): boolean {
+  return typeof r.lateReason === "string" && r.lateReason.trim().length > 0;
+}
+
 export function minutesText(m: number): string {
   return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m} min`;
 }
