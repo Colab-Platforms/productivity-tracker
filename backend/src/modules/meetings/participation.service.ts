@@ -210,7 +210,7 @@ export async function join(userId: string, meetingId: string) {
   const v = await who(userId);
   // The organizer or someone invited. Anyone else: it does not exist as far as they can tell (same privacy rule as the rest of Meetings).
   const m = await prisma.meeting.findFirst({
-    where: { id: meetingId, platformId: v.platformId, OR: [{ attendees: { some: { userId } } }, { organizerId: userId }] },
+    where: { id: meetingId, OR: [{ attendees: { some: { userId } } }, { organizerId: userId }] },
     select: { id: true, title: true, startsAt: true, endsAt: true, status: true, organizerId: true },
   });
   if (!m) throw new Error("NOT_FOUND");
@@ -246,7 +246,7 @@ export async function respond(userId: string, meetingId: string, response: unkno
   const v = await who(userId);
   // Only someone invited. Anyone else: it does not exist as far as they can tell.
   const m = await prisma.meeting.findFirst({
-    where: { id: meetingId, platformId: v.platformId, attendees: { some: { userId } } },
+    where: { id: meetingId, attendees: { some: { userId } } },
     select: { id: true, title: true, startsAt: true, endsAt: true, status: true, organizerId: true },
   });
   if (!m) throw new Error("NOT_FOUND");
