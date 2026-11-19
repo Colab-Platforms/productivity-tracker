@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma.js";
 import { classify } from "../lib/auditCatalog.js";
 import { runWithAudit, scrub, type AuditNote } from "../lib/auditContext.js";
+import { clientIp } from "../lib/clientIp.js";
 
 // ---------------------------------------------------------------------------
 // AUDIT
@@ -42,7 +43,9 @@ export function audit(req: Request, res: Response, next: NextFunction) {
       status: res.statusCode,
       // What the client sent, with secrets and file contents removed.
       detail: scrub(body) as never,
-      ip: forwarded.trim() || req.ip || null,
+      // The address Express derived with `trust proxy` (a client cannot choose it by sending a header). It used to be the first X-Forwarded-For
+      // entry, which a client could write itself.
+      ip: clientIp(req) ?? (forwarded.trim() || null),
     };
     const structured = {
       ...legacy,

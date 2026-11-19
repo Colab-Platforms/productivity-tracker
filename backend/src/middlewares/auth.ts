@@ -3,6 +3,9 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma.js";
 import { getPinnedCompany } from "../lib/deployment.js";
 import { isSupervisor } from "../lib/supervisor.js";
+import { check, recordBlockedSession } from "../lib/securityLog.js";
+import { stampActivity } from "../modules/login-activity/loginEvents.js";
+import { ACCESS_DENIED_MESSAGE } from "../lib/ipPolicy.js";
 
 // Every route past /auth/login runs through requireAuth. It reads the bearer
 // token, verifies it, and hangs the result on req.user — which is what every
@@ -13,6 +16,8 @@ export type AuthUser = {
   userId: string;
   platformId: string;
   role: string;
+  /** the sign-in this token belongs to (absent on tokens issued before login tracking) */
+  sid?: string;
 };
 
 declare global {
@@ -71,13 +76,28 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return;
     }
 
+    // Network access policy: a session is only good from an authorised address (off by default; monitor first, then enforce). Checked on every
+    // request, so a token taken to another network stops working there. The address is the one Express derived with `trust proxy`.
+    const net = check(req);
+    if (net.verdict.mode !== "off" && !net.verdict.allowed) {
+      void recordBlockedSession(net.ip, net.verdict, { userId: String(payload.userId), platformId: live.platformId }, { method: req.method, path: req.originalUrl.split("?")[0] });
+      if (net.verdict.blocked) {
+        res.status(403).json({ error: ACCESS_DENIED_MESSAGE, code: "IP_NOT_ALLOWED" });
+        return;
+      }
+    }
+
     // Role and company come from the record, not the token, so a demotion or
     // transfer takes effect on the next request instead of at token expiry.
+    const sid = typeof payload.sid === "string" && /^[0-9a-f-]{36}$/i.test(payload.sid) ? payload.sid : undefined;
     req.user = {
       userId: String(payload.userId),
       platformId: live.platformId,
       role: String(live.role),
+      ...(sid ? { sid } : {}),
     };
+    // Last activity of this sign-in (at most one small update a minute). Never slows or fails the request.
+    if (sid) stampActivity(sid);
 
     next();
   } catch (error) {

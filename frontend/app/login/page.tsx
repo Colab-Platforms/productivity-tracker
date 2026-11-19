@@ -14,7 +14,7 @@
 import { useEffect, useState } from "react";
 import { homeFor } from "@/lib/roleHome";
 import { useRouter } from "next/navigation";
-import { apiGet, apiPost, getToken, setToken } from "@/lib/api";
+import { apiGet, apiPost, getToken, setToken, LOGIN_NOTICE_KEY } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,6 +28,17 @@ export default function LoginPage() {
   useEffect(() => {
     if (getToken()) router.replace("/dashboard");
   }, [router]);
+
+  // A session that was refused because of the network it came from leaves its message here (see lib/api.ts).
+  useEffect(() => {
+    try {
+      const notice = sessionStorage.getItem(LOGIN_NOTICE_KEY);
+      if (notice) {
+        sessionStorage.removeItem(LOGIN_NOTICE_KEY);
+        setError(notice);
+      }
+    } catch { /* nothing to show */ }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

@@ -12,7 +12,7 @@ export type AuditAction = (typeof ACTIONS)[number];
 
 export const MODULES = [
   "Authentication", "Attendance", "Tasks", "Employees", "Teams & rules", "Leave", "Tickets", "Documents",
-  "Payroll", "Holidays", "Offers", "Projects", "Policies", "Companies", "Meetings", "Other",
+  "Payroll", "Holidays", "Offers", "Projects", "Policies", "Companies", "Meetings", "Security", "Other",
 ] as const;
 
 export type Classified = {
@@ -51,6 +51,7 @@ const RULES: Rule[] = [
   { method: "PATCH", re: /^\/api\/management-talk(\/.*)?$/, module: "Other", action: "OTHER", summary: "Confidential", skip: true },
   { method: "DELETE", re: /^\/api\/management-talk(\/.*)?$/, module: "Other", action: "OTHER", summary: "Confidential", skip: true },
   { method: "POST", re: /^\/api\/auth\/login$/, module: "Authentication", action: "LOGIN", summary: "Signed in" },
+  { method: "POST", re: /^\/api\/auth\/logout$/, module: "Authentication", action: "LOGIN", summary: "Signed out" },
 
   { method: "POST", re: /^\/api\/tracker\/clock-in$/, module: "Attendance", action: "CLOCK", summary: "Clocked in" },
   { method: "POST", re: /^\/api\/tracker\/clock-out$/, module: "Attendance", action: "CLOCK", summary: "Clocked out" },

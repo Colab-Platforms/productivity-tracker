@@ -6,6 +6,11 @@ import { photoStamps } from "../photos/photos.service.js";
 import { isOwnerAdmin } from "../../lib/owner.js";
 import { accessFor } from "../../lib/companyAccess.js";
 import { loginLimiter, clearLoginAttempts } from "../../middlewares/rateLimit.js";
+import { randomUUID } from "node:crypto";
+import jwt from "jsonwebtoken";
+import { check } from "../../lib/securityLog.js";
+import { markLogout, recordAuthAttempt } from "../login-activity/loginEvents.js";
+import { ACCESS_DENIED_MESSAGE } from "../../lib/ipPolicy.js";
 
 const router = Router();
 
@@ -19,12 +24,25 @@ router.post("/login", async (req, res) => {
     return res.status(400).json({ error: "Email and password are required" });
   }
 
+  // Network access policy, BEFORE the password is looked at: from an address that is not authorised nobody can try passwords or get a token, and the
+  // answer is the same for every role. (Off by default; in monitor mode nobody is refused but the attempt is logged.)
+  const net = check(req);
+  if (net.verdict.blocked) {
+    await recordAuthAttempt(req, net.ip, net.verdict, { username: email, outcome: "BLOCKED", reason: "IP_NOT_ALLOWED", credentialsOk: null });
+    return res.status(403).json({ error: ACCESS_DENIED_MESSAGE, code: "IP_NOT_ALLOWED" });
+  }
+
+  // The id of THIS sign-in; it goes into the token so the login history can follow the session to its last activity and its logout.
+  const sessionId = randomUUID();
   try {
-    const result = await authService.login(email, password);
+    const result = await authService.login(email, password, sessionId);
     clearLoginAttempts(req);
+    const exp = (jwt.decode(result.token) as { exp?: number } | null)?.exp;
+    await recordAuthAttempt(req, net.ip, net.verdict, { username: email, outcome: "SUCCESS", userId: result.user.id, platformId: result.user.platform.id, sessionId, expiresAt: exp ? new Date(exp * 1000) : null, credentialsOk: true });
     return res.json(result);
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
+    await recordAuthAttempt(req, net.ip, net.verdict, { username: email, outcome: "FAILED", reason: code === "INVALID_CREDENTIALS" || code === "ACCOUNT_INACTIVE" ? code : "OTHER", credentialsOk: code === "INVALID_CREDENTIALS" ? false : null });
 
     if (code === "INVALID_CREDENTIALS") {
       return res.status(401).json({ error: "Email or password is incorrect" });
@@ -36,6 +54,13 @@ router.post("/login", async (req, res) => {
     console.error("Login failed:", error);
     return res.status(500).json({ error: "Something went wrong signing in" });
   }
+});
+
+// Logout: stamps the end of THIS sign-in in the login history (once). The token itself is dropped by the browser; it is not revoked on the server.
+router.post("/logout", requireAuth, async (req, res) => {
+  const sid = req.user!.sid;
+  if (sid) await markLogout(sid, req.user!.userId);
+  return res.json({ ok: true });
 });
 
 router.get("/me", requireAuth, async (req, res) => {

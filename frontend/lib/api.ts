@@ -58,6 +58,19 @@ const CODE_TEXT: Record<string, string> = {
 };
 const said = (code: unknown) => CODE_TEXT[String(code)] ?? (typeof code === "string" ? code : "Something went wrong");
 
+// The server refuses a signed-in session that is used from a network that is not authorised (code IP_NOT_ALLOWED). The person is signed out and shown
+// the server's message on the sign-in page. On the sign-in page itself the message just shows under the form.
+export const LOGIN_NOTICE_KEY = "hrms-login-notice";
+function leaveIfBlocked(data: { code?: unknown; error?: unknown }) {
+  if (data?.code !== "IP_NOT_ALLOWED" || typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/login")) return;
+  try {
+    clearToken();
+    sessionStorage.setItem(LOGIN_NOTICE_KEY, typeof data.error === "string" ? data.error : "Access Denied.");
+  } catch { /* the redirect below still happens */ }
+  window.location.assign("/login");
+}
+
 // fetch, but a dropped connection (or an unreachable server) says so in plain words instead of the browser's
 // "Failed to fetch".
 async function send(url: string, init?: RequestInit): Promise<Response> {
@@ -77,7 +90,10 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
 
   const data = await res.json().catch(() => ({}));
   // `code` and `data` ride along so a screen can react to a specific refusal (for example "late, give a reason").
-  if (!res.ok) throw Object.assign(new Error(said(data.error)), { code: typeof data.code === "string" ? data.code : undefined, data });
+  if (!res.ok) {
+    leaveIfBlocked(data);
+    throw Object.assign(new Error(said(data.error)), { code: typeof data.code === "string" ? data.code : undefined, data });
+  }
   return data as T;
 }
 
@@ -89,7 +105,7 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   });
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(said(data.error));
+  if (!res.ok) { leaveIfBlocked(data); throw new Error(said(data.error)); }
   return data as T;
 }
 
@@ -97,7 +113,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   const res = await send(`${API_URL}${path}`, { headers: headers() });
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(said(data.error));
+  if (!res.ok) { leaveIfBlocked(data); throw new Error(said(data.error)); }
   return data as T;
 }
 export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
@@ -108,7 +124,7 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   });
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(said(data.error));
+  if (!res.ok) { leaveIfBlocked(data); throw new Error(said(data.error)); }
   return data as T;
 }
 
@@ -116,7 +132,7 @@ export async function apiDelete<T>(path: string): Promise<T> {
   const res = await send(`${API_URL}${path}`, { method: "DELETE", headers: headers() });
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(said(data.error));
+  if (!res.ok) { leaveIfBlocked(data); throw new Error(said(data.error)); }
   return data as T;
 }
 
@@ -127,6 +143,6 @@ export async function apiPostFile<T>(path: string, file: Blob, contentType: stri
   const res = await send(`${API_URL}${path}`, { method: "POST", headers: h, body: file });
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(said(data.error));
+  if (!res.ok) { leaveIfBlocked(data); throw new Error(said(data.error)); }
   return data as T;
 }
