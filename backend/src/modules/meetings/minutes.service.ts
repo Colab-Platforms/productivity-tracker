@@ -46,7 +46,7 @@ async function meetingFor(userId: string, meetingId: string) {
   const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, platformId: true, firstName: true, lastName: true } });
   if (!u) throw new Error("USER_NOT_FOUND");
   const m = await prisma.meeting.findFirst({
-    where: { id: meetingId, platformId: u.platformId, OR: [{ organizerId: userId }, { attendees: { some: { userId } } }] },
+    where: { id: meetingId, OR: [{ organizerId: userId }, { attendees: { some: { userId } } }] },
     include: { attendees: { select: { userId: true, user: { select: { firstName: true, lastName: true } } } }, organizer: { select: { firstName: true, lastName: true } } },
   });
   if (!m) throw new Error("NOT_FOUND"); // not invited and not the organizer: it does not exist for this person

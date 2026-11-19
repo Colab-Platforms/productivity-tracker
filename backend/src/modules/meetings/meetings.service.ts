@@ -6,6 +6,7 @@ import { sendMail } from "../../lib/mailer.js";
 import { meetingEmail } from "../../lib/emails.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
 import * as part from "./participation.service.js";
+import { visibleUserIds } from "../tracker/tracker.service.js";
 
 // ---------------------------------------------------------------------------
 // MEETINGS (scheduled meetings with a pasted link)
@@ -85,15 +86,22 @@ function parseWhen(f: Fields, tz: string) {
   return { startsAt, endsAt };
 }
 
-async function checkAttendees(raw: unknown, organizerId: string, platformId: string) {
+/** Who may be invited: a MANAGER, only the people who report to them (teams they run, direct and extra reports) in ANY company, the same list as Attendance; others, their own company. */
+async function invitableWhere(organizer: { id: string; role: string; platformId: string }) {
+  if (organizer.role !== "MANAGER") return { platformId: organizer.platformId };
+  const team = await visibleUserIds(organizer);
+  return { id: { in: team } };
+}
+
+async function checkAttendees(raw: unknown, organizerId: string, organizer: { id: string; role: string; platformId: string }) {
   if (!Array.isArray(raw)) throw new Error("ATTENDEES_REQUIRED");
   const ids = [...new Set(raw.map(String))].filter((id) => id !== organizerId);
   if (ids.length === 0) throw new Error("ATTENDEES_REQUIRED");
   if (ids.length > MAX_ATTENDEES) throw new Error("TOO_MANY");
   if (ids.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) throw new Error("ATTENDEE_NOT_FOUND");
-  // Only active people of the organizer's OWN company can be invited.
+  // Only active people the organizer may invite (see invitableWhere).
   const found = await prisma.user.findMany({
-    where: { id: { in: ids }, platformId, status: { notIn: ["EXITED", "SUSPENDED"] } },
+    where: { AND: [{ id: { in: ids }, status: { notIn: ["EXITED", "SUSPENDED"] } }, await invitableWhere(organizer)] },
     select: { id: true, firstName: true, lastName: true, email: true },
   });
   if (found.length !== ids.length) throw new Error("ATTENDEE_NOT_FOUND");
@@ -190,17 +198,16 @@ export async function listMine(userId: string, f: { scope?: unknown; q?: unknown
   // A huddle you joined and have not ended stays in "upcoming" after its scheduled end, so the End Huddle button never disappears.
   const stillIn = scope === "upcoming" ? await part.openMeetingIds(userId) : [];
   const where = {
-    platformId: v.platformId,
-    ...mine,
+    ...mine, // organizer or invited: the person is the link, so a manager's invitee from another company sees it too
     ...(q ? { title: { contains: q, mode: "insensitive" as const } } : {}),
     ...(scope === "upcoming" ? { status: "SCHEDULED" as const, ...(stillIn.length ? { AND: [{ OR: [{ endsAt: { gte: now } }, { id: { in: stillIn } }] }] } : { endsAt: { gte: now } }) } : scope === "past" ? { status: "SCHEDULED" as const, endsAt: { lt: now } } : { status: "CANCELLED" as const }),
   };
   const [rows, counts] = await Promise.all([
     prisma.meeting.findMany({ where, include, orderBy: { startsAt: scope === "upcoming" ? "asc" : "desc" }, take: 200 }),
     Promise.all([
-      prisma.meeting.count({ where: { platformId: v.platformId, ...mine, status: "SCHEDULED", endsAt: { gte: now } } }),
-      prisma.meeting.count({ where: { platformId: v.platformId, ...mine, status: "SCHEDULED", endsAt: { lt: now } } }),
-      prisma.meeting.count({ where: { platformId: v.platformId, ...mine, status: "CANCELLED" } }),
+      prisma.meeting.count({ where: { ...mine, status: "SCHEDULED", endsAt: { gte: now } } }),
+      prisma.meeting.count({ where: { ...mine, status: "SCHEDULED", endsAt: { lt: now } } }),
+      prisma.meeting.count({ where: { ...mine, status: "CANCELLED" } }),
     ]),
   ]);
   const views = rows.map((m) => view(m as unknown as Row, v, now));
@@ -217,7 +224,7 @@ export async function listMine(userId: string, f: { scope?: unknown; q?: unknown
 export async function getOne(userId: string, id: string) {
   const v = await who(userId);
   const m = await prisma.meeting.findFirst({
-    where: { id, platformId: v.platformId, OR: [{ organizerId: userId }, { attendees: { some: { userId } } }] },
+    where: { id, OR: [{ organizerId: userId }, { attendees: { some: { userId } } }] },
     include,
   });
   // Not invited and not the organizer: it does not exist as far as this person can tell.
@@ -264,7 +271,7 @@ export async function people(userId: string) {
   const v = await who(userId);
   if (!CREATORS.includes(v.role)) throw new Error("NOT_ALLOWED");
   const rows = await prisma.user.findMany({
-    where: { platformId: v.platformId, status: { notIn: ["EXITED", "SUSPENDED"] }, id: { not: userId } },
+    where: { AND: [{ status: { notIn: ["EXITED", "SUSPENDED"] }, id: { not: userId } }, await invitableWhere({ id: userId, role: v.role, platformId: v.platformId })] },
     select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
     take: 1000,
@@ -283,7 +290,7 @@ export async function create(userId: string, body: Fields) {
   // A meeting cannot be scheduled in the past (a few minutes of slack for the clock).
   if (startsAt.getTime() < Date.now() - 5 * 60_000) throw new Error("PAST_MEETING");
   // An in-person meeting has no link; it is tracked by "I'm in the Meeting" instead.
-  const attendees = await checkAttendees(body.attendeeIds, userId, v.platformId);
+  const attendees = await checkAttendees(body.attendeeIds, userId, { id: userId, role: v.role, platformId: v.platformId });
   let inPerson = body.inPerson === true;
   // Team Huddle tracking switches ON by itself when a MANAGER invites only people who report to them and gives no meeting link (a link means an
   // online meeting). Without this, a meeting made without the tick had no Accept/Join buttons for anyone. An explicit choice is never overridden.
@@ -346,7 +353,7 @@ export async function update(userId: string, id: string, body: Fields) {
   const link = makeTracked || alreadyTracked ? null : body.meetingUrl !== undefined ? cleanUrl(body.meetingUrl) : m.meetingUrl ? { url: m.meetingUrl, provider: m.provider ?? "Other link" } : null;
 
   const before = new Set(m.attendees.map((a) => a.userId));
-  const next = body.attendeeIds !== undefined ? await checkAttendees(body.attendeeIds, userId, v.platformId) : null;
+  const next = body.attendeeIds !== undefined ? await checkAttendees(body.attendeeIds, userId, { id: userId, role: v.role, platformId: v.platformId }) : null;
   const nextIds = next ? new Set(next.map((a) => a.id)) : before;
   const added = next ? next.filter((a) => !before.has(a.id)) : [];
   const removedIds = [...before].filter((x) => !nextIds.has(x));

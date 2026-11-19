@@ -442,9 +442,10 @@ function EditModal({ meeting, tz, onClose, onDone }: { meeting: Meeting | null; 
               className={input}
             />
             {listOpen && (
-              <ul id="meeting-people" role="listbox" className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-xl bg-white py-1 shadow-[var(--shadow-lift)] ring-1 ring-indigo-100">
+              <ul id="meeting-people" role="listbox" className="absolute z-10 mt-1 max-h-80 w-full overflow-y-auto rounded-xl bg-white py-1 shadow-[var(--shadow-lift)] ring-1 ring-indigo-100">
                 {!people.data && !people.error && <li className="px-3 py-3 text-sm text-slate-400">Loading people…</li>}
                 {people.error && <li className="px-3 py-3 text-sm text-red-600">{people.error}</li>}
+                {people.data && all.length > 0 && <li className="sticky top-0 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 shadow-[0_1px_0_var(--color-indigo-100,#E6ECE9)]" aria-live="polite">{needle ? `${shown.length} of ${all.length} people match` : `${shown.length} people available${picked.length ? ` (${picked.length} already chosen)` : ""} · scroll for more`}</li>}
                 {people.data && shown.length === 0 && <li className="px-3 py-3 text-sm text-slate-400">{needle ? "No one matches that." : "Everyone available is already chosen."}</li>}
                 {shown.map((p) => (
                   <li key={p.id} role="option" aria-selected={false}>

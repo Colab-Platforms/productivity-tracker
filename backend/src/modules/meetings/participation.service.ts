@@ -210,7 +210,7 @@ export async function join(userId: string, meetingId: string) {
   const v = await who(userId);
   // The organizer or someone invited. Anyone else: it does not exist as far as they can tell (same privacy rule as the rest of Meetings).
   const m = await prisma.meeting.findFirst({
-    where: { id: meetingId, platformId: v.platformId, OR: [{ attendees: { some: { userId } } }, { organizerId: userId }] },
+    where: { id: meetingId, OR: [{ attendees: { some: { userId } } }, { organizerId: userId }] },
     select: { id: true, title: true, startsAt: true, endsAt: true, status: true, organizerId: true },
   });
   if (!m) throw new Error("NOT_FOUND");
@@ -246,7 +246,7 @@ export async function respond(userId: string, meetingId: string, response: unkno
   const v = await who(userId);
   // Only someone invited. Anyone else: it does not exist as far as they can tell.
   const m = await prisma.meeting.findFirst({
-    where: { id: meetingId, platformId: v.platformId, attendees: { some: { userId } } },
+    where: { id: meetingId, attendees: { some: { userId } } },
     select: { id: true, title: true, startsAt: true, endsAt: true, status: true, organizerId: true },
   });
   if (!m) throw new Error("NOT_FOUND");
@@ -301,7 +301,7 @@ export async function leave(userId: string, meetingId: string) {
   await requireReady();
   const v = await who(userId);
   const p = await prisma.meetingParticipation.findUnique({ where: { meetingId_userId: { meetingId, userId } } });
-  if (!p || p.platformId !== v.platformId) throw new Error("NOT_JOINED");
+  if (!p) throw new Error("NOT_JOINED"); // the row is this person's own (unique per meeting + person)
   if (p.leftAt) throw new Error("ALREADY_ENDED");
 
   const m = await prisma.meeting.findUnique({ where: { id: meetingId }, select: { organizerId: true, title: true } });
@@ -499,6 +499,7 @@ export async function correct(userId: string, meetingId: string, targetUserId: s
 
   const now = new Date();
   const existing = await prisma.meetingParticipation.findUnique({ where: { meetingId_userId: { meetingId, userId: targetUserId } } });
+  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { platformId: true } }); // the record belongs to the person's own company
 
   let newJoined: Date;
   let newLeft: Date | null;
@@ -525,7 +526,7 @@ export async function correct(userId: string, meetingId: string, targetUserId: s
   try {
     await prisma.$transaction(async (tx) => {
       if (existing) await tx.meetingParticipation.update({ where: { id: existing.id }, data });
-      else await tx.meetingParticipation.create({ data: { meetingId, platformId: v.platformId, userId: targetUserId, source: "MANAGER_ADDED", ...data } });
+      else await tx.meetingParticipation.create({ data: { meetingId, platformId: target?.platformId ?? v.platformId, userId: targetUserId, source: "MANAGER_ADDED", ...data } });
       await tx.meetingParticipationChange.create({
         data: {
           meetingId, userId: targetUserId, actedById: userId, action: existing ? "EDIT" : "ADD", reason,
@@ -547,7 +548,7 @@ export async function correct(userId: string, meetingId: string, targetUserId: s
   emitMeetingChange([userId, targetUserId], meetingId);
   // Tell the person, so a corrected record is never a surprise (never allowed to fail the correction).
   await notifyUsers({
-    platformId: v.platformId, userIds: [targetUserId], type: "MEETING_PARTICIPATION_CORRECTED",
+    platformId: target?.platformId ?? v.platformId, userIds: [targetUserId], type: "MEETING_PARTICIPATION_CORRECTED",
     title: `Your participation was updated: ${m.title}`,
     body: `${v.name} ${existing ? "corrected" : "recorded"} your participation in "${m.title}". Reason: ${reason}`,
     link: `/dashboard/meetings?id=${meetingId}`, data: { meetingId },
@@ -566,7 +567,7 @@ export async function history(userId: string, personId?: string) {
   if (person !== userId && !CREATORS.includes(v.role)) throw new Error("NOT_ALLOWED");
   // A manager reads the history of the meetings THEY organized; an Admin reads the person's history in every company they act on.
   const adminView = person !== userId && v.role === "ADMIN";
-  const meetingScope = adminView ? scopeWhere(await accessFor(userId)) : { platformId: v.platformId };
+  const meetingScope = adminView ? scopeWhere(await accessFor(userId)) : {}; // own history, or the meetings THIS manager organized: the person is the link, so an invitee of another company is included
 
   const invitesRaw = await prisma.meetingAttendee.findMany({
     where: { userId: person, meeting: { ...meetingScope, status: "SCHEDULED", ...(person !== userId && !adminView ? { organizerId: userId } : {}) } },
