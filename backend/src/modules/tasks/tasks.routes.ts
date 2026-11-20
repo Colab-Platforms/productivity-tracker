@@ -25,6 +25,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   NOT_FOUND: { status: 404, message: "That task doesn't exist." },
   FORBIDDEN: { status: 403, message: "Only managers can do that." },
   NOT_YOUR_TEAM: { status: 403, message: "That person isn't in your team." },
+  ADMIN_ASSIGNS_EMPLOYEES: { status: 403, message: "An Admin can assign tasks to employees only." },
   MANAGER_TASKS_ARE_PERSONAL: { status: 403, message: "A manager's tasks are their own. Tasks can't be assigned to a manager." },
   MISSING_FIELDS: { status: 400, message: "A title is required." },
   BAD_STATUS: { status: 400, message: "That isn't a valid status." },
@@ -88,6 +89,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_REVERT_TYPE: { status: 400, message: "Choose Partially completed or Not fully completed." },
   REMARK_REQUIRED: { status: 400, message: "Add a remark (at least 3 characters) explaining why." },
   REMARK_TOO_LONG: { status: 400, message: "Keep the remark to 300 characters or fewer." },
+  NOT_STARTED_YET: { status: 400, message: "This task is still To Do. It cannot be marked as partly done yet." },
+  BAD_PARTIAL: { status: 400, message: "Say whether the task is partially completed (true or false)." },
   ALREADY_REOPENED: { status: 409, message: "That task was already reopened." },
   BACKDATE_NOT_PAST: { status: 400, message: "Pick a date before today. Use Quick Add or Add Single Task for today." },
   BACKDATE_TOO_OLD: { status: 400, message: "That date is too old. Tasks can be added for the last 14 days only." },
@@ -357,6 +360,15 @@ router.post("/review/:id/approve", async (req, res) => {
 router.post(["/review/:id/rating", "/review/:id/outcome"], async (req, res) => {
   try {
     res.json(await tasks.reviewTask(req.user!.userId, id(req.params.id), { rating: req.body?.rating, comment: req.body?.comment, outcome: req.body?.outcome }));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+// Mark a task partially completed (earns half its weight) or undo it. Body: { partial: true | false }.
+router.post("/review/:id/partial", async (req, res) => {
+  try {
+    res.json(await tasks.markPartial(req.user!.userId, id(req.params.id), req.body?.partial));
   } catch (e) {
     fail(res, e);
   }

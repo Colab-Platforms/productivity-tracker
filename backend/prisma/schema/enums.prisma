@@ -222,6 +222,7 @@ enum PunchMatchStatus {
 
 enum LeaveRequestStatus {
   PENDING
+  ON_HOLD
   APPROVED
   REJECTED
   CANCELLED

@@ -98,11 +98,9 @@ type Config = {
   breakBudgetMinutes: number;
 };
 
-// The activities in the "Select activity" menu that start an away timer. Tea, Lunch and Personal are breaks (they use the break
-// allowance); Washroom is tracked on its own and is NOT a break. "Meeting / Team Huddle" starts an unscheduled discussion (asks for a remark; productive time, not break).
+// The activities in the "Select activity" menu that start an away timer. Lunch and Personal are breaks (they use the break
+// Break Time); Tea and Washroom were retired as choices (2026-11-21; older records keep them). Washroom time is still NOT a break. "Meeting / Team Huddle" starts an unscheduled discussion (asks for a remark; productive time, not break).
 const BREAK_TYPES = [
-  { value: "TEA", label: "Tea" },
-  { value: "WASHROOM", label: "Washroom" },
   { value: "LUNCH", label: "Lunch" },
   { value: "PERSONAL", label: "Personal" },
 ];

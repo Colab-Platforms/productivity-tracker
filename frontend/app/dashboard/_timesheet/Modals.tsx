@@ -139,7 +139,7 @@ export function ScheduleModal({ ts, rangeLabel, onClose }: { ts: Timesheet; rang
         {[
           ["Productive target per working day", `${sc.productiveHours}h`],
           ["Work day (on site)", `${sc.dailyWorkHours}h`],
-          ["Daily break budget", `${sc.breakBudgetMinutes}m`],
+          ["Daily Break Time", `${sc.breakBudgetMinutes}m`],
           ["Late after shift start + grace", `${sc.lateLoginGraceMinutes}m grace`],
           ["Overtime counts beyond", `${sc.dailyWorkHours}h on site (alert after +${sc.overtimeAlertMinutes}m)`],
           ...(weekly !== null ? [["Weekly planned hours", `${weekly}h over ${sc.shift!.workingDays.length} days`]] : []),

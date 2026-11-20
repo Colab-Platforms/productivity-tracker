@@ -207,7 +207,7 @@ export async function generateAlerts() {
           today,
           "BREAK_OVERAGE",
           over > 30 ? "CRITICAL" : "WARNING",
-          `Break budget exceeded by ${over} minutes`,
+          `Break Time exceeded by ${over} minutes`,
           { usedSeconds: away.breakSeconds, budgetSeconds: breakBudget }
         );
         raised++;

@@ -31,6 +31,7 @@ import { ViewTabs } from "../_assigned/ViewTabs";
 import AssignedToMe from "../_assigned/AssignedToMe";
 import AssignedByMe from "../_assigned/AssignedByMe";
 import ReviewQueue from "../approvals/ReviewQueue";
+import { WeightedCard, type Weighted } from "../_weighted/Weighted";
 import EmployeeRepetitionAlert from "./_repetition/EmployeeRepetitionAlert";
 
 const API = API_BASE;
@@ -117,12 +118,13 @@ type Payload = {
   active: Task[];
   done: Task[];
   score: Score;
+  weighted?: Weighted;
 };
 
 const WEIGHTS = [
   { value: "LOW", label: "Low", points: 1 },
-  { value: "MEDIUM", label: "Medium", points: 2 },
-  { value: "HIGH", label: "High", points: 3 },
+  { value: "MEDIUM", label: "Medium", points: 4 },
+  { value: "HIGH", label: "High", points: 5 },
   { value: "CRITICAL", label: "Critical", points: 5 },
 ];
 
@@ -335,6 +337,20 @@ function TasksPageInner() {
     );
   }
 
+  // The Admin's Daily Tasks: no tasks of their own. They see what employees submitted and can assign tasks to employees (owner decision 2026-11-21).
+  if (me?.role === "ADMIN") {
+    const adminView = view === "assigned" ? "assigned" : "submitted";
+    return (
+      <div className="space-y-5">
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Daily tasks</h1>
+        </header>
+        <ViewTabs value={adminView} onChange={setView} tabs={[{ key: "submitted", label: "Employee submitted tasks" }, { key: "assigned", label: "Assigned by me" }]} />
+        {adminView === "submitted" ? <ReviewQueue /> : <AssignedByMe />}
+      </div>
+    );
+  }
+
   // An employee's "Assigned by manager" part of the same page.
   const employeeTabs = [
     { key: "main", label: "My submitted tasks" },
@@ -445,6 +461,7 @@ function TasksPageInner() {
           </p>
         </section>
       )}
+      {data?.weighted && <WeightedCard w={data.weighted} title="Weighted task performance (today)" />}
 
       {/* --- propose ------------------------------------------------------ */}
       {data?.entryForm?.ready && (

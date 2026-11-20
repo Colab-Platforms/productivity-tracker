@@ -20,7 +20,7 @@ import { entryDetailsFor } from "./tasks.entry.js";
 // Posting a notification must never break the task action that caused it: everything here is caught and logged.
 // ---------------------------------------------------------------------------
 
-export type TaskEvent = "assigned" | "proposed" | "submitted" | "proposalApproved" | "proposalReturned" | "approved" | "notAccepted" | "rated" | "reverted" | "deleted" | "edited" | "correctionRequested" | "correctionDecided";
+export type TaskEvent = "assigned" | "proposed" | "submitted" | "proposalApproved" | "proposalReturned" | "approved" | "notAccepted" | "rated" | "partialMarked" | "reverted" | "deleted" | "edited" | "correctionRequested" | "correctionDecided";
 
 const MANAGER_LINK = "/dashboard/tasks?tab=submitted"; // approvals happen in Daily Tasks; /dashboard/approvals is the analytics page
 const EMPLOYEE_LINK = "/dashboard/tasks";
@@ -126,6 +126,9 @@ export async function taskNotice(event: TaskEvent, taskId: string, actorId: stri
     if (event === "rated") {
       // Same notification type as before ("TASK_APPROVED") so the existing popup and inbox handling keep working.
       return send([task.userId], { type: "TASK_APPROVED", title: "Your work was rated", body: `${by} rated "${task.title}" ${extra.stars ?? "?"}/5${clip(extra.note)}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:graded:${stamp}`, data });
+    }
+    if (event === "partialMarked") {
+      return send([task.userId], { type: "TASK_APPROVED", title: extra.label === "cleared" ? "Partial mark removed" : "Marked partially completed", body: `${by} ${extra.label === "cleared" ? "removed the partial mark from" : "marked as partially completed"}: ${task.title}`, link: EMPLOYEE_LINK, dedupeKey: `task:${task.id}:partial:${stamp}`, data });
     }
     if (event === "deleted") {
       // The task is gone from the employee's list; this tells them who removed it and why.

@@ -78,6 +78,7 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/tasks\/assigned\/:id\/(progress|comment|edit|confirm|send-back|cancel)$/, module: "Tasks", action: "UPDATE", summary: "Updated an assigned task", recordType: "DailyTask" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/approve$/, module: "Tasks", action: (b) => verdict(b, "approve", [false], "REJECT", "APPROVE"), summary: (b) => (b?.approve === false ? "Sent a task proposal back" : "Approved a task proposal"), recordType: "Task" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/(outcome|rating)$/, module: "Tasks", action: "UPDATE", summary: "Rated a task", recordType: "Task" },
+  { method: "POST", re: /^\/api\/tasks\/review\/:id\/partial$/, module: "Tasks", action: "UPDATE", summary: "Changed the partial mark of a task", recordType: "Task" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/delete$/, module: "Tasks", action: "DELETE", summary: "Deleted a task", recordType: "Task" },
   { method: "POST", re: /^\/api\/tasks\/review\/:id\/revert$/, module: "Tasks", action: "UPDATE", summary: "Reopened a completed task", recordType: "Task" },
 
@@ -161,7 +162,7 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/leave\/requests$/, module: "Leave", action: "SUBMIT", summary: "Requested leave" },
   { method: "POST", re: /^\/api\/leave\/requests\/:id\/cancel$/, module: "Leave", action: "CANCEL", summary: "Cancelled a leave request", recordType: "LeaveRequest" },
   { method: "POST", re: /^\/api\/leave\/requests\/:id\/revoke$/, module: "Leave", action: "CANCEL", summary: "Cancelled an approved leave", recordType: "LeaveRequest" },
-  { method: "POST", re: /^\/api\/leave\/requests\/:id\/decide$/, module: "Leave", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Rejected a leave request" : "Approved a leave request"), recordType: "LeaveRequest" },
+  { method: "POST", re: /^\/api\/leave\/requests\/:id\/decide$/, module: "Leave", action: (b) => (b?.decision === "HOLD" ? "UPDATE" : verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE")), summary: (b) => (b?.decision === "HOLD" ? "Put a leave request on hold" : b?.decision === "REJECT" ? "Rejected a leave request" : "Approved a leave request"), recordType: "LeaveRequest" },
 
   { method: "POST", re: /^\/api\/warning-letters$/, module: "Employees", action: "CREATE", summary: "Issued a warning letter", recordType: "WarningLetter" },
   { method: "POST", re: /^\/api\/warning-letters\/:id\/acknowledge$/, module: "Employees", action: "APPROVE", summary: "Acknowledged a warning letter", recordType: "WarningLetter" },
@@ -180,7 +181,7 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/break-corrections\/:id\/correct$/, module: "Attendance", action: "UPDATE", summary: "Admin corrected a break duration", recordType: "TrackerBreak" },
   { method: "POST", re: /^\/api\/break-corrections\/:id\/revert$/, module: "Attendance", action: "UPDATE", summary: "Admin reverted a break correction", recordType: "TrackerBreak" },
   { method: "POST", re: /^\/api\/attendance-corrections\/:id\/cancel$/, module: "Attendance", action: "CANCEL", summary: "Cancelled an attendance correction request", recordType: "AttendanceCorrection" },
-  { method: "POST", re: /^\/api\/leave\/manager\/requests\/:id\/decide$/, module: "Leave", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Manager rejected a leave request" : "Manager approved a leave request"), recordType: "LeaveRequest" },
+  { method: "POST", re: /^\/api\/leave\/manager\/requests\/:id\/decide$/, module: "Leave", action: (b) => (b?.decision === "HOLD" ? "UPDATE" : verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE")), summary: (b) => (b?.decision === "HOLD" ? "Manager put a leave request on hold" : b?.decision === "REJECT" ? "Manager rejected a leave request" : "Manager approved a leave request"), recordType: "LeaveRequest" },
   { method: "POST", re: /^\/api\/attendance-corrections\/manager\/requests\/:id\/decide$/, module: "Attendance", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Manager rejected an attendance correction" : "Manager approved an attendance correction"), recordType: "AttendanceCorrection" },
   { method: "POST", re: /^\/api\/attendance-corrections\/:id\/decide$/, module: "Attendance", action: (b) => verdict(b, "decision", ["REJECT"], "REJECT", "APPROVE"), summary: (b) => (b?.decision === "REJECT" ? "Rejected an attendance correction" : "Approved an attendance correction"), recordType: "AttendanceCorrection" },
 

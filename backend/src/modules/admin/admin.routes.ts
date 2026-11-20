@@ -291,6 +291,25 @@ for (const verb of ["put", "post"] as const) {
   });
 }
 
+// The status counts (Active, Suspended, Exited ...) for the same people the list shows with the same filters, so a count and its list always match.
+router.get("/users/status-counts", async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json(
+      await admin.userStatusCounts(req.user!.userId, {
+        search: req.query.search ? String(req.query.search) : undefined,
+        role: req.query.role ? String(req.query.role) : undefined,
+        companyId: req.query.companyId ? String(req.query.companyId) : undefined,
+        projectIds: f.projectIds,
+        managerIds: f.managerIds,
+        designation: f.designation ?? undefined,
+      })
+    );
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
 router.get("/users", async (req, res) => {
   try {
     // project, reporting manager and designation come from the shared HR filters (company, role, status and search keep their own parameters)

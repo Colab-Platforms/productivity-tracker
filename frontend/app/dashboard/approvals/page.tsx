@@ -26,10 +26,11 @@ import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL } from "../_progress/progress";
 import RepetitionSummary from "../tasks/_repetition/RepetitionSummary";
 import RepetitionAlerts from "../tasks/_repetition/RepetitionAlerts";
 import { HistoryChart, StatusChart, WorkloadChart } from "./AnalyticsCharts";
+import { WeightedCard, pctText, type Weighted } from "../_weighted/Weighted";
 import { DEFAULT_OVERDUE_DAYS, NO_PROJECT, OVERDUE_CHOICES, byDay, byEmployee, byProject, countRows, narrow, overdueList, progressOf, type Counts, type Row as BaseRow } from "./analytics";
 
 type Row = BaseRow & { title: string };
-type Queue = { date: string; scope?: { orgTotal: number; filteredTotal: number }; members: { id: string; name: string; employeeCode: string | null }[]; all: Row[] };
+type Queue = { date: string; weighted?: Weighted; weightedByUser?: Record<string, Weighted>; scope?: { orgTotal: number; filteredTotal: number }; members: { id: string; name: string; employeeCode: string | null }[]; all: Row[] };
 type Assigned = { counts: { total: number; todo: number; inProgress: number; awaiting: number; confirmed: number; overdue: number } };
 
 const APPROVAL_CHIP: Record<string, string> = { APPROVED: "bg-emerald-50 text-emerald-700", PENDING: "bg-amber-50 text-amber-700", REJECTED: "bg-rose-50 text-rose-700" };
@@ -263,6 +264,11 @@ export default function TasksPerformancePage() {
               <Tile testId="kpi-open" label="Open tasks" value={totals.open} tone="text-amber-700" hint="not completed, not rejected" />
               <Tile testId="kpi-overdue" label="Overdue" value={totals.overdue} tone="text-rose-700" hint={`open and older than ${overdueDays} days`} />
             </div>
+            {(() => {
+              // The server's own figure for the people in view (it follows the dates and filters of the queue; a project choice made on this page is not applied to it).
+              const w = person ? queue.weightedByUser?.[person] : queue.weighted;
+              return w && !project ? <WeightedCard w={w} title={person ? "Weighted task performance (selected employee)" : "Weighted task performance (everyone in view)"} /> : null;
+            })()}
             {assigned && (
               <div data-testid="assigned-counts" className="rounded-2xl bg-white p-3.5 shadow-[var(--shadow-card)]">
                 <p className="text-[11px] font-medium text-[var(--text-secondary)]">Assigned by you (counted separately, never part of the figures above)</p>
@@ -286,7 +292,7 @@ export default function TasksPerformancePage() {
                 <table className="min-w-full text-sm">
                   <thead className="text-left text-xs text-slate-500"><tr>
                     <th className="px-2 py-2">Employee</th><th className="px-2 py-2 text-right">Submitted</th><th className="px-2 py-2 text-right">Approved</th><th className="px-2 py-2 text-right">Waiting</th><th className="px-2 py-2 text-right">Rejected</th>
-                    <th className="px-2 py-2 text-right">To Do</th><th className="px-2 py-2 text-right">In Progress</th><th className="px-2 py-2 text-right">Completed</th><th className="px-2 py-2 text-right">Blocked</th><th className="px-2 py-2 text-right">Overdue</th><th className="px-2 py-2 text-right">Avg rating (rated)</th>
+                    <th className="px-2 py-2 text-right">To Do</th><th className="px-2 py-2 text-right">In Progress</th><th className="px-2 py-2 text-right">Completed</th><th className="px-2 py-2 text-right">Blocked</th><th className="px-2 py-2 text-right">Overdue</th><th className="px-2 py-2 text-right">Avg rating (rated)</th><th className="px-2 py-2 text-right">Weighted score</th>
                   </tr></thead>
                   <tbody className="divide-y divide-indigo-50">
                     {shownEmployees.map((g) => (
@@ -295,6 +301,7 @@ export default function TasksPerformancePage() {
                         <td className="px-2 py-2 text-right tabular-nums">{g.counts.submitted}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.approved}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.pending}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.rejected}</td>
                         <td className="px-2 py-2 text-right tabular-nums">{g.counts.todo}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.inProgress}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.completed}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.blocked}</td>
                         <td className="px-2 py-2 text-right tabular-nums">{g.counts.overdue}</td><td className="px-2 py-2 text-right tabular-nums">{rating(g.counts)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums" title="Priority-weighted score from the server. Not narrowed by the project box on this page.">{project ? "—" : pctText(queue.weightedByUser?.[g.key] ?? null)}</td>
                       </tr>
                     ))}
                   </tbody>

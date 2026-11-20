@@ -219,7 +219,7 @@ function CorrectionsInner() {
                 {r.attachmentName && (
                   <button onClick={() => openEvidence(r.id).catch((e: Error) => setNotice(e.message))} className="mt-2 rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50">Open evidence: {r.attachmentName}</button>
                 )}
-                <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => managerDecide(r.id, d, c)} />
+                <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => { if (d !== "HOLD") managerDecide(r.id, d, c); }} />
               </div>
             ))}
           </div>

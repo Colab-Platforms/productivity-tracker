@@ -91,7 +91,7 @@ export default function PerformanceView({ person, history, standups, selfTasks, 
           <Card label="Average rating" value={`${p.avgRating} / 5`} sub={`from ${p.ratedCount} rated task${p.ratedCount === 1 ? "" : "s"}`} />
         )}
         <Card label="Late arrivals" value={String(p.lateDays)} sub={p.lateDays > 0 ? `${p.lateMinutes} minutes late in total` : "On time every day"} />
-        <Card label="Breaks" value={hm(p.breakSeconds)} sub={avgBreak === null ? "No days worked" : `about ${hm(avgBreak)} a day · budget ${hm(history?.breakBudget ?? 0)}`} />
+        <Card label="Breaks" value={hm(p.breakSeconds)} sub={avgBreak === null ? "No days worked" : `about ${hm(avgBreak)} a day · Break Time ${hm(history?.breakBudget ?? 0)}`} />
       </div>
 
       {selfTasks?.ready && (

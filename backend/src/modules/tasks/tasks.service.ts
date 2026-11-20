@@ -1,4 +1,5 @@
 import { isLinkedManager, linkedReportIds } from "../../lib/reportingLinks.js";
+import { PRIORITY_WEIGHT, weightOf, weightedPerformance } from "./tasks.weighted.js";
 import { emitTaskChange } from "../../lib/realtime.js";
 import { taskNotice } from "./tasks.notify.js";
 import { managedByWhere, isTeamManager } from "../../lib/teamManagers.js";
@@ -31,12 +32,8 @@ import { detectAfterSubmit } from "./repetition.detect.js";
 // (5 stars all of it, 3 stars 60%, 1 star 20%). A finished task not rated yet earns all of it.
 // Nothing unapproved counts at all.
 // ---------------------------------------------------------------------------
-export const TASK_WEIGHTS: Record<string, number> = {
-  LOW: 1,
-  MEDIUM: 2,
-  HIGH: 3,
-  CRITICAL: 5,
-};
+// One weight table for the whole app (Critical 5, High 5, Medium 4, Low 1): see tasks.weighted.ts.
+export const TASK_WEIGHTS: Record<string, number> = { ...PRIORITY_WEIGHT };
 
 const WEIGHTS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const STATUSES = ["PENDING", "IN_PROGRESS", "COMPLETED"];
@@ -266,7 +263,9 @@ function shape<
   return {
     ...rest,
     date: t.date.toISOString().slice(0, 10),
-    weightValue: TASK_WEIGHTS[String(t.weight)] ?? 1,
+    weightValue: weightOf(t.weight),
+    // The manager marked this task partly done (it then earns half its weight in the weighted score).
+    partial: String(t.outcome ?? "") === "PARTIALLY_COMPLETED",
     assigned: t.assignedById !== null,
     project: projectName ?? null,
     projectId: t.teamId,
@@ -286,12 +285,12 @@ export function scoreOf(tasks: Scorable[]) {
   const approved = tasks.filter((t) => String(t.approvalStatus) === "APPROVED");
 
   const totalWeight = approved.reduce(
-    (n, t) => n + (TASK_WEIGHTS[String(t.weight)] ?? 1),
+    (n, t) => n + weightOf(t.weight),
     0
   );
 
   const doneWeight = approved.reduce((n, t) => {
-    const w = TASK_WEIGHTS[String(t.weight)] ?? 1;
+    const w = weightOf(t.weight);
     if (t.rating != null) return n + w * creditOf(t.rating);
     if (String(t.status) === "COMPLETED") return n + w;
     return n;
@@ -352,7 +351,7 @@ export async function listTasks(userId: string) {
   // actually went.
   const byProject = projects.map((p) => {
     const mine = rows.filter((t) => t.teamId === p.id);
-    return { ...p, taskCount: mine.length, score: scoreOf(mine) };
+    return { ...p, taskCount: mine.length, score: scoreOf(mine), weighted: weightedPerformance(mine) };
   });
 
   // The new entry form (hours, progress, tagged manager). Not offered to a manager's own self-managed tasks.
@@ -366,6 +365,7 @@ export async function listTasks(userId: string) {
     selfManagedMode,
     score,
     scorePercent: score.percent,
+    weighted: weightedPerformance(rows),
     projects,
     byProject,
     awaitingApproval: awaiting,
@@ -393,6 +393,7 @@ export async function listMyDay(userId: string, day: unknown) {
   return {
     date: date.toISOString().slice(0, 10),
     score: scoreOf(rows),
+    weighted: weightedPerformance(rows),
     tasks: rows.map((t) => shape(t, t.team?.name ?? null)),
   };
 }
@@ -415,6 +416,7 @@ export async function listMyRange(userId: string, from: unknown, to: unknown) {
     from: start.toISOString().slice(0, 10),
     to: end.toISOString().slice(0, 10),
     score: scoreOf(rows),
+    weighted: weightedPerformance(rows),
     tasks: rows.map((t) => ({ ...shape(t, t.team?.name ?? null), ...entryView(String(t.status), entries.get(t.id)), ...editView(t, entries.get(t.id)?.updatedAt, edits.get(t.id)), late: lates.get(t.id) ?? null })),
   };
 }
@@ -945,6 +947,10 @@ export async function listForApproval(
   // HR sees it only after approval, and another manager never sees a task tagged to someone else.
   const all = everyRow.filter((t) => t.approvalStatus !== "PENDING" || pendingTaskVisibleTo(supervisor ? "ADMIN" : ctx.role, t.canAct));
 
+  // The rows as the score rules need them (the screen rows do not carry the stored outcome).
+  const outcomeOf = new Map(ratedRows.map((r) => [r.id, r.outcome]));
+  const scoreRows = all.map((t) => ({ id: t.id, userId: t.userId, weight: t.weight, status: t.status, approvalStatus: t.approvalStatus, outcome: outcomeOf.get(t.id) ?? null }));
+
   const roster = people.map((p) => ({
     id: p.id,
     name: `${p.firstName} ${p.lastName}`.trim(),
@@ -979,6 +985,9 @@ export async function listForApproval(
       name: p.name,
       company: p.platform?.name ?? null,
     })),
+    // Weighted performance of the tasks in view (server rules in tasks.weighted.ts), overall and per employee.
+    weighted: weightedPerformance(scoreRows),
+    weightedByUser: Object.fromEntries([...new Set(scoreRows.map((t) => t.userId))].map((uid) => [uid, weightedPerformance(scoreRows.filter((t) => t.userId === uid))])),
     proposals,
     awaitingApproval: proposals,
     toReview,
@@ -1165,6 +1174,39 @@ export async function reviewTask(
 
   return listForApproval(managerId);
 }
+/**
+ * Mark an approved task as PARTIALLY completed (it earns half its weight in the weighted score), or undo that mark.
+ * Only people who can review the task, never its owner, never a manager's own self-managed task. A task still To Do cannot be partly done.
+ * Stored in the existing `outcome` column; nothing else about the task changes. The change is audited and the employee is told.
+ */
+export async function markPartial(managerId: string, taskId: string, partialIn: unknown) {
+  const ctx = await userContext(managerId);
+  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
+  if (typeof partialIn !== "boolean") throw new Error("BAD_PARTIAL");
+  const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
+  if (!task) throw new Error("NOT_FOUND");
+  if (task.userId === managerId) throw new Error("NOT_YOUR_OWN_TASK");
+  await assertCanReviewTask(actor, task);
+  if ((await detailsFor([taskId])).has(taskId)) throw new Error("SELF_MANAGED");
+  if (String(task.approvalStatus) !== "APPROVED" || String(task.status) === "CANCELLED") throw new Error("NOT_APPROVED");
+  if (String(task.status) === "PENDING") throw new Error("NOT_STARTED_YET");
+  const was = String(task.outcome ?? "") === "PARTIALLY_COMPLETED";
+  if (was !== partialIn) {
+    // guarded: two presses at once change it once
+    const done = await prisma.dailyTask.updateMany({
+      where: { id: taskId, approvalStatus: "APPROVED", ...(partialIn ? { outcome: null } : { outcome: "PARTIALLY_COMPLETED" as never }) },
+      data: { outcome: partialIn ? ("PARTIALLY_COMPLETED" as never) : null },
+    });
+    if (done.count === 1) {
+      auditNote({ platformId: task.platformId, module: "Tasks", action: "UPDATE", recordType: "Task", recordId: taskId, targetUserId: task.userId, summary: `${partialIn ? "Marked" : "Cleared the partial mark on"} task "${task.title.slice(0, 80)}"${partialIn ? " as partially completed" : ""}`, before: { partiallyCompleted: was }, after: { partiallyCompleted: partialIn } });
+      emitTaskChange({ taskId, ownerId: task.userId, action: "graded" });
+      await taskNotice("partialMarked", taskId, managerId, { label: partialIn ? "marked" : "cleared", stamp: Date.now() });
+    }
+  }
+  return listForApproval(managerId);
+}
+
 /**
  * Send a Completed task back to In Progress, with a required remark and a kind (Partially / Not fully completed).
  * Who: the people who can grade the task (its team's managers, the person it reports to, HR/Admin of the company), never the task's own owner.

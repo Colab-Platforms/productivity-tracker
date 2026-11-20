@@ -272,7 +272,7 @@ function Inner() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">{isAdmin ? "Management Inbox" : "Talk to Management"}</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">{isAdmin ? "Suggestion Box" : "Talk to Management"}</h1>
           <p className="mt-1 text-sm text-slate-500">
             {isAdmin ? "Private messages people have addressed to you. No one else can see them." : "A private line to an Admin you choose. HR and managers cannot see what you write."}
           </p>

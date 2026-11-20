@@ -126,15 +126,23 @@ export async function peopleScopeCount(viewerId: string) {
   return prisma.user.count({ where: { ...scopeWhere(access) } });
 }
 
-export async function listUsers(
-  viewerId: string,
-  filters: { search?: string; role?: string; status?: string; companyId?: string; projectIds?: string[]; managerIds?: string[]; designation?: string } = {}
-) {
-  const access = await accessFor(viewerId);
+export type UserListFilters = { search?: string; role?: string; status?: string; companyId?: string; projectIds?: string[]; managerIds?: string[]; designation?: string };
 
+// A status filter is one status ("ACTIVE") or several joined by commas ("SUSPENDED,EXITED": the Inactive group). Unknown words are ignored.
+function parseStatuses(v: unknown): (typeof USER_STATUSES)[number][] {
+  return String(v ?? "").split(",").map((s) => s.trim()).flatMap((s) => USER_STATUSES.filter((x) => x === s));
+}
+
+/**
+ * The ONE place that decides which people a list or a count covers: the companies the viewer acts on (or the one picked), the optional role, status,
+ * project, reporting manager, designation and search. The people list and the status counts both call it, so a count and the list behind it are
+ * always the same people. `withStatus: false` is used for the status counts (every status of the same people).
+ */
+async function peopleWhere(viewerId: string, filters: UserListFilters, withStatus: boolean) {
+  const access = await accessFor(viewerId);
   const search = filters.search?.trim();
   const role = USER_ROLES.find((r) => r === filters.role);
-  const status = USER_STATUSES.find((s) => s === filters.status);
+  const statuses = withStatus ? parseStatuses(filters.status) : [];
 
   // The list covers every company this person may act on (own, assigned, or all), or just the one picked.
   let companyScope: { platformId?: string | { in: string[] } } = scopeWhere(access);
@@ -144,26 +152,39 @@ export async function listUsers(
   }
 
   const linkedIds = filters.managerIds?.length ? await linkedEmployeesOfManagers(filters.managerIds) : [];
+  return {
+    ...companyScope,
+    ...(role ? { role } : {}),
+    ...(statuses.length === 1 ? { status: statuses[0] } : statuses.length > 1 ? { status: { in: statuses } } : {}),
+    // Project: anyone ACTIVELY on one of the chosen projects (a person on several is still one row). Reporting manager: who reports to them.
+    ...(filters.projectIds?.length ? { teamMemberships: { some: { teamId: { in: filters.projectIds }, isActive: true } } } : {}),
+    ...(filters.managerIds?.length ? { AND: [{ OR: [{ reportsToId: { in: filters.managerIds } }, ...(linkedIds.length ? [{ id: { in: linkedIds } }] : [])] }] } : {}),
+    ...(filters.designation ? { designation: { equals: filters.designation, mode: "insensitive" as const } } : {}),
+    ...(search
+      ? {
+          OR: [
+            { firstName: { contains: search, mode: "insensitive" as const } },
+            { lastName: { contains: search, mode: "insensitive" as const } },
+            { email: { contains: search, mode: "insensitive" as const } },
+            { employeeCode: { contains: search, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+  };
+}
+
+/** How many people hold each status among the people the same filters cover (status itself left out), zero-filled. For the clickable status counts. */
+export async function userStatusCounts(viewerId: string, filters: UserListFilters = {}) {
+  const where = await peopleWhere(viewerId, filters, false);
+  const rows = await prisma.user.groupBy({ by: ["status"], where, _count: { _all: true } });
+  const byStatus = Object.fromEntries(USER_STATUSES.map((s) => [s, 0])) as Record<string, number>;
+  for (const r of rows) byStatus[String(r.status)] = r._count._all;
+  return { total: Object.values(byStatus).reduce((n, x) => n + x, 0), byStatus };
+}
+
+export async function listUsers(viewerId: string, filters: UserListFilters = {}) {
   const users = await prisma.user.findMany({
-    where: {
-      ...companyScope,
-      ...(role ? { role } : {}),
-      ...(status ? { status } : {}),
-      // Project: anyone ACTIVELY on one of the chosen projects (a person on several is still one row). Reporting manager: who reports to them.
-      ...(filters.projectIds?.length ? { teamMemberships: { some: { teamId: { in: filters.projectIds }, isActive: true } } } : {}),
-      ...(filters.managerIds?.length ? { AND: [{ OR: [{ reportsToId: { in: filters.managerIds } }, ...(linkedIds.length ? [{ id: { in: linkedIds } }] : [])] }] } : {}),
-      ...(filters.designation ? { designation: { equals: filters.designation, mode: "insensitive" as const } } : {}),
-      ...(search
-        ? {
-            OR: [
-              { firstName: { contains: search, mode: "insensitive" as const } },
-              { lastName: { contains: search, mode: "insensitive" as const } },
-              { email: { contains: search, mode: "insensitive" as const } },
-              { employeeCode: { contains: search, mode: "insensitive" as const } },
-            ],
-          }
-        : {}),
-    },
+    where: await peopleWhere(viewerId, filters, true),
     select: {
       id: true,
       firstName: true,

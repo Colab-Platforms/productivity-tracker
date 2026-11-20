@@ -30,21 +30,28 @@ export function StepNote({ step }: { step: ManagerStep }) {
   return <p className="mt-1 text-xs text-slate-500">{text}</p>;
 }
 
-/** The manager's Approve / Reject controls for one request. A rejection needs a reason of at least 3 characters. */
-export function ManagerDecisionBox({ busy, onDecide, approveLabel = "Approve", hint = "After you approve, HR makes the final decision. A rejection is final." }: { busy: boolean; onDecide: (decision: "APPROVE" | "REJECT", note: string) => void; approveLabel?: string; hint?: string }) {
+/** The manager's Approve / Reject (and, for leave, Hold) controls for one request. A rejection or a hold needs a reason of at least 3 characters. */
+export function ManagerDecisionBox({ busy, onDecide, approveLabel = "Approve", hint = "After you approve, HR makes the final decision. A rejection is final.", allowHold = false, held = false }: { busy: boolean; onDecide: (decision: "APPROVE" | "REJECT" | "HOLD", note: string) => void; approveLabel?: string; hint?: string; allowHold?: boolean; held?: boolean }) {
+  const [holding, setHolding] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [note, setNote] = useState("");
   return (
     <div className="mt-3">
       <div className="flex flex-wrap items-center gap-2">
         <button disabled={busy} onClick={() => onDecide("APPROVE", note)} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">{approveLabel}</button>
-        <button disabled={busy} onClick={() => setRejecting((v) => !v)} className="rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">Reject</button>
+        <button disabled={busy} onClick={() => { setRejecting((v) => !v); setHolding(false); }} className="rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">Reject</button>
+        {allowHold && !held && (
+          <button disabled={busy} onClick={() => { setHolding((v) => !v); setRejecting(false); }} className="rounded-lg border border-orange-300 px-3.5 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-50 disabled:opacity-50">Hold</button>
+        )}
         <span className="text-xs text-slate-400">{hint}</span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder={rejecting ? "Reason for rejecting (required)" : "Comment (optional)"} className="min-w-[16rem] flex-1 rounded-xl border border-indigo-100 px-3 py-2 text-sm" />
+        <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder={rejecting ? "Reason for rejecting (required)" : holding ? "Reason for putting on hold (required)" : "Comment (optional)"} className="min-w-[16rem] flex-1 rounded-xl border border-indigo-100 px-3 py-2 text-sm" />
         {rejecting && (
           <button disabled={busy || note.trim().length < 3} onClick={() => onDecide("REJECT", note)} className="rounded-lg bg-red-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Confirm reject</button>
+        )}
+        {holding && (
+          <button disabled={busy || note.trim().length < 3} onClick={() => { onDecide("HOLD", note); setHolding(false); setNote(""); }} className="rounded-lg bg-orange-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-orange-700 disabled:opacity-50">Confirm hold</button>
         )}
       </div>
     </div>

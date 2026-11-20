@@ -173,7 +173,7 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
 
   // One table for both downloads, so the CSV and the Excel file always agree. The task columns run Planned,
   // Approved, Pending, then "Tasks completed", then Remarks; Pending Tasks = planned - completed (a live formula in the Excel file).
-  const EXPORT_HEADER = ["Employee ID", "Employee", "Team", "Date", "Shift", "Check-in", "Check-out", "Working", "Productive", "Break", "Washroom", "Break over allowance", "Status", "Late arrival", "Early departure", "Late Remark", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks", "Tasks completed", "Remarks"];
+  const EXPORT_HEADER = ["Employee ID", "Employee", "Team", "Date", "Shift", "Check-in", "Check-out", "Working", "Productive", "Break", "Washroom", "Over Break Time", "Status", "Late arrival", "Early departure", "Late Remark", "Total Tasks Planned Today", "Tasks Approved Today", "Pending Tasks", "Tasks completed", "Remarks"];
   function exportRows(): Cell[][] {
     return rows.map((r) => [
       r.employeeCode, r.name, r.teamName, r.date, r.shiftName ? `${r.shiftName}${r.shiftStart && r.shiftEnd ? ` (${r.shiftStart}-${r.shiftEnd})` : ""}` : "Not assigned",
@@ -198,7 +198,7 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
       { header: "Date", kind: "date", width: 13 }, { header: "Shift", width: 24, wrap: true },
       { header: "Check-in", kind: "time", width: 11 }, { header: "Check-out", kind: "time", width: 11 },
       { header: "Working", kind: "duration", width: 11 }, { header: "Productive", kind: "duration", width: 11 }, { header: "Break", kind: "duration", width: 10 }, { header: "Washroom", kind: "duration", width: 11 },
-      { header: "Break over allowance", kind: "duration", width: 14 }, { header: "Team Huddle", kind: "duration", width: 12, note: "Time actually declared in a Team Huddle that day (join to leave). It is part of productive time, not extra." },
+      { header: "Over Break Time", kind: "duration", width: 14 }, { header: "Team Huddle", kind: "duration", width: 12, note: "Time actually declared in a Team Huddle that day (join to leave). It is part of productive time, not extra." },
       { header: "Status", width: 18 }, { header: "Late arrival", kind: "duration", width: 12 }, { header: "Early departure", kind: "duration", width: 14 }, { header: "Late Remark", width: 46, wrap: true },
       { header: "Total Tasks Planned Today", kind: "int", width: 15, accent: true, note: planNote },
       { header: "Tasks Approved Today", kind: "int", width: 15, accent: true, note: "Tasks a team lead or manager approved for that day. Blank = no tasks." },

@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { weightOf, weightedPerformance } from "../tasks/tasks.weighted.js";
 import { linkedReportIds } from "../../lib/reportingLinks.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
@@ -302,6 +303,8 @@ export async function clockOut(userId: string) {
 }
 
 export async function startBreak(userId: string, breakType: string, remark?: unknown) {
+  // Retired choices (kept in the database for old records only): a route is not the only way in, so the service refuses them too.
+  if (breakType === "TEA" || breakType === "WASHROOM") throw new Error("BREAK_TYPE_RETIRED");
   // "DISCUSSION" is the Meeting / Team Huddle choice in the activity menu: an unscheduled talk. It is saved as an OTHER row whose reason
   // carries the remark (see activityClass.ts), and it does not start until a remark is given.
   let reason: string | null = null;
@@ -879,12 +882,6 @@ export async function getTeamLiveStatus(viewerId: string) {
 // last 30 days. Dates come in as YYYY-MM-DD and are read as UTC midnight,
 // matching how the day is stored.
 // ---------------------------------------------------------------------------
-const TASK_WEIGHTS: Record<string, number> = {
-  LOW: 1,
-  MEDIUM: 2,
-  HIGH: 3,
-  CRITICAL: 5,
-};
 
 
 export async function getHistory(userId: string, fromStr?: string, toStr?: string) {
@@ -936,12 +933,12 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
     );
 
     const totalWeight = dayTasks.reduce(
-      (n, t) => n + (TASK_WEIGHTS[t.weight] ?? 1),
+      (n, t) => n + weightOf(t.weight),
       0
     );
 
     const doneWeight = dayTasks.reduce((n, t) => {
-      const w = TASK_WEIGHTS[t.weight] ?? 1;
+      const w = weightOf(t.weight);
       const r = stars.get(t.id);
       if (r != null) return n + w * creditOf(r);
       if (String(t.status) === "COMPLETED") return n + w;
@@ -980,6 +977,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
       taskDone: dayTasks.filter((t) => String(t.status) === "COMPLETED").length,
       ratedCount: ratedToday.length,
       avgRating: ratedToday.length ? Math.round((ratedToday.reduce((a, b) => a + b, 0) / ratedToday.length) * 10) / 10 : null,
+      weighted: weightedPerformance(tasksByDate.get(k) ?? []),
       taskPercent:
         totalWeight === 0 ? null : Math.round((doneWeight / totalWeight) * 100),
     };
@@ -996,6 +994,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
     breakBudget: ctx.config.breakBudgetMinutes * 60,
     rows,
     summary: {
+      weighted: weightedPerformance(tasks),
       daysWorked: worked.length,
       daysOnLeave: rows.filter((r) => r.onLeave).length,
       daysLate: worked.filter((r) => r.wasLateLogin).length,

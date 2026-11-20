@@ -62,11 +62,12 @@ const TYPE_LABEL: Record<string, string> = { CASUAL: "Casual", SICK: "Sick", EAR
 const REQUEST_TYPES = ["CASUAL", "SICK", "EARNED", "UNPAID"];
 const STATUS_STYLE: Record<string, string> = {
   PENDING: "bg-amber-50 text-amber-700",
+  ON_HOLD: "bg-orange-50 text-orange-700",
   APPROVED: "bg-emerald-50 text-emerald-700",
   REJECTED: "bg-red-50 text-red-600",
   CANCELLED: "bg-slate-100 text-slate-500",
 };
-const STATUS_LABEL: Record<string, string> = { PENDING: "Waiting for HR", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
+const STATUS_LABEL: Record<string, string> = { PENDING: "Waiting for HR", ON_HOLD: "On Hold", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
 
 const day = (s: string) => new Date(`${s}T00:00:00Z`).toLocaleDateString("en-US", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
 const range = (r: { from: string; to: string }) => (r.from === r.to ? day(r.from) : `${day(r.from)} – ${day(r.to)}`);
@@ -180,16 +181,17 @@ function LeaveContent() {
   const person = useApi<PersonDetail>(personId ? `/leave/person/${personId}?year=${year}` : null, reload);
 
   const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [holdFor, setHoldFor] = useState<string | null>(null);
   const [note, setNote] = useState("");
 
-  async function managerDecide(id: string, decision: "APPROVE" | "REJECT", comment: string) {
+  async function managerDecide(id: string, decision: "APPROVE" | "REJECT" | "HOLD", comment: string) {
     if (busyId) return;
     setBusyId(id);
     setActionError("");
     try {
       await apiPost(`/leave/manager/requests/${id}/decide`, { decision, note: comment });
       const done = (team.data?.pending ?? []).find((x) => x.id === id);
-      setNotice(decision === "APPROVE" ? (done?.requesterRole === "HR" ? "Approved. This leave is now approved." : "Approved. HR has been told and makes the final decision.") : "Rejected. The person has been told.");
+      setNotice(decision === "HOLD" ? "Put on hold. The person has been told; you can approve or reject it later." : decision === "APPROVE" ? (done?.requesterRole === "HR" ? "Approved. This leave is now approved." : "Approved. HR has been told and makes the final decision.") : "Rejected. The person has been told.");
       setReload((n) => n + 1);
     } catch (e) {
       setActionError((e as Error).message);
@@ -198,13 +200,14 @@ function LeaveContent() {
     }
   }
 
-  async function decide(id: string, decision: "APPROVE" | "REJECT", skipReason?: string) {
+  async function decide(id: string, decision: "APPROVE" | "REJECT" | "HOLD", skipReason?: string) {
     if (busyId) return;
     setBusyId(id);
     setActionError("");
     try {
       await apiPost(`/leave/requests/${id}/decide`, { decision, note, ...(skipReason ? { skipManager: true, skipReason } : {}) });
-      setNotice(decision === "APPROVE" ? "Leave approved. Those days now count as leave in reports." : "Leave rejected.");
+      setNotice(decision === "APPROVE" ? "Leave approved. Those days now count as leave in reports." : decision === "HOLD" ? "Put on hold. The person has been told; you can approve or reject it later." : "Leave rejected.");
+      setHoldFor(null);
       setNoteFor(null);
       setNote("");
       setReload((n) => n + 1);
@@ -334,7 +337,7 @@ function LeaveContent() {
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge status={r.status} step={r.managerStep} r={r} />
-                    {r.status === "PENDING" && (
+                    {(r.status === "PENDING" || r.status === "ON_HOLD") && (
                       <button disabled={busyId === r.id} onClick={() => cancel(r.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                         Cancel
                       </button>
@@ -381,6 +384,7 @@ function LeaveContent() {
                     <option value="PENDING_MANAGER">Pending Manager Approval</option>
                     <option value="PENDING_ADMIN">Pending Admin Approval</option>
                     <option value="PENDING_HR">Pending HR Approval</option>
+                    <option value="ON_HOLD">On Hold</option>
                     <option value="APPROVED">Approved</option>
                     <option value="REJECTED">Rejected</option>
                     <option value="CANCELLED">Cancelled</option>
@@ -404,6 +408,7 @@ function LeaveContent() {
             <h2 className="font-semibold text-slate-900">Requests{review.data?.requestCount !== undefined ? <span className="ml-2 text-sm font-normal text-slate-400">{review.data.requestCount}</span> : null}</h2>
             <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-700">
               <option value="PENDING">Waiting for HR</option>
+              <option value="ON_HOLD">On Hold</option>
               <option value="APPROVED">Approved</option>
               <option value="REJECTED">Rejected</option>
               <option value="CANCELLED">Cancelled</option>
@@ -416,8 +421,11 @@ function LeaveContent() {
             {review.data?.requests.map((r) => {
               // HR's turn only once the first level has approved; before that the buttons are visible but disabled. An Admin gives a final
               // answer only on an older request that never had a first-level step.
-              const hrCan = r.stage ? (r.stage === "PENDING_HR" && (me?.role === "HR" || !r.managerStep)) : r.managerStep?.status !== "PENDING";
-              const waitingFirst = !!r.stage && (r.stage === "PENDING_MANAGER" || r.stage === "PENDING_ADMIN");
+              // A request on hold belongs to whoever held it: HR can answer one HR held; one held at the first level waits for that approver.
+              const isOpen = r.status === "PENDING" || r.status === "ON_HOLD";
+              const heldHere = r.status === "ON_HOLD" && r.hold?.step === "HR";
+              const hrCan = r.stage === "ON_HOLD" ? heldHere && (me?.role === "HR" || !r.managerStep || r.managerStep.status !== "PENDING") : r.stage ? (r.stage === "PENDING_HR" && (me?.role === "HR" || !r.managerStep)) : r.managerStep?.status !== "PENDING";
+              const waitingFirst = !!r.stage && (r.stage === "PENDING_MANAGER" || r.stage === "PENDING_ADMIN" || (r.stage === "ON_HOLD" && !heldHere));
               const ownRequest = r.person.id === me?.id;
               return (
               <div key={r.id} className="py-4">
@@ -441,7 +449,7 @@ function LeaveContent() {
                     {r.status === "PENDING" && !flow && !ownRequest && r.managerStep?.status === "PENDING" && (
                       <SkipManagerBox busy={busyId === r.id} onDecide={(d, reason) => decide(r.id, d, reason)} />
                     )}
-                    {r.status === "PENDING" && !ownRequest && (flow || r.managerStep?.status !== "PENDING") && (r.stage !== "PENDING_ADMIN" || me?.role === "HR" || !r.stage) && (
+                    {isOpen && !ownRequest && (flow || r.managerStep?.status !== "PENDING") && (r.stage !== "PENDING_ADMIN" || me?.role === "HR" || !r.stage) && (
                       <>
                         <button disabled={busyId === r.id || !hrCan} title={waitingFirst ? "Waiting for the first approver" : undefined} onClick={() => decide(r.id, "APPROVE")} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
                           Approve
@@ -449,6 +457,11 @@ function LeaveContent() {
                         <button disabled={busyId === r.id || !hrCan} title={waitingFirst ? "Waiting for the first approver" : undefined} onClick={() => setNoteFor(noteFor === r.id ? null : r.id)} className="rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">
                           Reject
                         </button>
+                        {flow && r.status === "PENDING" && (
+                          <button disabled={busyId === r.id || !hrCan} title={waitingFirst ? "Waiting for the first approver" : undefined} onClick={() => { setHoldFor(holdFor === r.id ? null : r.id); setNoteFor(null); setNote(""); }} className="rounded-lg border border-orange-300 px-3.5 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-50 disabled:opacity-50">
+                            Hold
+                          </button>
+                        )}
                       </>
                     )}
                     {r.status === "APPROVED" && !ownRequest && (
@@ -456,12 +469,20 @@ function LeaveContent() {
                         Cancel approved leave
                       </button>
                     )}
-                    {r.status === "PENDING" && ownRequest && <span className="text-xs text-slate-400">{flow ? "The tagged Admin decides this" : "Another HR/Admin must decide this"}</span>}
-                    {r.status === "PENDING" && flow && !ownRequest && waitingFirst && <span className="text-xs text-slate-400">HR can act after {r.tagged ?? "the first approver"} approves</span>}
+                    {isOpen && ownRequest && <span className="text-xs text-slate-400">{flow ? "The tagged Admin decides this" : "Another HR/Admin must decide this"}</span>}
+                    {isOpen && flow && !ownRequest && waitingFirst && <span className="text-xs text-slate-400">HR can act after {r.tagged ?? "the first approver"} approves</span>}
                   </div>
                 </div>
                 {revokeFor === r.id && (
                   <RevokeBox r={r} busy={busyId === r.id} onCancel={() => setRevokeFor(null)} onConfirm={(from, to, reason) => revoke(r.id, from, to, reason)} />
+                )}
+                {holdFor === r.id && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Reason for putting on hold (required)" className="min-w-[16rem] flex-1 rounded-xl border border-indigo-100 px-3 py-2 text-sm" />
+                    <button disabled={busyId === r.id || note.trim().length < 3} onClick={() => decide(r.id, "HOLD")} className="rounded-lg bg-orange-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-orange-700 disabled:opacity-50">
+                      Confirm hold
+                    </button>
+                  </div>
                 )}
                 {noteFor === r.id && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -499,7 +520,7 @@ function LeaveContent() {
                 <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
                 <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} {unit(r.takenThisYear.total, "day")}</p>
                 <FlowLine r={r} />
-                <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => managerDecide(r.id, d, c)} hint={r.requesterRole === "HR" ? "Your approval is final for HR's leave. A rejection is final." : "After you approve, HR makes the final decision. A rejection is final."} />
+                <ManagerDecisionBox allowHold held={r.status === "ON_HOLD"} busy={busyId === r.id} onDecide={(d, c) => managerDecide(r.id, d, c)} hint={r.requesterRole === "HR" ? "Your approval is final for HR's leave. A rejection is final." : "After you approve, HR makes the final decision. A rejection is final."} />
               </div>
             ))}
           </div>

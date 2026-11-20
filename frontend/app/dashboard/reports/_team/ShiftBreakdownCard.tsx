@@ -69,7 +69,7 @@ export default function ShiftBreakdownCard({ filters, ready = true, onScope }: {
     if (!shift) return;
     downloadCsv(
       `shift-breakdown-${shift.date}.csv`,
-      ["Employee", "Employee ID", "Date", "Login", "Logout", "Shift", "Tea", "Lunch", "Washroom (not break)", "Huddle", "Other", "Total break", "Break allowance", "Break over allowance", "Productive", "Target"],
+      ["Employee", "Employee ID", "Date", "Login", "Logout", "Shift", "Tea", "Lunch", "Washroom (not break)", "Huddle", "Other", "Total break", "Break Time (allowed)", "Over Break Time", "Productive", "Target"],
       shift.rows.map((r) =>
         r.hasSession
           ? [r.name, r.employeeCode, shift.date, clockTime(r.loginAt, tz), r.working ? "Working" : clockTime(r.logoutAt, tz), hm(r.shiftSeconds), hm(r.teaSeconds), hm(r.lunchSeconds), hm(r.bioSeconds), hm(r.huddleSeconds), hm(r.otherSeconds), hm(r.breakSeconds), hm(r.breakBudgetSeconds), r.breakSeconds !== null && r.breakSeconds > r.breakBudgetSeconds ? hm(r.breakSeconds - r.breakBudgetSeconds) : "", hm(r.productiveSeconds), hm(r.productiveTargetSeconds)]
@@ -90,7 +90,7 @@ export default function ShiftBreakdownCard({ filters, ready = true, onScope }: {
       { header: "Washroom", kind: "duration", width: 11, note: "Washroom time is not a break: it is not in Total break and does not use the allowance." },
       { header: "Huddle", kind: "duration", width: 11, note: "Team Huddle and approved meeting time (part of productive time, not extra)." },
       { header: "Other break", kind: "duration", width: 11, note: "Personal and other approved breaks." },
-      { header: "Total break", kind: "duration", width: 12 }, { header: "Break allowance", kind: "duration", width: 14 }, { header: "Break over allowance", kind: "duration", width: 14 },
+      { header: "Total break", kind: "duration", width: 12 }, { header: "Break Time (allowed)", kind: "duration", width: 14 }, { header: "Over Break Time", kind: "duration", width: 14 },
       { header: "Productive time", kind: "duration", width: 14 }, { header: "Productive target", kind: "duration", width: 14 },
     ];
     const DAY_TEXT: Record<string, string> = { WORKING: "Working", CLOCKED_OUT: "Clocked out", NOT_CLOCKED_IN: "Not clocked in", ON_LEAVE: "On leave", NO_RECORD: "No record" };
@@ -106,7 +106,7 @@ export default function ShiftBreakdownCard({ filters, ready = true, onScope }: {
       period: dayLabel(shift.date),
       filters: await describeFilters(filters),
       exportedAt: new Date(), exportedBy: me ? `${me.firstName} ${me.lastName}`.trim() : null, timezone: tz,
-      totals: [["Employees", shift.rows.length], ["Employees with a session", withSession.length], ["Employees over their break allowance", withSession.filter((r) => r.breakSeconds !== null && r.breakSeconds > r.breakBudgetSeconds).length]],
+      totals: [["Employees", shift.rows.length], ["Employees with a session", withSession.length], ["Employees over their Break Time", withSession.filter((r) => r.breakSeconds !== null && r.breakSeconds > r.breakBudgetSeconds).length]],
     });
   }
 

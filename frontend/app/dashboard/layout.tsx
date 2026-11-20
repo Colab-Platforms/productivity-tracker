@@ -306,7 +306,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, notRoles: ["ADMIN"], icon: I.receipt },
       { href: "/dashboard/queries", label: "Query Desk", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/talk-to-management", label: "Talk to Management", ready: true, roles: ["EMPLOYEE", "MANAGER", "HR"], icon: I.lock },
-      { href: "/dashboard/talk-to-management", label: "Management Inbox", ready: true, roles: ["ADMIN"], icon: I.mail },
+      { href: "/dashboard/talk-to-management", label: "Suggestion Box", ready: true, roles: ["ADMIN"], icon: I.mail },
       { href: "/change-password", label: "Change password", ready: true, icon: I.lock },
     ],
   },
@@ -324,7 +324,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       // Admin only: organisation-wide controls. HR has none of these.
       { href: "/dashboard/audit-logs", label: "Audit Logs", ready: true, roles: ["ADMIN"], icon: I.list },
       { href: "/dashboard/login-activity", label: "Login Activity", ready: true, roles: ["ADMIN", "HR"], icon: I.shield },
-      { href: "/dashboard/employees?tab=Teams", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
+      { href: "/dashboard/system-settings", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
     ],
   },
@@ -740,7 +740,7 @@ export default function DashboardLayout({
 
         <div className="min-w-0 flex-1">
           {/* Mobile top bar */}
-          <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--card)]/90 backdrop-blur lg:hidden">
+          <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--card)] lg:hidden">
             <div className="app-container flex h-14 items-center gap-3">
             <button
               onClick={() => setOpen(true)}

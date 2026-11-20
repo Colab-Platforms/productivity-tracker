@@ -63,7 +63,8 @@ ok("Reports with no tab lights only Reports & Analytics", lit("/dashboard/report
 ok("Reports on the productivity tab lights only the Productivity shortcut", lit("/dashboard/reports", "tab=productivity").join() === "/dashboard/reports?tab=productivity");
 ok("Reports on another tab (shift) lights the plain entry", lit("/dashboard/reports", "tab=shift").join() === "/dashboard/reports");
 ok("User Management with no tab lights only User Management", lit("/dashboard/employees", "").join() === "/dashboard/employees");
-ok("the Teams tab lights only System Settings", lit("/dashboard/employees", "tab=Teams").join() === "/dashboard/employees?tab=Teams");
+ok("User Management on its Teams tab still lights only User Management (System Settings has its own page)", lit("/dashboard/employees", "tab=Teams").join() === "/dashboard/employees");
+ok("System Settings is its own page and lights only itself, on either tab", lit("/dashboard/system-settings", "").join() === "/dashboard/system-settings" && lit("/dashboard/system-settings", "tab=Thresholds").join() === "/dashboard/system-settings");
 ok("the People tab lights only User Management", lit("/dashboard/employees", "tab=People").join() === "/dashboard/employees");
 ok("filters in the address do not stop the plain entry being lit", lit("/dashboard/reports", "company=x&project=y").join() === "/dashboard/reports");
 ok("every other page lights exactly its own item", admin.every((i) => { const p = i.href.split("?")[0]; if (p === "/dashboard/reports" || p === "/dashboard/employees" || p === "/change-password") return true; return lit(p, "").join() === i.href; }));

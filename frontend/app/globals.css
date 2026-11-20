@@ -147,6 +147,13 @@
 .app-main {
   padding-block: var(--page-pad-y);
 }
+/* A table never gets cut off by its card: when it is wider than the card it scrolls sideways INSIDE the card (the page itself never scrolls sideways).
+   Many cards are written as `overflow-hidden rounded-2xl` around a table; this unlayered rule wins over that utility for any box whose direct child is a table,
+   so the one fix covers every page. The card keeps its rounded corners (overflow still clips to the radius). */
+.app-main :where(div, section):has(> table) {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
 
 @utility page-3xl {
   max-width: var(--page-3xl);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { todayIso } from "@/lib/time";
@@ -11,7 +11,7 @@ import Avatar from "../_photos/Avatar";
 import FilterBar from "../_filters/FilterBar";
 import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 import { KpiCard, Panel } from "../_dashboard/widgets";
-import { byCompany, byDepartment, byDesignation, byManager, directReports, inView, matchesSearch, statusCounts, tenure, type Bucket, type OverviewPerson, type StatusView } from "./stats";
+import { STATUS_VIEW_LABEL, byCompany, byDepartment, byDesignation, byManager, directReports, inView, matchesSearch, parseStatusView, sortPeople, statusCounts, tenure, viewCount, type Bucket, type OverviewPerson, type SortKey, type StatusView } from "./stats";
 
 // ---------------------------------------------------------------------------
 // EMPLOYEE OVERVIEW (Admin). A read-only picture of the workforce: how many people, who is active, where they sit (company, team, designation,
@@ -43,6 +43,17 @@ const ICONS = {
   inactive: icon("M5 5l10 10M15 5L5 15"),
   pending: icon("M10 5v5l3 2M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14z"),
 };
+
+function SortTh({ label, k, sort, setSort, setPage, className }: { label: string; k: SortKey; sort: { key: SortKey; dir: "asc" | "desc" }; setSort: (s: { key: SortKey; dir: "asc" | "desc" }) => void; setPage: (n: number) => void; className: string }) {
+  const on = sort.key === k;
+  return (
+    <th className={className} aria-sort={on ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button type="button" onClick={() => { setSort({ key: k, dir: on && sort.dir === "asc" ? "desc" : "asc" }); setPage(1); }} className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-indigo-700" title={`Sort by ${label.toLowerCase()}`}>
+        {label}<span aria-hidden="true" className={on ? "text-indigo-600" : "text-slate-300"}>{on ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
+      </button>
+    </th>
+  );
+}
 
 function Chip({ status }: { status: string }) {
   return <span className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_CHIP[status] ?? "bg-slate-100 text-slate-600"}`}>{STATUS_LABEL[status] ?? status}</span>;
@@ -156,18 +167,43 @@ function Profile({ p, everyone, onClose, onOpen }: { p: OverviewPerson; everyone
   );
 }
 
-const VIEWS: { key: StatusView; label: string }[] = [
+// The status chips under the cards. Cards pick a group (Total, Active, Inactive, Not started); these also split the groups, so Suspended and Exited (and
+// Invited and Candidates) can be told apart. Every number is viewCount(), which is exactly the length of the list that chip shows.
+const CHIP_ORDER: { key: StatusView; label: string; sub?: boolean }[] = [
+  { key: "ALL", label: "All" },
   { key: "ACTIVE", label: "Active" },
   { key: "INACTIVE", label: "Inactive" },
-  { key: "ALL", label: "All" },
+  { key: "SUSPENDED", label: "Suspended", sub: true },
+  { key: "EXITED", label: "Exited", sub: true },
+  { key: "NOT_STARTED", label: "Not started yet" },
+  { key: "INVITED", label: "Invited", sub: true },
+  { key: "CANDIDATE", label: "Candidates", sub: true },
 ];
+const DEFAULT_VIEW: StatusView = "ACTIVE";
 
 export default function EmployeeOverview() {
   const { filters, update, clear, ready } = useHrFilters();
   const { options } = useFilterOptions(filters, update, ready);
   const [res, setRes] = useState<Res | null>(null);
   const [error, setError] = useState("");
-  const [view, setView] = useState<StatusView>("ACTIVE");
+  // The chosen status lives in the address (?show=inactive), so Back, refresh and a shared link all give the same list. Read when the page first renders.
+  const [view, setViewState] = useState<StatusView>(() => (typeof window === "undefined" ? DEFAULT_VIEW : parseStatusView(new URLSearchParams(window.location.search).get("show")) ?? DEFAULT_VIEW));
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
+  const directoryRef = useRef<HTMLDivElement>(null);
+  const choose = useCallback((v: StatusView) => {
+    setViewState(v);
+    setPage(1);
+    const url = new URL(window.location.href);
+    if (v === DEFAULT_VIEW) url.searchParams.delete("show");
+    else url.searchParams.set("show", v.toLowerCase());
+    window.history.pushState(null, "", url.pathname + url.search);
+    requestAnimationFrame(() => directoryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, []);
+  useEffect(() => {
+    const back = () => { setViewState(parseStatusView(new URLSearchParams(window.location.search).get("show")) ?? DEFAULT_VIEW); setPage(1); };
+    window.addEventListener("popstate", back);
+    return () => window.removeEventListener("popstate", back);
+  }, []);
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -197,13 +233,14 @@ export default function EmployeeOverview() {
   const departments = useMemo(() => byDepartment(scoped), [scoped]);
   const designations = useMemo(() => byDesignation(scoped), [scoped]);
   const managers = useMemo(() => byManager(scoped), [scoped]);
-  const directory = useMemo(() => scoped.filter((p) => matchesSearch(p, q)), [scoped, q]);
+  const directory = useMemo(() => sortPeople(scoped.filter((p) => matchesSearch(p, q)), sort.key, sort.dir), [scoped, q, sort]);
+  const showWhen = view !== "ACTIVE" && view !== "ALL"; // inactive / not-started lists also show when they joined and last signed in
   const pages = Math.max(1, Math.ceil(directory.length / PAGE_SIZE));
   const current = Math.min(page, pages);
   const rows = directory.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
   const opened = openId ? everyone.find((p) => p.id === openId) ?? null : null;
   const loading = res === null && !error;
-  const viewWord = view === "ACTIVE" ? "active" : view === "INACTIVE" ? "inactive" : "";
+  const viewWord = view === "ALL" ? "" : STATUS_VIEW_LABEL[view].replace(/ \(.*\)$/, "").toLowerCase();
 
   return (
     <div className="space-y-5">
@@ -224,28 +261,26 @@ export default function EmployeeOverview() {
       />
 
       <section aria-label="Headcount" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiCard label="Total employees" value={String(counts.total)} sub="all records in view" tone="green" icon={ICONS.all} loading={loading} />
-        <KpiCard label="Active" value={String(counts.active)} sub={counts.total ? `${Math.round((counts.active / counts.total) * 100)}% of total` : "working now"} tone="sky" icon={ICONS.active} loading={loading} />
-        <KpiCard label="Inactive" value={String(counts.inactive)} sub={`${counts.suspended} suspended · ${counts.exited} exited`} tone="rose" icon={ICONS.inactive} loading={loading} />
-        <KpiCard label="Not started yet" value={String(counts.notStarted)} sub={`${counts.invited} invited · ${counts.candidate} candidates`} tone="amber" icon={ICONS.pending} loading={loading} />
+        <div data-testid="kpi-total"><KpiCard label="Total employees" value={String(counts.total)} sub="all records in view" tone="green" icon={ICONS.all} loading={loading} onClick={() => choose("ALL")} selected={view === "ALL"} hint="Show all employees" /></div>
+        <div data-testid="kpi-active"><KpiCard label="Active" value={String(counts.active)} sub={counts.total ? `${Math.round((counts.active / counts.total) * 100)}% of total` : "working now"} tone="sky" icon={ICONS.active} loading={loading} onClick={() => choose("ACTIVE")} selected={view === "ACTIVE"} hint="Show the active employees" /></div>
+        <div data-testid="kpi-inactive"><KpiCard label="Inactive" value={String(counts.inactive)} sub={`${counts.suspended} suspended · ${counts.exited} exited`} tone="rose" icon={ICONS.inactive} loading={loading} onClick={() => choose("INACTIVE")} selected={view === "INACTIVE" || view === "SUSPENDED" || view === "EXITED"} hint="Show the suspended and exited employees" /></div>
+        <div data-testid="kpi-not-started"><KpiCard label="Not started yet" value={String(counts.notStarted)} sub={`${counts.invited} invited · ${counts.candidate} candidates`} tone="amber" icon={ICONS.pending} loading={loading} onClick={() => choose("NOT_STARTED")} selected={view === "NOT_STARTED" || view === "INVITED" || view === "CANDIDATE"} hint="Show the invited employees and candidates" /></div>
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-slate-900">Where people sit</h2>
-        <div role="group" aria-label="Which employees to show below" className="inline-flex rounded-xl border border-indigo-100 bg-white p-0.5">
-          {VIEWS.map((v) => (
+        <div role="group" aria-label="Which employees to show below" data-testid="status-chips" className="flex flex-wrap items-center gap-1.5">
+          {CHIP_ORDER.map((c) => (
             <button
-              key={v.key}
+              key={c.key}
               type="button"
-              aria-pressed={view === v.key}
-              onClick={() => {
-                setView(v.key);
-                setPage(1);
-              }}
-              className={`h-9 rounded-[10px] px-3.5 text-sm font-medium ${view === v.key ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-[var(--brand-50)]"}`}
+              aria-pressed={view === c.key}
+              data-testid={`chip-${c.key.toLowerCase()}`}
+              onClick={() => choose(c.key)}
+              className={`h-8 rounded-full border px-3 text-xs font-medium ${c.sub ? "ml-0.5" : ""} ${view === c.key ? "border-indigo-600 bg-indigo-600 text-white" : "border-indigo-100 bg-white text-slate-600 hover:bg-[var(--brand-50)]"}`}
             >
-              {v.label}
-              <span className={`ml-1.5 text-xs ${view === v.key ? "text-white/80" : "text-slate-400"}`}>{v.key === "ACTIVE" ? counts.active : v.key === "INACTIVE" ? counts.inactive : counts.total}</span>
+              {c.label}
+              <span className={`ml-1.5 tabular-nums ${view === c.key ? "text-white/80" : "text-slate-400"}`}>{viewCount(counts, c.key)}</span>
             </button>
           ))}
         </div>
@@ -266,10 +301,17 @@ export default function EmployeeOverview() {
         </Panel>
       </section>
 
+      <div ref={directoryRef} id="employee-directory" className="scroll-mt-20" />
       <Panel
         title="Employee directory"
         sub={`${directory.length} of ${scoped.length} ${viewWord ? `${viewWord} ` : ""}${scoped.length === 1 ? "employee" : "employees"}`}
         action={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+          {view !== "ALL" && (
+            <button type="button" data-testid="clear-status" onClick={() => choose("ALL")} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[var(--brand-50)] px-3 text-xs font-medium text-indigo-700 hover:bg-indigo-100" title="Remove the status filter and show every employee">
+              {STATUS_VIEW_LABEL[view].replace(/ \(.*\)$/, "")} <span aria-hidden="true">✕</span><span className="sr-only">Clear the status filter</span>
+            </button>
+          )}
           <input
             type="search"
             value={q}
@@ -281,29 +323,32 @@ export default function EmployeeOverview() {
             aria-label="Search the directory"
             className="h-9 w-56 max-w-full rounded-xl border border-indigo-100 bg-white px-3 text-sm text-slate-800 outline-none focus:border-indigo-400 sm:w-72"
           />
+          </div>
         }
       >
         <div className="-mx-5 overflow-x-auto">
-          <table className="w-full min-w-[820px] text-left text-sm">
+          <table data-testid="directory-table" className="w-full min-w-[820px] text-left text-sm">
             <thead>
               <tr className="border-y border-indigo-50 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                <th className="px-5 py-2.5">Employee</th>
-                <th className="px-3 py-2.5">Company</th>
-                <th className="px-3 py-2.5">Designation</th>
+                <SortTh label="Employee" k="name" sort={sort} setSort={setSort} setPage={setPage} className="px-5 py-2.5" />
+                <SortTh label="Company" k="company" sort={sort} setSort={setSort} setPage={setPage} className="px-3 py-2.5" />
+                <SortTh label="Designation" k="designation" sort={sort} setSort={setSort} setPage={setPage} className="px-3 py-2.5" />
                 <th className="px-3 py-2.5">Department</th>
                 <th className="px-3 py-2.5">Reports to</th>
-                <th className="px-5 py-2.5">Status</th>
+                {showWhen && <SortTh label="Joined" k="joined" sort={sort} setSort={setSort} setPage={setPage} className="px-3 py-2.5" />}
+                {showWhen && <th className="px-3 py-2.5">Last sign-in</th>}
+                <SortTh label="Status" k="status" sort={sort} setSort={setSort} setPage={setPage} className="px-5 py-2.5" />
               </tr>
             </thead>
             <tbody className="divide-y divide-indigo-50">
               {loading && (
                 <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-slate-400">Loading employees…</td>
+                  <td colSpan={showWhen ? 8 : 6} className="px-5 py-8 text-center text-slate-400">Loading employees…</td>
                 </tr>
               )}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-slate-400">{q ? "No employee matches that search." : "No employees to show for these filters."}</td>
+                  <td colSpan={showWhen ? 8 : 6} className="px-5 py-8 text-center text-slate-400">{q ? "No employee matches that search." : view === "ALL" ? "No employees to show for these filters." : `No ${viewWord} employees for these filters.`}</td>
                 </tr>
               )}
               {rows.map((p) => (
@@ -321,6 +366,8 @@ export default function EmployeeOverview() {
                   <td className="px-3 py-2.5 text-slate-600">{p.designation?.trim() || <span className="text-slate-400">Not assigned</span>}</td>
                   <td className="max-w-[14rem] truncate px-3 py-2.5 text-slate-600" title={p.teams.map((t) => t.name).join(", ")}>{p.teams.length ? p.teams.map((t) => t.name).join(", ") : <span className="text-slate-400">No team</span>}</td>
                   <td className="px-3 py-2.5 text-slate-600">{p.reportsTo?.name ?? <span className="text-slate-400">—</span>}</td>
+                  {showWhen && <td className="px-3 py-2.5 text-slate-600">{fmtDate(p.dateOfJoining) ?? <span className="text-slate-400">—</span>}</td>}
+                  {showWhen && <td className="px-3 py-2.5 text-slate-600">{fmtStamp(p.lastLoginAt) ?? <span className="text-slate-400">Never</span>}</td>}
                   <td className="px-5 py-2.5"><Chip status={p.status} /></td>
                 </tr>
               ))}

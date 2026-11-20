@@ -144,7 +144,27 @@ export default function CompaniesPage() {
 // ---------------------------------------------------------------------------
 // DESIGNATIONS: the job titles offered in each company's dropdowns. Adding or renaming one never changes what a person already has.
 // ---------------------------------------------------------------------------
-type DesignationRow = { id: string; name: string; isActive: boolean; people: number };
+type Holder = { id: string; name: string; employeeCode: string | null };
+type DesignationRow = { id: string; name: string; isActive: boolean; people: number; companies: { companyId: string; company: string; people: Holder[] }[] };
+
+// The people of one company who hold a title. Up to 6 names are shown; a longer list opens with "Show all". Names come from the server, per company.
+function CompanyHolders({ company, people }: { company: string; people: Holder[] }) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? people : people.slice(0, 6);
+  return (
+    <div className="min-w-0 rounded-xl bg-slate-50 px-3 py-2" data-testid="designation-company">
+      <p className="truncate text-xs font-semibold text-slate-700" title={company}>{company} <span className="font-normal text-slate-400">· {people.length}</span></p>
+      <ul className="mt-1 space-y-0.5">
+        {shown.map((p) => (
+          <li key={p.id} className="truncate text-xs text-slate-600" title={p.employeeCode ? `${p.name} (${p.employeeCode})` : p.name}>{p.name}{p.employeeCode ? <span className="text-slate-400"> · {p.employeeCode}</span> : null}</li>
+        ))}
+      </ul>
+      {people.length > 6 && (
+        <button type="button" onClick={() => setOpen((v) => !v)} className="mt-1 text-xs font-medium text-indigo-700 hover:underline">{open ? "Show fewer" : `Show all ${people.length}`}</button>
+      )}
+    </div>
+  );
+}
 
 function DesignationsPanel({ companies }: { companies: Company[] }) {
   const mine = companies.filter((c) => c.canEdit && c.isActive);
@@ -197,18 +217,27 @@ function DesignationsPanel({ companies }: { companies: Company[] }) {
       {rows.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">No designations yet. Add one above, or type one when adding or editing a person.</p>}
       <ul className="mt-4 divide-y divide-indigo-100">
         {rows.map((d) => (
-          <li key={d.id} className={`flex flex-wrap items-center justify-between gap-2 py-2.5 ${d.isActive ? "" : "opacity-60"}`}>
+          <li key={d.id} className={`grid grid-cols-1 items-start gap-x-4 gap-y-2 py-3 md:grid-cols-[minmax(11rem,15rem)_minmax(0,1fr)_auto] ${d.isActive ? "" : "opacity-60"}`}>
             {renaming?.id === d.id ? (
-              <span className="flex flex-wrap items-center gap-2">
+              <span className="flex flex-wrap items-center gap-2 md:col-span-2">
                 <input value={renaming.name} maxLength={80} onChange={(e) => setRenaming({ id: d.id, name: e.target.value })} className={`${input} w-64`} />
                 <button onClick={() => run(() => apiPatch(`/admin/designations/${d.id}`, { name: renaming.name }))} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white">Save</button>
                 <button onClick={() => setRenaming(null)} className="rounded-lg px-3 py-1.5 text-xs text-slate-500">Cancel</button>
               </span>
             ) : (
-              <span className="text-sm text-slate-800">{d.name} <span className="text-xs text-slate-400">· {d.people} {d.people === 1 ? "person" : "people"}</span>{!d.isActive && <span className="ml-2 text-xs text-slate-400">(hidden from dropdowns)</span>}</span>
+              <>
+                <span className="text-sm text-slate-800"><span className="font-medium">{d.name}</span> <span className="text-xs text-slate-400">· {d.people} {d.people === 1 ? "person" : "people"}</span>{!d.isActive && <span className="ml-2 text-xs text-slate-400">(hidden from dropdowns)</span>}</span>
+                {d.companies.length === 0 ? (
+                  <span className="self-center text-xs text-slate-400">No employees assigned</span>
+                ) : (
+                  <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-2">
+                    {d.companies.map((c) => <CompanyHolders key={c.companyId} company={c.company} people={c.people} />)}
+                  </div>
+                )}
+              </>
             )}
             {renaming?.id !== d.id && (
-              <span className="flex gap-2">
+              <span className="flex gap-2 md:justify-end">
                 <button onClick={() => setRenaming({ id: d.id, name: d.name })} className="rounded-lg border border-indigo-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Rename</button>
                 <button onClick={() => run(() => apiPatch(`/admin/designations/${d.id}`, { isActive: !d.isActive }))} className="rounded-lg border border-indigo-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">{d.isActive ? "Hide" : "Show"}</button>
               </span>

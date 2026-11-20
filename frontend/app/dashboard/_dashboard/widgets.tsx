@@ -23,9 +23,11 @@ const KPI_TONE: Record<string, string> = {
   slate: "bg-slate-100 text-slate-600",
 };
 
-export function KpiCard({ label, value, sub, tone = "green", icon, href, loading }: { label: string; value: string; sub?: string; tone?: keyof typeof KPI_TONE; icon: ReactNode; href?: string; loading?: boolean }) {
+// A card can be a link (`href`, opens another page) or a SELECTOR (`onClick` + `selected`, the page below it filters to what the number counts).
+// A selector is a real button: the whole card is the target, it shows a pointer and a lift on hover, and a ring while it is the selected one.
+export function KpiCard({ label, value, sub, tone = "green", icon, href, loading, onClick, selected, hint }: { label: string; value: string; sub?: string; tone?: keyof typeof KPI_TONE; icon: ReactNode; href?: string; loading?: boolean; onClick?: () => void; selected?: boolean; hint?: string }) {
   const body = (
-    <div className={`${PANEL} flex items-center gap-3 p-3.5 ${href ? "transition hover:shadow-[var(--shadow-lift)]" : ""}`}>
+    <div className={`${PANEL} flex items-center gap-3 p-3.5 ${href || onClick ? "transition hover:shadow-[var(--shadow-lift)]" : ""} ${onClick && selected ? "ring-2 ring-indigo-500" : onClick ? "ring-1 ring-transparent hover:ring-indigo-200" : ""}`}>
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${KPI_TONE[tone]}`}>{icon}</span>
       <div className="min-w-0">
         <p className="truncate text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
@@ -38,6 +40,13 @@ export function KpiCard({ label, value, sub, tone = "green", icon, href, loading
       </div>
     </div>
   );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} aria-pressed={!!selected} title={hint ?? `Show the people behind ${label.toLowerCase()}`} className="block w-full cursor-pointer rounded-2xl text-left focus-visible:outline-2 focus-visible:outline-indigo-500">
+        {body}
+      </button>
+    );
+  }
   return href ? <Link href={href} className="block focus-visible:outline-2">{body}</Link> : body;
 }
 

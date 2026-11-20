@@ -5,10 +5,10 @@ import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { accessFor, deciderIdsForCompany, scopeWhere, type Access } from "../../lib/companyAccess.js";
 import { notifyUsers } from "../../lib/notify.js";
-import { claimStep, gateForHr, rowsForManager, startStep, stepViews } from "../approvals/managerStep.js";
+import { assertCanHoldStep, claimStep, gateForHr, rowsForManager, startStep, stepViews } from "../approvals/managerStep.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
-import { actorOf, approverChoices, decorate, flowReady, hrIdsFor, myProjects, recordEvent, resolveApprover, validProjectIds } from "./leaveFlow.js";
-import { finalGate } from "./leaveFlow.logic.js";
+import { actorOf, approverChoices, decorate, flowReady, holdReady, hrIdsFor, myProjects, recordEvent, resolveApprover, validProjectIds } from "./leaveFlow.js";
+import { finalGate, isOpenStatus } from "./leaveFlow.logic.js";
 import { needsManualMapping } from "../admin/hierarchy.logic.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
 
@@ -28,6 +28,12 @@ const DECIDERS = ["HR", "ADMIN"];
 const MAX_SPAN_DAYS = 60;
 const MAX_DAYS_BACK = 30;
 const DAY_MS = 86_400_000;
+
+// "Open" = waiting or on hold. ON_HOLD is a legal value only after migration 20261121100000_leave_on_hold (Postgres refuses it even in a read filter
+// before that), so it is asked for only once the migration is there. Until then every query behaves exactly as it did.
+async function openIn(): Promise<("PENDING" | "ON_HOLD")[]> {
+  return (await holdReady()) ? ["PENDING", "ON_HOLD"] : ["PENDING"];
+}
 
 async function who(userId: string) {
   const user = await prisma.user.findUnique({
@@ -202,7 +208,7 @@ export async function requestLeave(
   const [clash, pending] = await Promise.all([
     prisma.leaveDay.count({ where: { userId, date: { gte: from, lte: to } } }),
     prisma.leaveRequest.count({
-      where: { userId, status: { in: ["PENDING", "APPROVED"] }, fromDate: { lte: to }, toDate: { gte: from } },
+      where: { userId, status: { in: [...(await openIn()), "APPROVED"] }, fromDate: { lte: to }, toDate: { gte: from } },
     }),
   ]);
   if (clash > 0 || pending > 0) throw new Error("LEAVE_OVERLAP");
@@ -315,7 +321,7 @@ export async function overview(userId: string) {
   const me = await who(userId);
   const out: Record<string, unknown> = { role: me.role };
   const pendingOf = async (where: Record<string, unknown>) => {
-    const rows = await prisma.leaveRequest.findMany({ where: { status: "PENDING", ...where }, select: { id: true, userId: true, status: true }, take: 1000 });
+    const rows = await prisma.leaveRequest.findMany({ where: { status: { in: await openIn() }, ...where }, select: { id: true, userId: true, status: true }, take: 1000 });
     const dec = await decorate(rows);
     return rows.map((r) => dec.get(r.id)!.stage);
   };
@@ -323,6 +329,7 @@ export async function overview(userId: string) {
     const access = await accessFor(userId);
     const stages = await pendingOf({ ...scopeWhere(access) });
     out.awaitingHr = stages.filter((x) => x === "PENDING_HR").length;
+    out.onHold = stages.filter((x) => x === "ON_HOLD").length;
     out.awaitingFirstLevel = stages.filter((x) => x === "PENDING_MANAGER" || x === "PENDING_ADMIN").length;
     out.awaitingManager = stages.filter((x) => x === "PENDING_MANAGER").length;
     out.awaitingAdmin = stages.filter((x) => x === "PENDING_ADMIN").length;
@@ -351,7 +358,7 @@ export async function overview(userId: string) {
     out.pendingTaskApprovals = pendingTasks;
   }
   if (me.role !== "ADMIN") {
-    const own = await prisma.leaveRequest.findMany({ where: { userId, status: "PENDING" }, select: { id: true, userId: true, status: true } });
+    const own = await prisma.leaveRequest.findMany({ where: { userId, status: { in: await openIn() } }, select: { id: true, userId: true, status: true } });
     const dec = await decorate(own);
     out.myPendingLeave = own.map((r) => ({ id: r.id, stage: dec.get(r.id)!.stage, label: dec.get(r.id)!.stageLabel }));
     const today = platformToday(me.timezone);
@@ -416,7 +423,7 @@ export async function myLeave(userId: string, yearParam?: unknown) {
   return {
     year,
     taken: taken.get(userId) ?? emptyTaken(),
-    pending: requests.filter((r) => r.status === "PENDING").length,
+    pending: requests.filter((r) => r.status === "PENDING" || r.status === "ON_HOLD").length,
     requests: requests.map((r) => ({ ...requestView(r), managerStep: steps.get(r.id) ?? null, ...extra.get(r.id) })),
   };
 }
@@ -427,7 +434,7 @@ export async function cancelRequest(userId: string, requestId: string) {
   // The status is part of the filter: if HR decides at the same moment,
   // exactly one of the two wins.
   const res = await prisma.leaveRequest.updateMany({
-    where: { id: requestId, status: "PENDING" },
+    where: { id: requestId, status: { in: await openIn() } },
     data: { status: "CANCELLED" },
   });
   if (res.count === 0) throw new Error("NOT_PENDING");
@@ -450,11 +457,12 @@ const scopeOf = (v: { access: Access }) => scopeWhere(v.access);
 const takenScope = (v: { access: Access }) => (v.access.all ? undefined : v.access.ids);
 
 export type LeaveListFilters = { hr?: HrFilters; leaveType?: unknown; stage?: unknown; from?: unknown; to?: unknown };
-const STAGES = ["PENDING_MANAGER", "PENDING_ADMIN", "PENDING_HR", "APPROVED", "REJECTED", "CANCELLED"];
+const STAGES = ["PENDING_MANAGER", "PENDING_ADMIN", "PENDING_HR", "ON_HOLD", "APPROVED", "REJECTED", "CANCELLED"];
 
 export async function listRequests(viewerId: string, status?: unknown, f: LeaveListFilters = {}) {
   const v = await decider(viewerId);
-  const wanted = (["PENDING", "APPROVED", "REJECTED", "CANCELLED"] as const).find((s) => s === status);
+  const holdOn = await holdReady();
+  const wanted = (["PENDING", "ON_HOLD", "APPROVED", "REJECTED", "CANCELLED"] as const).find((s) => s === status && (holdOn || s !== "ON_HOLD"));
   // The HR filters (company, project, reporting manager, name/ID search) narrow the PEOPLE the viewer may see; leave type, date range and
   // approval stage narrow their requests. All of it only narrows what the viewer's company access already allows.
   const everyone = await prisma.user.findMany({ where: { ...scopeOf(v), status: { not: "EXITED" } }, select: { id: true } });
@@ -507,6 +515,37 @@ export async function listRequests(viewerId: string, status?: unknown, f: LeaveL
 }
 
 // The employee hears the answer in their bell. Never allowed to fail the decision.
+// The employee hears that their request was paused, by whom and why.
+async function tellOnHold(r: { id: string; platformId: string; userId: string; fromDate: Date; toDate: Date }, byLabel: string, reason: string | null) {
+  try {
+    await notifyUsers({
+      platformId: r.platformId,
+      userIds: [r.userId],
+      type: "LEAVE_DECIDED",
+      title: "Your leave request is on hold",
+      body: `Your leave for ${dayLabel(r)} was put on hold by ${byLabel}. It is not approved or rejected yet.${reason ? ` Reason: ${reason}` : ""}`,
+      link: "/dashboard/leave",
+      data: { requestId: r.id },
+    });
+  } catch (e) {
+    console.error("[leave] could not notify requester about the hold:", e);
+  }
+}
+
+// Put an open request on hold. Not a decision: no days are written, nothing is deducted, the approval step stays open for the same person.
+async function putOnHold(r: { id: string; platformId: string; userId: string; fromDate: Date; toDate: Date }, actor: { id: string; name: string; role: string }, step: "MANAGER" | "ADMIN" | "HR", reason: string, byLabel: string) {
+  const done = await prisma.$transaction(async (tx) => {
+    const u = await tx.leaveRequest.updateMany({ where: { id: r.id, status: "PENDING" }, data: { status: "ON_HOLD" } });
+    if (u.count === 0) return false;
+    await recordEvent(tx, { platformId: r.platformId, requestId: r.id, actor, step, action: "HELD", comment: reason });
+    return true;
+  });
+  if (!done) throw new Error("ALREADY_DECIDED");
+  auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { status: "PENDING" }, after: { status: "ON_HOLD", by: byLabel, reason }, summary: `Put leave ${dayLabel(r)} on hold: ${reason.slice(0, 120)}` });
+  await tellOnHold(r, byLabel, reason);
+  return { status: "ON_HOLD" };
+}
+
 async function tellRequester(r: { id: string; platformId: string; userId: string; fromDate: Date; toDate: Date }, outcome: "APPROVED" | "REJECTED", note: string | null) {
   try {
     await notifyUsers({
@@ -525,13 +564,17 @@ async function tellRequester(r: { id: string; platformId: string; userId: string
 
 export async function decideRequest(viewerId: string, requestId: string, decision: unknown, note: unknown, skip: { skipManager?: unknown; skipReason?: unknown } = {}) {
   const v = await decider(viewerId);
-  if (decision !== "APPROVE" && decision !== "REJECT") throw new Error("BAD_DECISION");
+  if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "HOLD") throw new Error("BAD_DECISION");
   const text = String(note ?? "").trim().slice(0, 500) || null;
+  if (decision === "HOLD" && (!text || text.length < 3)) throw new Error("HOLD_REASON_REQUIRED");
 
   const r = await prisma.leaveRequest.findFirst({ where: { id: requestId, ...scopeOf(v) } });
   if (!r) throw new Error("NOT_FOUND");
   if (r.userId === v.id) throw new Error("OWN_REQUEST");
-  if (r.status !== "PENDING") throw new Error("ALREADY_DECIDED");
+  // A request on hold can still be approved or rejected later; it cannot be put on hold twice.
+  if (decision === "HOLD" && r.status === "ON_HOLD") throw new Error("ALREADY_ON_HOLD");
+  if (!isOpenStatus(r.status)) throw new Error("ALREADY_DECIDED");
+  if (decision === "HOLD" && !(await holdReady())) throw new Error("FEATURES_NOT_READY");
   // The manager answers first. HR can approve only after the manager approved (or, with a written reason, without the manager);
   // a manager's rejection can never be turned into an approval.
   // With the organization flow the first-level approver (manager or Admin) must approve first, there is NO override, and only HR gives the final
@@ -553,9 +596,11 @@ export async function decideRequest(viewerId: string, requestId: string, decisio
   const viaSkip = skipReason ? ` (decided without the manager: ${skipReason})` : "";
   const finalActor = flow ? await actorOf(v.id) : null;
 
+  if (decision === "HOLD") return putOnHold(r, finalActor!, "HR", text!, v.role === "ADMIN" ? "Admin" : "HR");
+
   if (decision === "REJECT") {
     const res = await prisma.leaveRequest.updateMany({
-      where: { id: r.id, status: "PENDING" },
+      where: { id: r.id, status: { in: await openIn() } },
       data: { status: "REJECTED", decidedById: v.id, decidedAt: new Date(), decisionNote: text },
     });
     if (res.count === 0) throw new Error("ALREADY_DECIDED");
@@ -573,7 +618,7 @@ export async function decideRequest(viewerId: string, requestId: string, decisio
 
   await prisma.$transaction(async (tx) => {
     const res = await tx.leaveRequest.updateMany({
-      where: { id: r.id, status: "PENDING" },
+      where: { id: r.id, status: { in: await openIn() } },
       data: {
         status: "APPROVED",
         decidedById: v.id,
@@ -710,22 +755,32 @@ export async function managerRequests(managerId: string) {
       takenThisYear: taken.get(r.userId) ?? emptyTaken(),
     };
   };
-  const pending = rows.filter((r) => r.status === "PENDING").map((r) => view(r.requestId)).filter((x) => x && x.status === "PENDING");
+  const pending = rows.filter((r) => r.status === "PENDING").map((r) => view(r.requestId)).filter((x) => x && isOpenStatus(x.status));
   const answered = rows.filter((r) => r.status !== "PENDING").map((r) => view(r.requestId)).filter(Boolean);
   return { year, pending, answered };
 }
 
 export async function managerDecide(managerId: string, requestId: string, decision: unknown, note: unknown) {
   const m = await managerOnly(managerId);
-  if (decision !== "APPROVE" && decision !== "REJECT") throw new Error("BAD_DECISION");
+  if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "HOLD") throw new Error("BAD_DECISION");
   const text = String(note ?? "").trim().slice(0, 500) || null;
   if (decision === "REJECT" && (!text || text.length < 3)) throw new Error("COMMENT_REQUIRED");
+  if (decision === "HOLD" && (!text || text.length < 3)) throw new Error("HOLD_REASON_REQUIRED");
 
   const r = await prisma.leaveRequest.findFirst({ where: { id: requestId }, include: { user: { select: { firstName: true, lastName: true, employeeCode: true, role: true } } } });
   // Only a person tagged on the request may answer it (claimStep below refuses anyone else with NOT_FOUND). The tag can point across companies,
   // because a reporting line may (an Admin sets it on purpose), so the company of the request is not compared here.
   if (!r) throw new Error("NOT_FOUND");
-  if (r.status !== "PENDING") throw new Error("ALREADY_DECIDED");
+  if (decision === "HOLD" && r.status === "ON_HOLD") {
+    await assertCanHoldStep({ kind: "LEAVE", requestId: r.id, managerId, requesterId: r.userId }); // only the tagged person learns the state
+    throw new Error("ALREADY_ON_HOLD");
+  }
+  if (!isOpenStatus(r.status)) throw new Error("ALREADY_DECIDED");
+  if (decision === "HOLD") {
+    if (!(await holdReady())) throw new Error("FEATURES_NOT_READY");
+    await assertCanHoldStep({ kind: "LEAVE", requestId: r.id, managerId, requesterId: r.userId });
+    return putOnHold(r, await actorOf(managerId), m.role === "ADMIN" ? "ADMIN" : "MANAGER", text!, m.role === "ADMIN" ? "your Admin" : "your manager");
+  }
   await claimStep({ kind: "LEAVE", requestId: r.id, managerId, requesterId: r.userId, decision, note: text });
 
   const flow = await flowReady();
@@ -736,7 +791,7 @@ export async function managerDecide(managerId: string, requestId: string, decisi
   const requesterRole = String(r.user.role);
   if (decision === "REJECT") {
     // The first-level rejection closes the request. (If the person cancelled at the same moment, there is nothing left to close.)
-    await prisma.leaveRequest.updateMany({ where: { id: r.id, status: "PENDING" }, data: { status: "REJECTED", decidedById: managerId, decidedAt: new Date(), decisionNote: text } });
+    await prisma.leaveRequest.updateMany({ where: { id: r.id, status: { in: await openIn() } }, data: { status: "REJECTED", decidedById: managerId, decidedAt: new Date(), decisionNote: text } });
     if (actor) await recordEvent(prisma, { platformId: r.platformId, requestId: r.id, actor, step, action: "REJECTED", comment: text }).catch((e) => console.error("[leave] history not written:", e));
     auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { status: "PENDING" }, after: { status: "REJECTED", by: who1, decisionNote: text }, summary: `${m.role === "ADMIN" ? "Admin" : "Manager"} rejected leave ${dayLabel(r)}` });
     await tellRequester(r, "REJECTED", text ? `${text} (your ${who1})` : null);
@@ -748,7 +803,7 @@ export async function managerDecide(managerId: string, requestId: string, decisi
     const requester = await who(r.userId);
     const dates = await workingDates(r.platformId, requester.workingDays, r.fromDate, r.toDate);
     await prisma.$transaction(async (tx) => {
-      const res = await tx.leaveRequest.updateMany({ where: { id: r.id, status: "PENDING" }, data: { status: "APPROVED", decidedById: managerId, decidedAt: new Date(), decisionNote: text, dayCount: r.isHalfDay ? 0.5 : dates.length } });
+      const res = await tx.leaveRequest.updateMany({ where: { id: r.id, status: { in: await openIn() } }, data: { status: "APPROVED", decidedById: managerId, decidedAt: new Date(), decisionNote: text, dayCount: r.isHalfDay ? 0.5 : dates.length } });
       if (res.count === 0) throw new Error("ALREADY_DECIDED");
       await writeLeaveDays(tx, r, dates, managerId);
       await recordEvent(tx, { platformId: r.platformId, requestId: r.id, actor: actor!, step: "ADMIN", action: "APPROVED", comment: text });
@@ -758,6 +813,8 @@ export async function managerDecide(managerId: string, requestId: string, decisi
     return { status: "APPROVED", days: dates.length };
   }
 
+  // Approving a held request resumes it: it goes back to waiting (for HR), no longer on hold.
+  if (r.status === "ON_HOLD") await prisma.leaveRequest.updateMany({ where: { id: r.id, status: "ON_HOLD" }, data: { status: "PENDING" } });
   if (actor) await recordEvent(prisma, { platformId: r.platformId, requestId: r.id, actor, step, action: "APPROVED", comment: text }).catch((e) => console.error("[leave] history not written:", e));
   auditNote({ recordType: "LeaveRequest", recordId: r.id, targetUserId: r.userId, before: { managerStep: "PENDING" }, after: { managerStep: "APPROVED", decisionNote: text }, summary: `${m.role === "ADMIN" ? "Admin" : "Manager"} approved leave ${dayLabel(r)}; waiting for HR` });
   try {
@@ -802,7 +859,7 @@ export async function leaveSummary(viewerId: string, yearParam?: unknown, hr?: H
     takenByUser(takenScope(v), year),
     prisma.leaveRequest.groupBy({
       by: ["userId"],
-      where: { ...scopeOf(v), status: "PENDING" },
+      where: { ...scopeOf(v), status: { in: await openIn() } },
       _count: true,
     }),
   ]);

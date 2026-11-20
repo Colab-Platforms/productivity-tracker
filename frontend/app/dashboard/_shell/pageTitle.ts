@@ -38,6 +38,7 @@ export const EXTRA_TITLES: [string, string][] = [
   ["/dashboard/companies", "Companies"],
   ["/dashboard/employee-overview", "Employee Overview"],
   ["/dashboard/employees", "Employees"],
+  ["/dashboard/system-settings", "System Settings"],
   ["/dashboard/attendance-calendar", "Calendar"],
   ["/dashboard/team-attendance", "Attendance"],
   ["/dashboard/team", "Attendance"],

@@ -200,7 +200,7 @@ S("4. Tracker: clock-in, breaks, meetings, clock-out");
 let r = await call("GET", "/tracker/session", tP);
 T("priya starts the day not clocked in", r.s === 200 && r.j.session === null, JSON.stringify(r.j).slice(0, 150));
 T("clock-out while not clocked in -> 400", (await call("POST", "/tracker/clock-out", tP)).s === 400);
-T("break start while not clocked in -> 400", (await call("POST", "/tracker/break/start", tP, { breakType: "TEA" })).s === 400);
+T("break start while not clocked in -> 400", (await call("POST", "/tracker/break/start", tP, { breakType: "LUNCH" })).s === 400);
 r = await call("POST", "/tracker/clock-in", tP);
 T("priya clock-in -> 200", r.s === 200, JSON.stringify(r.j).slice(0, 200));
 T("double clock-in does not create a 2nd session", await (async () => { await call("POST", "/tracker/clock-in", tP); return (await q("select count(*)::int n from work_sessions where \"userId\"=$1 and date=$2", [id.priya, todayIST]))[0].n === 1; })());
@@ -228,7 +228,7 @@ let mrow = (await q("select \"approvalStatus\" a, \"startedAt\" s from tracker_m
 T("accepted meeting is APPROVED with startedAt set (clock starts on acceptance)", mrow?.a === "APPROVED" && mrow?.s, JSON.stringify(mrow));
 let rrow = (await q("select \"approvalStatus\" a, \"startedAt\" s, \"durationSeconds\" d from tracker_meetings tm join work_sessions ws on ws.id=tm.\"workSessionId\" where ws.\"userId\"=$1 and ws.date=$2", [id.rahul, todayIST]))[0];
 T("declined meeting is REJECTED, no start time, no duration", rrow?.a === "REJECTED" && !rrow?.s && !rrow?.d, JSON.stringify(rrow));
-T("break during a running meeting -> 400", (await call("POST", "/tracker/break/start", tP, { breakType: "TEA" })).s === 400);
+T("break during a running meeting -> 400", (await call("POST", "/tracker/break/start", tP, { breakType: "LUNCH" })).s === 400);
 await sleep(4000);
 T("employee cannot end meeting (403)", (await call("POST", "/tracker/meeting/end", tP)).s === 403);
 const me = await call("POST", "/tracker/meeting/end", tM);
@@ -237,8 +237,8 @@ T("ending again -> 400 (no meeting running)", (await call("POST", "/tracker/meet
 const mDur = (await q("select tm.\"durationSeconds\" d from tracker_meetings tm join work_sessions ws on ws.id=tm.\"workSessionId\" where ws.\"userId\"=$1 and ws.date=$2", [id.priya, todayIST]))[0]?.d;
 T("meeting duration recorded ~4s", mDur >= 3 && mDur <= 12, mDur);
 // breaks
-const bs = await call("POST", "/tracker/break/start", tP, { breakType: "TEA" });
-T("priya starts TEA break -> 200", bs.s === 200, JSON.stringify(bs.j).slice(0, 150));
+const bs = await call("POST", "/tracker/break/start", tP, { breakType: "LUNCH" });
+T("priya starts LUNCH break -> 200", bs.s === 200, JSON.stringify(bs.j).slice(0, 150));
 T("second break while on break -> 400", (await call("POST", "/tracker/break/start", tP, { breakType: "LUNCH" })).s === 400);
 await sleep(3500);
 const be = await call("POST", "/tracker/break/end", tP);

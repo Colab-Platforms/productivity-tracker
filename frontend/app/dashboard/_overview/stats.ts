@@ -22,8 +22,18 @@ export type OverviewPerson = {
   photoAt?: string | null;
 };
 
-/** ACTIVE = working now. INACTIVE = suspended or exited. NOT_STARTED = invited or candidate (account made, not started yet). */
-export type StatusView = "ACTIVE" | "INACTIVE" | "ALL";
+/**
+ * What the list shows. ACTIVE = working now. INACTIVE = suspended or exited. NOT_STARTED = invited or candidate (account made, not started yet).
+ * The four single statuses (SUSPENDED, EXITED, INVITED, CANDIDATE) are the parts of those two groups, so an Admin can tell them apart. Never merged or renamed.
+ */
+export type StatusView = "ACTIVE" | "INACTIVE" | "NOT_STARTED" | "SUSPENDED" | "EXITED" | "INVITED" | "CANDIDATE" | "ALL";
+export const STATUS_VIEWS: StatusView[] = ["ALL", "ACTIVE", "INACTIVE", "NOT_STARTED", "SUSPENDED", "EXITED", "INVITED", "CANDIDATE"];
+export const STATUS_VIEW_LABEL: Record<StatusView, string> = { ALL: "All employees", ACTIVE: "Active", INACTIVE: "Inactive (suspended + exited)", NOT_STARTED: "Not started yet (invited + candidates)", SUSPENDED: "Suspended", EXITED: "Exited", INVITED: "Invited", CANDIDATE: "Candidates" };
+/** Reads ?show= from the address; anything unknown is ignored (null). Case does not matter. */
+export function parseStatusView(v: string | null | undefined): StatusView | null {
+  const u = String(v ?? "").trim().toUpperCase().replace(/-/g, "_");
+  return (STATUS_VIEWS as string[]).includes(u) ? (u as StatusView) : null;
+}
 
 const INACTIVE_STATUSES = ["SUSPENDED", "EXITED"];
 const NOT_STARTED_STATUSES = ["INVITED", "CANDIDATE"];
@@ -47,8 +57,45 @@ export function statusCounts(people: OverviewPerson[]): StatusCounts {
 
 export function inView(people: OverviewPerson[], view: StatusView): OverviewPerson[] {
   if (view === "ALL") return people;
-  if (view === "ACTIVE") return people.filter((p) => p.status === "ACTIVE");
-  return people.filter((p) => INACTIVE_STATUSES.includes(p.status));
+  if (view === "INACTIVE") return people.filter((p) => INACTIVE_STATUSES.includes(p.status));
+  if (view === "NOT_STARTED") return people.filter((p) => NOT_STARTED_STATUSES.includes(p.status));
+  return people.filter((p) => p.status === view); // ACTIVE, SUSPENDED, EXITED, INVITED, CANDIDATE: exactly that status
+}
+
+/** How many people each view holds (the number on its card or chip). By construction this is inView(...).length, so a count and its list always agree. */
+export function viewCount(c: StatusCounts, view: StatusView): number {
+  switch (view) {
+    case "ALL": return c.total;
+    case "ACTIVE": return c.active;
+    case "INACTIVE": return c.inactive;
+    case "NOT_STARTED": return c.notStarted;
+    case "SUSPENDED": return c.suspended;
+    case "EXITED": return c.exited;
+    case "INVITED": return c.invited;
+    case "CANDIDATE": return c.candidate;
+  }
+}
+
+export type SortKey = "name" | "company" | "designation" | "status" | "joined";
+/** Sorted copy (never changes the list it is given). Missing values go last in either direction; ties keep a stable name order. */
+export function sortPeople(people: OverviewPerson[], key: SortKey, dir: "asc" | "desc"): OverviewPerson[] {
+  const val = (p: OverviewPerson): string | null => {
+    switch (key) {
+      case "name": return p.name.toLowerCase();
+      case "company": return p.company ? p.company.toLowerCase() : null;
+      case "designation": return p.designation?.trim() ? p.designation.trim().toLowerCase() : null;
+      case "status": return p.status;
+      case "joined": return p.dateOfJoining ? p.dateOfJoining.slice(0, 10) : null;
+    }
+  };
+  const sign = dir === "asc" ? 1 : -1;
+  return [...people].sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x === null && y === null) return a.name.localeCompare(b.name);
+    if (x === null) return 1;
+    if (y === null) return -1;
+    return x < y ? -sign : x > y ? sign : a.name.localeCompare(b.name);
+  });
 }
 
 export type Bucket = { key: string; label: string; count: number; href?: string };

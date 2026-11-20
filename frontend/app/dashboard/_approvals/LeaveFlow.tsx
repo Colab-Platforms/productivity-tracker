@@ -7,7 +7,7 @@ import { useState } from "react";
 // history. The server decides every rule; these only show what it sends.
 // ---------------------------------------------------------------------------
 
-export type Stage = "PENDING_MANAGER" | "PENDING_ADMIN" | "PENDING_HR" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type Stage = "PENDING_MANAGER" | "PENDING_ADMIN" | "PENDING_HR" | "ON_HOLD" | "APPROVED" | "REJECTED" | "CANCELLED";
 export type HistoryItem = { at: string; actor: string; role: string; step: string; action: string; comment: string | null };
 export type FlowFields = {
   stage?: Stage;
@@ -16,12 +16,15 @@ export type FlowFields = {
   tagged?: string | null;
   projects?: { id: string; name: string }[];
   history?: HistoryItem[];
+  /** Set while the request is on hold: who paused it (and at which step), when and why. */
+  hold?: { by: string; role: string; step: string; at: string; reason: string | null } | null;
 };
 
 const STAGE_STYLE: Record<Stage, string> = {
   PENDING_MANAGER: "bg-amber-50 text-amber-700",
   PENDING_ADMIN: "bg-amber-50 text-amber-700",
   PENDING_HR: "bg-sky-50 text-sky-700",
+  ON_HOLD: "bg-orange-50 text-orange-700",
   APPROVED: "bg-emerald-50 text-emerald-700",
   REJECTED: "bg-red-50 text-red-600",
   CANCELLED: "bg-slate-100 text-slate-500",
@@ -32,7 +35,7 @@ export function StageBadge({ stage, label }: { stage: Stage; label?: string }) {
 }
 
 const ROLE_WORD: Record<string, string> = { MANAGER: "Manager", ADMIN: "Admin", HR: "HR", EMPLOYEE: "Employee", SYSTEM: "System" };
-const ACTION_WORD: Record<string, string> = { SUBMITTED: "Submitted", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled", AUTO_APPROVED: "Approved automatically" };
+const ACTION_WORD: Record<string, string> = { SUBMITTED: "Submitted", HELD: "Put on hold", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled", AUTO_APPROVED: "Approved automatically" };
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
 
@@ -41,6 +44,7 @@ export function FlowLine({ r }: { r: FlowFields }) {
   const bits: string[] = [];
   if (r.tagged && (r.stage === "PENDING_MANAGER" || r.stage === "PENDING_ADMIN")) bits.push(`Waiting for ${r.tagged}`);
   else if (r.tagged) bits.push(`Sent to ${r.tagged}`);
+  if (r.stage === "ON_HOLD" && r.hold) bits.push(`On hold by ${r.hold.by} (${ROLE_WORD[r.hold.role] ?? r.hold.role}) · ${when(r.hold.at)}${r.hold.reason ? ` · “${r.hold.reason}”` : ""}`);
   if (r.projects && r.projects.length > 0) bits.push(`Projects: ${r.projects.map((p) => p.name).join(", ")}`);
   if (bits.length === 0) return null;
   return <p className="mt-1 text-xs text-slate-500">{bits.join(" · ")}</p>;

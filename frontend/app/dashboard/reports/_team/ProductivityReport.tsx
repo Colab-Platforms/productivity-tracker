@@ -1,5 +1,6 @@
 "use client";
 
+import { pctText, pointsText, type Weighted } from "../../_weighted/Weighted";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { filterQuery, type Filters as HrFilterState } from "../../_filters/useHrFilters";
 import { apiGet } from "@/lib/api";
@@ -23,12 +24,13 @@ type Person = {
   projects?: string[]; reportingManager?: string | null; // added for the Excel export
   targetPerDay: number | null; targetSource: "PERSON" | "TEAM" | "COMPANY" | null;
   daysWithData: number; completedTotal: number | null; targetTotal: number | null; overallPercent: number | null; days: Day[];
+  weighted?: Weighted; // priority-weighted score from the server
 };
-type Productivity = { generatedAt: string; timezone: string; today: string; from: string; to: string; targetsReady: boolean; scope?: { orgTotal: number; filteredTotal: number }; people: Person[] };
+type Productivity = { generatedAt: string; timezone: string; today: string; from: string; to: string; targetsReady: boolean; scope?: { orgTotal: number; filteredTotal: number }; weightedTotal?: Weighted; people: Person[] };
 // The tasks behind the report (GET /team-attendance/productivity/tasks), fetched when Excel is exported.
 type TaskRow = {
   id: string; userId: string; employee: string; employeeCode: string | null; project: string | null; reportingManager: string | null; taggedManager: string | null;
-  title: string; description: string | null; date: string; priority: string; hoursSpent: number | null; progress: string; blockedReason?: string | null; approvalStatus: string; completedAt: string | null; counted: boolean;
+  title: string; description: string | null; date: string; priority: string; hoursSpent: number | null; progress: string; blockedReason?: string | null; approvalStatus: string; completedAt: string | null; counted: boolean; weightPoints?: number | null; earnedPoints?: number | null; partial?: boolean;
 };
 type Hourly = { date: string; people: { userId: string; name: string; employeeCode: string | null; teamName: string | null; hours: number[]; total: number }[] };
 
@@ -134,8 +136,8 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
     if (!data) return;
     downloadCsv(
       `task-productivity-${data.from}_to_${data.to}.csv`,
-      ["Employee", "Employee ID", "Team", "Daily target", "Target level", "Days with data", "Tasks completed", "Productivity %"],
-      data.people.map((p) => [p.name, p.employeeCode, p.teamName, p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : "", p.daysWithData, p.completedTotal ?? "No task data available", p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : "No task data available")])
+      ["Employee", "Employee ID", "Team", "Daily target", "Target level", "Days with data", "Tasks completed", "Productivity %", "Weighted score %", "Weighted points"],
+      data.people.map((p) => [p.name, p.employeeCode, p.teamName, p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : "", p.daysWithData, p.completedTotal ?? "No task data available", p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : "No task data available"), p.weighted?.percent ?? "N/A", p.weighted ? pointsText(p.weighted) : ""])
     );
   }
 
@@ -153,11 +155,16 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
       { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Team", width: 20 }, { header: "Project(s)", width: 28 }, { header: "Reporting manager", width: 22 },
       { header: "Daily target", kind: "int", width: 12 }, { header: "Target level", width: 13 }, { header: "Days with data", kind: "int", width: 13 },
       { header: "Tasks completed", kind: "int", width: 14 }, { header: "Productivity %", kind: "percent", width: 14, note: "Tasks completed divided by the daily target on the days with task data. Text means there is nothing to calculate (target not set, or no task data); it is never shown as 0%." },
+      { header: "Weighted score %", kind: "percent", width: 15, note: "Priority-weighted score of the approved tasks dated in the period: points earned / points possible (Critical 5, High 5, Medium 4, Low 1; completed earns all, a manager-marked partial half). N/A when nothing was scored." },
+      { header: "Points earned", kind: "decimal", width: 13 }, { header: "Points possible", kind: "int", width: 14 },
+      { header: "Critical (pts)", width: 14 }, { header: "High (pts)", width: 12 }, { header: "Medium (pts)", width: 13 }, { header: "Low (pts)", width: 11 },
     ];
     const peopleRows = data.people.map((p) => [
       p.employeeCode, p.name, p.teamName, (p.projects ?? []).join(", ") || null, p.reportingManager ?? null,
       p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : null, p.daysWithData,
       p.completedTotal ?? "No task data available", p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : "No task data available"),
+      p.weighted?.percent ?? "N/A", p.weighted?.possible ? p.weighted.earned : null, p.weighted?.possible ? p.weighted.possible : null,
+      ...(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).map((pr) => { const l = p.weighted?.byPriority.find((x) => x.priority === pr); return l && l.possible ? `${l.earned} / ${l.possible}` : null; }),
     ]);
 
     const daily: Col[] = [
@@ -172,11 +179,12 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
       { header: "Task", width: 40, wrap: true }, { header: "Details", width: 40, wrap: true }, { header: "Task date", kind: "date", width: 13 },
       { header: "Priority", width: 11 }, { header: "Hours spent", kind: "decimal", width: 12 }, { header: "Progress", width: 13 }, { header: "Blocked reason", width: 34, wrap: true }, { header: "Approval status", width: 14 },
       { header: "Completed on", kind: "date", width: 13 }, { header: "Completed at", kind: "time", width: 12 },
+      { header: "Task weight (points)", kind: "int", width: 13, note: "Critical 5, High 5, Medium 4, Low 1. Blank when the task is not scored (not approved, or cancelled)." }, { header: "Points earned", kind: "decimal", width: 12, note: "Completed = the full weight, partially completed (the manager's mark) = half, anything else 0." }, { header: "Partially completed", width: 12 },
       { header: "Counted in productivity", width: 14, note: "Yes = the report counts it: completed, approved, finished inside these dates and not rated below the completed threshold." },
     ];
     const taskRows = tasks.tasks.map((t) => [
       t.employeeCode, t.employee, t.project, t.reportingManager, t.taggedManager, t.title, t.description, t.date,
-      titleCase(t.priority), t.hoursSpent, PROGRESS_LABEL[t.progress] ?? titleCase(t.progress), t.progress === "BLOCKED" ? t.blockedReason ?? null : null, titleCase(t.approvalStatus), dayOf(t.completedAt, tz), secondsOfDay(t.completedAt, tz), t.counted ? "Yes" : "No",
+      titleCase(t.priority), t.hoursSpent, PROGRESS_LABEL[t.progress] ?? titleCase(t.progress), t.progress === "BLOCKED" ? t.blockedReason ?? null : null, titleCase(t.approvalStatus), dayOf(t.completedAt, tz), secondsOfDay(t.completedAt, tz), t.weightPoints ?? null, t.earnedPoints ?? null, t.partial ? "Yes" : null, t.counted ? "Yes" : "No",
     ]);
 
     await downloadReportXlsx(`task-productivity-${data.from}_to_${data.to}.xlsx`, [
@@ -188,7 +196,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
       period: data.from === data.to ? dayLabel(data.from) : `${dayLabel(data.from)} to ${dayLabel(data.to)}`,
       filters: await describeFilters(filters),
       exportedAt: new Date(), exportedBy: me ? `${me.firstName} ${me.lastName}`.trim() : null, timezone: tz,
-      totals: [["People", k.people], ["Tasks completed (report total)", k.completed], ["Overall productivity %", k.percent === null ? "n/a" : k.percent], ["Task rows exported", taskRows.length], ["Task rows counted in productivity", tasks.tasks.filter((t) => t.counted).length]],
+      totals: [["People", k.people], ["Tasks completed (report total)", k.completed], ["Overall productivity %", k.percent === null ? "n/a" : k.percent], ["Weighted score % (all people in this report)", data.weightedTotal?.percent ?? "N/A"], ["Task rows exported", taskRows.length], ["Task rows counted in productivity", tasks.tasks.filter((t) => t.counted).length]],
     });
   }
 
@@ -247,6 +255,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
                   <th className={`${th} text-right`}>Days with data</th>
                   <th className={`${th} text-right`}>Completed</th>
                   <th className={`${th} text-right`}>Productivity</th>
+                  <th className={`${th} text-right`} title="Priority-weighted score of the approved tasks dated in the period (Critical 5, High 5, Medium 4, Low 1)">Weighted score</th>
                 </tr>
               </thead>
               <tbody>
@@ -267,10 +276,11 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
                       <td className={`px-3 py-2.5 text-right tabular-nums font-semibold ${pctClass(p.overallPercent)}`}>
                         {p.overallPercent !== null ? `${p.overallPercent}%` : <span className="text-xs font-normal text-slate-400">{p.targetPerDay === null ? "Target not configured" : "No task data available"}</span>}
                       </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900" title={p.weighted ? `${pointsText(p.weighted)} points` : undefined}>{pctText(p.weighted)}</td>
                     </tr>
                     {open === p.userId && (
                       <tr className="bg-slate-50/60">
-                        <td colSpan={6} className="px-6 py-3">
+                        <td colSpan={7} className="px-6 py-3">
                           <table className="w-full max-w-xl text-xs">
                             <thead><tr className="text-slate-400"><th className="py-1 text-left font-medium">Day</th><th className="py-1 text-right font-medium">Completed</th><th className="py-1 text-right font-medium">Target</th><th className="py-1 text-right font-medium">Productivity</th></tr></thead>
                             <tbody>

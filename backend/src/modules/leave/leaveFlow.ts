@@ -31,8 +31,35 @@ export async function flowReady(): Promise<boolean> {
   return readyValue;
 }
 
+// Hold needs the ON_HOLD status value and the HELD history action (migration 20261121100000_leave_on_hold). Until both exist, pressing Hold answers
+// "not ready" and nothing else changes. Concurrent first callers share the one check.
+let holdOk = false;
+let holdCheckedAt = 0;
+let holdInFlight: Promise<boolean> | null = null;
+export async function holdReady(): Promise<boolean> {
+  if (holdOk) return true;
+  if (holdInFlight) return holdInFlight;
+  if (Date.now() - holdCheckedAt < 15_000) return false;
+  holdCheckedAt = Date.now();
+  holdInFlight = (async () => {
+    try {
+      if (!(await flowReady())) return (holdOk = false);
+      const r = await prisma.$queryRaw<{ n: number }[]>`select
+        (select count(*) from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'LeaveRequestStatus' and e.enumlabel = 'ON_HOLD')::int +
+        (select count(*) from pg_constraint where conname = 'leave_approval_events_action_check' and pg_get_constraintdef(oid) like '%HELD%')::int as n`;
+      holdOk = Number(r[0]?.n) === 2;
+    } catch {
+      holdOk = false;
+    } finally {
+      holdInFlight = null;
+    }
+    return holdOk;
+  })();
+  return holdInFlight;
+}
+
 type Db = Pick<typeof prisma, "leaveApprovalEvent">;
-export type EventInput = { platformId: string; requestId: string; actor: { id: string; name: string; role: string } | null; step: "REQUEST" | "MANAGER" | "ADMIN" | "HR"; action: "SUBMITTED" | "APPROVED" | "REJECTED" | "CANCELLED" | "AUTO_APPROVED"; comment?: string | null };
+export type EventInput = { platformId: string; requestId: string; actor: { id: string; name: string; role: string } | null; step: "REQUEST" | "MANAGER" | "ADMIN" | "HR"; action: "SUBMITTED" | "APPROVED" | "REJECTED" | "CANCELLED" | "AUTO_APPROVED" | "HELD"; comment?: string | null };
 
 export async function recordEvent(db: Db, e: EventInput) {
   await db.leaveApprovalEvent.create({
@@ -166,6 +193,8 @@ export type Decorated = {
   tagged: string | null;
   firstLevel: FirstLevel;
   projects: { id: string; name: string }[];
+  /** Set while the request is on hold: who paused it, at which step, when and why (from the approval history). */
+  hold: { by: string; role: string; step: string; at: Date; reason: string | null } | null;
   history: { at: Date; actor: string; role: string; step: string; action: string; comment: string | null }[];
 };
 
@@ -188,7 +217,9 @@ export async function decorate(rows: { id: string; userId: string; status: unkno
   for (const r of rows) {
     const requesterRole = roleOf.get(r.userId) ?? "EMPLOYEE";
     const step = steps.get(r.id) ?? null;
+    const held = String(r.status) === "ON_HOLD" ? [...events].reverse().find((e) => e.requestId === r.id && e.action === "HELD") : undefined;
     out.set(r.id, {
+      hold: held ? { by: held.actorName, role: held.actorRole, step: held.step, at: held.createdAt, reason: held.comment } : null,
       stage: stageOf({ requesterRole, requestStatus: String(r.status), stepStatus: step?.status ?? null }),
       stageLabel: STAGE_LABEL[stageOf({ requesterRole, requestStatus: String(r.status), stepStatus: step?.status ?? null })],
       requesterRole,

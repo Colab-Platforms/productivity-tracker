@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { accessFor, assertCompany, companyAccessReady, scopeWhere } from "../../lib/companyAccess.js";
+import { designationNames } from "../../lib/designations.js";
 
 // ---------------------------------------------------------------------------
 // COMPANY ADMIN (Phase 1):
@@ -41,10 +42,32 @@ export async function listDesignations(viewerId: string, _companyId?: string) {
     if (!cur) byName.set(k, { ...r });
     else if (r.isActive) cur.isActive = true;
   }
-  // How many people (in companies this person can act on) hold each title.
-  const people = await prisma.user.groupBy({ by: ["designation"], where: { ...scopeWhere(a), designation: { not: null }, status: { not: "EXITED" } }, _count: true });
-  const used = new Map(people.map((p) => [String(p.designation).toLowerCase(), p._count]));
-  return { companyId: a.ownPlatformId, shared: true, designations: [...byName.values()].map((r) => ({ ...r, people: used.get(r.name.toLowerCase()) ?? 0 })) };
+  // Who holds each title, by company, in ONE query (never one per row). Only people in companies this person can act on, never someone who left.
+  // A person is listed under the company they actually belong to (users.platformId).
+  const holders = await prisma.user.findMany({
+    where: { ...scopeWhere(a), designation: { not: null }, status: { not: "EXITED" } },
+    select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true, platformId: true, platform: { select: { name: true } } },
+    orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
+  });
+  type Holder = { id: string; name: string; employeeCode: string | null };
+  const byTitle = new Map<string, Map<string, { companyId: string; company: string; people: Holder[] }>>();
+  for (const u of holders) {
+    const k = String(u.designation).toLowerCase();
+    const companies = byTitle.get(k) ?? new Map();
+    const c = companies.get(u.platformId) ?? { companyId: u.platformId, company: u.platform.name, people: [] as Holder[] };
+    c.people.push({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), employeeCode: u.employeeCode });
+    companies.set(u.platformId, c);
+    byTitle.set(k, companies);
+  }
+  const listed = new Set(designationNames().map((n) => n.toLowerCase()));
+  const out = [...byName.values()]
+    .map((r) => {
+      const companies = [...(byTitle.get(r.name.toLowerCase())?.values() ?? [])].sort((x, y) => x.company.localeCompare(y.company));
+      return { ...r, people: companies.reduce((n, c) => n + c.people.length, 0), companies };
+    })
+    // A title that is no longer on the official list AND has nobody holding it is retired: it is not shown. A title someone still holds stays.
+    .filter((r) => listed.has(r.name.toLowerCase()) || r.people > 0);
+  return { companyId: a.ownPlatformId, shared: true, designations: out };
 }
 
 export async function addDesignation(viewerId: string, body: { companyId?: string; name?: string }) {

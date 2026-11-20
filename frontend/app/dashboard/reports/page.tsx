@@ -15,6 +15,7 @@
 
 "use client";
 
+import { pctText, pointsText, type Weighted } from "../_weighted/Weighted";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiGet } from "@/lib/api";
@@ -56,6 +57,7 @@ type PersonRow = {
   targetSeconds: number;
   attainment: number;
   taskScore: number;
+  weighted?: Weighted;
   tasksTotal: number;
   tasksDone: number;
   tasksCompleted: number;
@@ -341,7 +343,7 @@ function SummaryReport() {
           "Days on leave", "Days absent", "Days not tracked", "Late days", "Late minutes",
           "Productive", "Of which Team Huddle", "Break", "Washroom", "Target", "Productivity %",
           "Tasks completed", "Tasks pending", "Task completion %",
-          "Task score %", "Average rating (out of 5)", "Tasks rated", "Alerts", "Auto-closed days",
+          "Task score %", "Weighted score %", "Weighted points", "Average rating (out of 5)", "Tasks rated", "Alerts", "Auto-closed days",
         ];
         rows = report.people.map((p) => [
           p.name, p.employeeCode, p.role, p.daysExpected, p.daysPresent,
@@ -349,7 +351,7 @@ function SummaryReport() {
           hm(p.productiveSeconds), hm(p.huddleSeconds), hm(p.breakSeconds), hm(p.washroomSeconds),
           hm(p.targetSeconds), Math.round(p.attainment * 100),
           p.tasksCompleted, p.tasksPending, Math.round(p.taskCompletion * 100),
-          Math.round(p.taskScore * 100), p.avgRating ?? "", p.ratedCount, p.alertCount, p.autoClosedDays,
+          Math.round(p.taskScore * 100), p.weighted?.percent ?? "N/A", p.weighted ? pointsText(p.weighted) : "", p.avgRating ?? "", p.ratedCount, p.alertCount, p.autoClosedDays,
         ]);
       } else {
         header = [
@@ -531,7 +533,7 @@ function SummaryReport() {
           <Tile
             label="Break"
             value={hm(t.breakSeconds)}
-            sub={`tea, lunch, personal · budget ${report.target.breakBudgetMinutes}m/day`}
+            sub={`lunch, personal (older tea counts too) · Break Time ${report.target.breakBudgetMinutes}m/day`}
           />
           <Tile
             label="Washroom"
@@ -592,6 +594,7 @@ function SummaryReport() {
                   <th className="px-4 py-3 text-right" title="Approved tasks not fully done yet (open, partly done or sent back)">Tasks pending</th>
                   <th className="px-4 py-3 text-right" title="Done ÷ (done + pending)">Completion</th>
                   <th className="px-4 py-3 text-right" title="Weighted score of the day's tasks">Task score</th>
+                  <th className="px-4 py-3 text-right" title="Priority-weighted score (Critical 5, High 5, Medium 4, Low 1): completed earns all, a manager-marked partial half. Approved tasks only. N/A when nothing was scored.">Weighted score</th>
                   <th className="px-4 py-3 text-right" title="Average of the manager's 1 to 5 star ratings on finished tasks">Avg rating</th>
                   <th className="px-4 py-3 text-right">Alerts</th>
                 </tr>
@@ -656,6 +659,9 @@ function SummaryReport() {
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-600">
                       {p.tasksTotal > 0 ? pct(p.taskScore) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-900" title={p.weighted ? `${pointsText(p.weighted)} points` : undefined}>
+                      {pctText(p.weighted)}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-700" title={p.ratedCount > 0 ? `${p.ratedCount} rated task${p.ratedCount === 1 ? "" : "s"}` : "No rated tasks"}>
                       {p.avgRating != null ? `${p.avgRating}/5` : "—"}
