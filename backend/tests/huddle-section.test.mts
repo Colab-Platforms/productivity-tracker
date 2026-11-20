@@ -50,9 +50,12 @@ console.log("\n## the sidebar");
 // The Productivity Supervisor has a menu of its own (its Meetings entry is named by the owner); this test is about the main role menu.
 const layout = readFileSync(new URL("../../frontend/app/dashboard/layout.tsx", import.meta.url), "utf8").split("// The Productivity Supervisor's own menu")[0];
 const items = layout.split("\n").filter((l) => /href: "\/dashboard\/(huddles|meetings)"/.test(l));
-ok("exactly one item points at the unified section", items.length === 1, );
-ok("it is named Team Huddle", /label: "Team Huddle"/.test(items[0] ?? ""));
-ok("it has no role restriction, so Employee, Manager, HR and Admin all get it", !/roles:/.test(items[0] ?? "") && !/notRoles:/.test(items[0] ?? ""));
+// Admin has its own entry in the owner menu (roles: ["ADMIN"]); Employee, Manager and HR share the one in the Me group (notRoles: ["ADMIN"]). Between them every role gets exactly one.
+const adminItem = items.filter((l) => l.includes(' roles: ["ADMIN"]') && !l.includes("notRoles"));
+const sharedItem = items.filter((l) => l.includes('notRoles: ["ADMIN"]'));
+ok("every role gets exactly one Team Huddle item: one for Admin, one shared by Employee, Manager and HR", items.length === 2 && adminItem.length === 1 && sharedItem.length === 1, items);
+ok("both are named Team Huddle", items.every((l) => /label: "Team Huddle"/.test(l)));
+ok("the shared one has no role list, so Employee, Manager and HR all get it", sharedItem.length === 1 && !/ roles:/.test(sharedItem[0]));
 ok("there is no separate Meetings item and no old huddles link", !/label: "Meetings"/.test(layout) && !layout.includes('"/dashboard/huddles"'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
