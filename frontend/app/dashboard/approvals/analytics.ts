@@ -22,6 +22,8 @@ export type Row = {
   rating?: number | null;
   date: string; // YYYY-MM-DD, the task's own day
   title?: string;
+  weight?: string | null;
+  taggedManager?: string | null;
 };
 
 export type Counts = {
@@ -119,3 +121,29 @@ export function narrow(rows: Row[], employeeId: string, project: string): Row[] 
 
 export const OVERDUE_CHOICES = [2, 3, 5, 7, 14] as const;
 export const DEFAULT_OVERDUE_DAYS = 3;
+
+// ---- the tasks behind a number -----------------------------------------------------------------------------------------------------------
+// Clicking a tile lists exactly the tasks that tile counts. This mirrors countRows() line by line (same skips, same buckets), so a tile's number is always
+// the length of its list; the test asserts it for every tile.
+export type TileKey = "submitted" | "approved" | "pending" | "rejected" | "todo" | "inProgress" | "completed" | "blocked" | "open" | "overdue" | "rated";
+export const TILE_LABEL: Record<TileKey, string> = { submitted: "Submitted", approved: "Approved", pending: "Waiting for approval", rejected: "Rejected", todo: "To Do", inProgress: "In Progress", completed: "Completed", blocked: "Blocked", open: "Open tasks", overdue: "Overdue", rated: "Rated tasks" };
+
+export function tileMembers<T extends Row>(rows: T[], key: TileKey, today: string, overdueDays: number): T[] {
+  return rows.filter((r) => {
+    if (cancelled(r)) return false;
+    if (key === "submitted") return true;
+    const a = String(r.approvalStatus ?? "");
+    if (key === "approved") return a === "APPROVED";
+    if (key === "pending") return a === "PENDING";
+    if (key === "rejected") return a === "REJECTED";
+    if (a === "REJECTED") return false; // a rejected task has no progress, openness or rating
+    const p = progressOf(r);
+    if (key === "todo") return p === "TODO";
+    if (key === "inProgress") return p === "IN_PROGRESS";
+    if (key === "completed") return p === "COMPLETED";
+    if (key === "blocked") return p === "BLOCKED";
+    if (key === "open") return p !== "COMPLETED";
+    if (key === "overdue") return isOverdue(r, today, overdueDays);
+    return r.rating != null; // rated
+  });
+}

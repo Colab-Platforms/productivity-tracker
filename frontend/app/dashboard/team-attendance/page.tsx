@@ -44,6 +44,18 @@ const SEVERITY: Record<Alert["severity"], string> = {
   INFO: "border-sky-200 bg-sky-50 text-sky-800",
 };
 
+/** Which activity card counts a person (null = none). The cards and their lists both use this. */
+function activityOf(status: LiveStatus): string | null {
+  if (status === "WORKING") return "working";
+  if (IS_COUNTED_BREAK(status)) return "onBreak";
+  if (status === "BIO") return "washroom";
+  if (status === "MEETING") return "meeting";
+  if (status === "NOT_CLOCKED_IN") return "notIn";
+  if (status === "ON_LEAVE") return "leave";
+  if (status === "CLOCKED_OUT") return "out";
+  return null;
+}
+
 const STATUS: Record<LiveStatus, { label: string; dot: string; row: string }> = {
   WORKING: { label: "Working", dot: "bg-emerald-500", row: "bg-emerald-50/60" },
   TEA: { label: "Tea break", dot: "bg-amber-500", row: "bg-amber-50" },
@@ -93,6 +105,8 @@ export default function AttendancePage() {
   const { filters, update, clear, ready } = useHrFilters();
   const { options } = useFilterOptions(filters, update, ready);
   const [attStatus, setAttStatus] = useState("");
+  // The activity card that was clicked (working, onBreak, ...): the table below lists exactly the people that card counts.
+  const [act, setAct] = useState<string>("");
   const [live, setLive] = useState<Live | null>(null);
   const [liveError, setLiveError] = useState("");
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -138,8 +152,8 @@ export default function AttendancePage() {
   const tz = live?.timezone ?? "Asia/Kolkata";
   // `rows` = the people the server left after the filters (the cards are counted from these); `shown` also applies the attendance-status filter.
   const rows = useMemo(() => live?.rows ?? [], [live]);
-  const shown = useMemo(() => (attStatus ? rows.filter((r) => r.attendanceStatus === attStatus) : rows), [rows, attStatus]);
-  const filtersOn = !!(filters.company || filters.project.length || filters.manager || filters.q || attStatus);
+  const shown = useMemo(() => rows.filter((r) => (!attStatus || r.attendanceStatus === attStatus) && (!act || activityOf(r.status) === act)), [rows, attStatus, act]);
+  const filtersOn = !!(filters.company || filters.project.length || filters.manager || filters.q || attStatus || act);
 
   // Grouped by team (company shown when the list spans several). People without a team go last.
   const groups = useMemo(() => {
@@ -152,17 +166,10 @@ export default function AttendancePage() {
     return Array.from(map.entries()).sort(([a], [b]) => (a.endsWith("No team") ? 1 : b.endsWith("No team") ? -1 : a.localeCompare(b)));
   }, [shown]);
 
+  // One rule for both a card's number and the list behind it (activityOf), so they always agree.
   const counts = useMemo(() => {
     const c = { working: 0, onBreak: 0, washroom: 0, meeting: 0, notIn: 0, leave: 0, out: 0 };
-    for (const r of rows) {
-      if (r.status === "WORKING") c.working++;
-      else if (IS_COUNTED_BREAK(r.status)) c.onBreak++;
-      else if (r.status === "BIO") c.washroom++;
-      else if (r.status === "MEETING") c.meeting++;
-      else if (r.status === "NOT_CLOCKED_IN") c.notIn++;
-      else if (r.status === "ON_LEAVE") c.leave++;
-      else if (r.status === "CLOCKED_OUT") c.out++;
-    }
+    for (const r of rows) { const k = activityOf(r.status); if (k) c[k as keyof typeof c]++; }
     return c;
   }, [rows]);
 
@@ -210,14 +217,14 @@ export default function AttendancePage() {
     }
   }
 
-  const tiles: [string, number, string][] = [
-    ["Working", counts.working, "bg-emerald-500"],
-    ["On break", counts.onBreak, "bg-amber-500"],
-    ["Washroom", counts.washroom, "bg-sky-400"],
-    ["In a meeting", counts.meeting, "bg-indigo-500"],
-    ["Clocked out", counts.out, "bg-slate-400"],
-    ["Not clocked in", counts.notIn, "bg-red-500"],
-    ["On leave", counts.leave, "bg-sky-500"],
+  const tiles: [string, number, string, string][] = [
+    ["Working", counts.working, "bg-emerald-500", "working"],
+    ["On break", counts.onBreak, "bg-amber-500", "onBreak"],
+    ["Washroom", counts.washroom, "bg-sky-400", "washroom"],
+    ["In a meeting", counts.meeting, "bg-indigo-500", "meeting"],
+    ["Clocked out", counts.out, "bg-slate-400", "out"],
+    ["Not clocked in", counts.notIn, "bg-red-500", "notIn"],
+    ["On leave", counts.leave, "bg-sky-500", "leave"],
   ];
 
   return (
@@ -239,6 +246,7 @@ export default function AttendancePage() {
         clear={() => {
           clear();
           setAttStatus("");
+          setAct("");
         }}
         options={options}
         show={{ search: true, company: me?.role !== "MANAGER" || (options?.companies.length ?? 0) > 1, project: true, manager: me?.role !== "MANAGER" }}
@@ -256,15 +264,18 @@ export default function AttendancePage() {
       />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-        {tiles.map(([label, n, dot]) => (
-          <div key={label} className={`${card} px-4 py-3`}>
+        {tiles.map(([label, n, dot, key]) => (
+          <button key={label} type="button" data-testid={`att-${key}`} aria-pressed={act === key} onClick={() => setAct(act === key ? "" : key)} title={act === key ? "Click again to show everyone" : `Show who is counted under ${label.toLowerCase()}`} className={`${card} w-full cursor-pointer px-4 py-3 text-left ring-2 transition hover:shadow-[var(--shadow-lift)] ${act === key ? "ring-indigo-500" : "ring-transparent hover:ring-indigo-200"}`}>
             <div className="flex items-center gap-1.5">
               <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
               <p className="text-xs text-slate-500">{label}</p>
             </div>
             <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{live ? n : "—"}</p>
-          </div>
+          </button>
         ))}
+        {act && (
+          <p className="col-span-full -mt-1 text-xs text-slate-500">Showing {shown.length} {shown.length === 1 ? "person" : "people"}: {tiles.find((x) => x[3] === act)?.[0]}. <button type="button" data-testid="att-clear" onClick={() => setAct("")} className="font-medium text-indigo-700 hover:underline">Show everyone</button></p>
+        )}
       </div>
 
       {liveError && (
