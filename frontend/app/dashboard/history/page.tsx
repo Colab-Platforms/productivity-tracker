@@ -1,5 +1,6 @@
 "use client";
 
+import { pctText, pointsText, type Weighted } from "../_weighted/Weighted";
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch } from "@/lib/api";
 import { formatTime, getPlatformTimezone, isoDaysAgo } from "@/lib/time";
@@ -145,6 +146,7 @@ type Row = {
   taskTotal: number;
   taskDone: number;
   taskPercent: number | null;
+  weighted?: Weighted;
   avgRating: number | null; // average of the manager's star ratings on that day's finished tasks
   ratedCount: number;
 };
@@ -165,6 +167,7 @@ type Data = {
     totalWashroom?: number;
     totalMeeting: number;
     avgTaskScore: number | null;
+    weighted?: Weighted;
   };
 };
 
@@ -217,6 +220,7 @@ export default function HistoryPage() {
       "On leave",
       "Tasks done",
       "Task score %",
+      "Weighted score %",
       "Avg rating (out of 5)",
     ];
 
@@ -238,6 +242,7 @@ export default function HistoryPage() {
         r.onLeave ? r.leaveType ?? "yes" : "no",
         `${r.taskDone}/${r.taskTotal}`,
         r.taskPercent ?? "",
+        r.weighted?.percent ?? "N/A",
         r.avgRating ?? "",
       ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
@@ -298,7 +303,7 @@ export default function HistoryPage() {
 
       {data && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
             {[
               ["Days worked", String(data.summary.daysWorked)],
               ["Avg productive", hm(data.summary.avgProductive)],
@@ -310,6 +315,7 @@ export default function HistoryPage() {
                   ? "—"
                   : `${data.summary.avgTaskScore}%`,
               ],
+              ["Weighted task score", pctText(data.summary.weighted)],
             ].map(([label, value]) => (
               <div
                 key={label}
@@ -442,6 +448,7 @@ export default function HistoryPage() {
                             <span className="ml-1.5 text-xs text-slate-400">
                               {r.taskPercent}%
                             </span>
+                            {r.weighted && <span className="ml-1.5 text-xs text-indigo-700" title={`Weighted score: ${pointsText(r.weighted)} points`}>wtd {pctText(r.weighted)}</span>}
                             {r.avgRating != null && (
                               <span className="ml-1.5 text-xs text-amber-600" title={`Average of ${r.ratedCount} star rating${r.ratedCount === 1 ? "" : "s"} from your manager`}>
                                 ★ {r.avgRating}

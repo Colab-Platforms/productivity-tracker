@@ -90,6 +90,16 @@ export async function claimStep(opts: { kind: Kind; requestId: string; managerId
   return { platformId: row.platformId };
 }
 
+/** May this person pause (hold) the first-level step? Same authority as answering it (tagged, not their own, step still open), but the step stays open. */
+export async function assertCanHoldStep(opts: { kind: Kind; requestId: string; managerId: string; requesterId: string }) {
+  if (!(await approvalsReady())) throw new Error("NOT_FOUND");
+  const row = await prisma.requestApproval.findUnique({ where: { kind_requestId: { kind: opts.kind, requestId: opts.requestId } } });
+  if (!row || !row.approverIds.includes(opts.managerId)) throw new Error("NOT_FOUND");
+  if (opts.requesterId === opts.managerId) throw new Error("OWN_REQUEST");
+  if (row.status !== "PENDING") throw new Error("STEP_ALREADY_DECIDED");
+  return { platformId: row.platformId };
+}
+
 /** Called by HR before deciding. Throws WAITING_FOR_MANAGER, SKIP_REASON_REQUIRED or MANAGER_REJECTED; if HR chose to decide without the
  *  manager (with a reason) the step is marked SKIPPED and the reason is kept. Returns the skip reason when it happened. */
 export async function gateForHr(kind: Kind, requestId: string, hrId: string, skip: { skipManager?: unknown; skipReason?: unknown; decision?: unknown }): Promise<string | null> {

@@ -11,6 +11,7 @@ export type TitleItem = { href: string; label: string; roles?: string[]; notRole
 
 // Pages without a menu entry for some or all roles. Matched on the address up to a "?" and on the page's sub-addresses.
 export const EXTRA_TITLES: [string, string][] = [
+  ["/dashboard/my-login-activity", "My Login Activity"],
   ["/dashboard/login-activity", "Login Activity"],
   ["/dashboard/supervisor/employees", "All Employees"],
   ["/dashboard/supervisor", "Productivity Supervisor Dashboard"],
@@ -37,6 +38,7 @@ export const EXTRA_TITLES: [string, string][] = [
   ["/dashboard/companies", "Companies"],
   ["/dashboard/employee-overview", "Employee Overview"],
   ["/dashboard/employees", "Employees"],
+  ["/dashboard/system-settings", "System Settings"],
   ["/dashboard/attendance-calendar", "Calendar"],
   ["/dashboard/team-attendance", "Attendance"],
   ["/dashboard/team", "Attendance"],

@@ -197,8 +197,8 @@ export default function LoginActivity({ mode }: { mode: "mine" | "org" }) {
                     <td className="px-3 py-2.5 align-top">
                       <StatusChip it={it} />
                       {it.result !== "SUCCESS" && it.reasonText && <span className="mt-0.5 block text-xs text-slate-400">{it.reasonText}</span>}
-                      {org && it.flags && it.flags.length > 0 && (
-                        <span className="mt-1 flex flex-wrap gap-1">{it.flags.map((f) => <span key={f} title={FLAG_TEXT[f]} className="rounded-md bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-700">{FLAG_SHORT[f] ?? f}</span>)}</span>
+                      {org && it.flags && it.flags.filter((x) => x !== "BLOCKED" && x !== "OFF_NETWORK").length > 0 && (
+                        <span className="mt-1 flex flex-wrap gap-1">{it.flags.filter((x) => x !== "BLOCKED" && x !== "OFF_NETWORK").map((f) => <span key={f} title={FLAG_TEXT[f]} className="rounded-md bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-700">{FLAG_SHORT[f] ?? f}</span>)}</span>
                       )}
                     </td>
                   </tr>
@@ -219,6 +219,11 @@ export default function LoginActivity({ mode }: { mode: "mine" | "org" }) {
         </section>
       )}
 
+      {!org && (
+        <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-900" data-testid="not-you-note">
+          <b>Don&apos;t recognise a sign-in?</b> Someone else may be using your ID. <a href="/change-password" className="font-medium underline">Change your password now</a> and tell HR.
+        </p>
+      )}
       <p className="text-xs leading-relaxed text-slate-500">
         Approximate location is worked out from the IP address only; it is not a verified physical location. Browser, system and device are what the browser reported; they do not identify one particular computer.
       </p>

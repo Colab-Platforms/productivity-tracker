@@ -11,6 +11,7 @@
 //
 // Who is on screen is the same list as everywhere else in the manager views (visibleUserIds).
 
+import { weightedPerformance } from "../tasks/tasks.weighted.js";
 import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds } from "../hr-filters/hrFilters.service.js";
@@ -162,6 +163,13 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   const plannedBy = new Map(planned.map((r) => [`${r.userId}|${rangeDay(r.date)}`, r._count._all]));
   const legacyBy = new Map(legacy.map((r) => [`${r.userId}|${rangeDay(r.date)}`, r._count._all]));
 
+  // Priority-weighted performance of each person's tasks dated inside the range (rules in tasks.weighted.ts, the same everywhere).
+  const weightedRows = await prisma.dailyTask.findMany({
+    where: { userId: { in: ids }, id: { notIn: selfIds }, ...(await activeTasks()), date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } },
+    select: { id: true, userId: true, weight: true, status: true, approvalStatus: true, outcome: true },
+  });
+  const weightedBy = new Map<string, typeof weightedRows>();
+  for (const r of weightedRows) { const l = weightedBy.get(r.userId) ?? []; l.push(r); weightedBy.set(r.userId, l); }
   const details = await projectsAndManagers(ids);
   const out = people.map((p) => {
     const t = resolveTarget(targets.rows, p.platformId, p.id, p.teamId);
@@ -196,11 +204,12 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
       completedTotal: dataDays > 0 ? completedTotal : null,
       targetTotal,
       overallPercent: targetTotal && dataDays > 0 ? Math.round((completedTotal / targetTotal) * 1000) / 10 : null,
+      weighted: weightedPerformance(weightedBy.get(p.id) ?? []),
       days,
     };
   });
 
-  return { ...base, scope, targetsReady: targets.ready, people: out };
+  return { ...base, scope, targetsReady: targets.ready, weightedTotal: weightedPerformance(weightedRows), people: out };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -283,6 +292,8 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       completionNote: t.completionNote ?? null,
       rejectionNote: t.rejectionNote ?? null,
       counted: counted.has(t.id),
+      // Weighted score of this one task: its priority weight, the share earned (1, 0.5 or 0) and the points; blank when it is not scored (not approved / cancelled).
+      ...(() => { const w = weightedPerformance([t]); return { weightPoints: w.tasks ? w.possible : null, earnedPoints: w.tasks ? w.earned : null, partial: String(t.outcome ?? "") === "PARTIALLY_COMPLETED" }; })(),
     };
   });
   return { ...base, scope, tasks };

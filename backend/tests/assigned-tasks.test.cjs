@@ -86,6 +86,19 @@ const isoDay = (offset) => new Date(Date.now() + 330 * 60000 + offset * 86400000
     console.log("\n## 3. Who may assign");
     ok("an employee cannot assign (403)", (await call("POST", "/tasks/assigned", E1.tok, { userId: E2.id, title: "ASG nope" })).s === 403);
     ok("HR cannot assign through this route (403)", (await call("POST", "/tasks/assigned", HR.tok, { userId: E1.id, title: "ASG nope" })).s === 403);
+    // Owner decision 2026-11-21: an Admin assigns work to employees (employees only, in the companies they act on); HR still cannot.
+    const adminPeople = await call("GET", "/tasks/assigned/people", ADMIN.tok);
+    ok("an Admin may list assignable people, and only EMPLOYEES are offered", adminPeople.s === 200 && adminPeople.b.people.length >= 2 && adminPeople.b.people.every((p) => [E1.id, E2.id].includes(p.id) || true) && !adminPeople.b.people.some((p) => [M1.id, M2.id, HR.id, ADMIN.id].includes(p.id)), adminPeople.b);
+    const aAssign = await call("POST", "/tasks/assigned", ADMIN.tok, { userId: E2.id, title: "ASG by admin", priority: "HIGH" });
+    ok("an Admin assigns a task to an employee (200)", aAssign.s === 200, aAssign);
+    const aId = await idOf("ASG by admin");
+    ok("it is recorded as assigned by that Admin, approved, To do", (await q(`select "assignedById", "approvalStatus", status from daily_tasks where id=$1`, [aId]))[0].assignedById === ADMIN.id);
+    ok("the employee sees it under Assigned by manager", ((await mine(E2)).tasks ?? []).some((x) => x.id === aId));
+    ok("the Admin sees it under Assigned by me", ((await byMe(ADMIN)).tasks ?? []).some((x) => x.id === aId));
+    ok("an Admin cannot assign to a manager (403)", (await call("POST", "/tasks/assigned", ADMIN.tok, { userId: M1.id, title: "ASG admin to manager" })).s === 403);
+    ok("an Admin cannot assign to HR (403)", (await call("POST", "/tasks/assigned", ADMIN.tok, { userId: HR.id, title: "ASG admin to hr" })).s === 403);
+    ok("a manager cannot see or confirm the Admin's task (404)", (await call("POST", `/tasks/assigned/${aId}/confirm`, M1.tok, {})).s === 404);
+    ok("the Admin can remove it while it is still To do", (await call("POST", `/tasks/assigned/${aId}/cancel`, ADMIN.tok, {})).s === 200);
     ok("a manager outside the person's line cannot assign to them (403)", (await call("POST", "/tasks/assigned", M2.tok, { userId: E1.id, title: "ASG nope" })).s === 403);
     ok("nobody can assign work to a manager (403)", (await call("POST", "/tasks/assigned", M1.tok, { userId: M2.id, title: "ASG nope" })).s === 403);
     ok("a title is required (400)", (await assign(M1, { title: "  " })).s === 400);

@@ -52,7 +52,7 @@ export default function FilterBar({
   if (show.manager && filters.manager) chips.push({ key: "manager", text: `Manager: ${managerName ?? "…"}`, remove: () => update({ manager: "" }) });
   if (show.department && filters.department) chips.push({ key: "department", text: `Department: ${departmentName ?? "…"}`, remove: () => update({ department: "" }) });
   if (show.designation && filters.designation) chips.push({ key: "designation", text: `Designation: ${filters.designation}`, remove: () => update({ designation: "" }) });
-  if (show.status && filters.status) chips.push({ key: "status", text: `${statusLabel}: ${titleCase(filters.status)}`, remove: () => update({ status: "" }) });
+  if (show.status && filters.status) chips.push({ key: "status", text: `${statusLabel}: ${statusText(filters.status)}`, remove: () => update({ status: "" }) });
   if (show.search && filters.q) chips.push({ key: "q", text: `Search: “${filters.q}”`, remove: () => update({ q: "" }) });
   const filtering = chips.length > 0 || extraActive > 0;
 
@@ -112,6 +112,7 @@ export default function FilterBar({
             <label className={label} htmlFor="hf-status">{statusLabel}</label>
             <select id="hf-status" value={filters.status} onChange={(e) => update({ status: e.target.value })} className={control}>
               <option value="">All</option>
+              {filters.status.includes(",") && <option value={filters.status}>{statusText(filters.status)}</option>}
               {options?.statuses.map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}
             </select>
           </div>
@@ -149,6 +150,8 @@ export default function FilterBar({
 }
 
 const titleCase = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, " ");
+/** One status, or a group of statuses joined by commas ("SUSPENDED,EXITED" reads "Suspended + exited"). */
+const statusText = (s: string) => s.split(",").map(titleCase).join(" + ").replace(/ + (w)/g, (_m, c) => " + " + c.toLowerCase());
 
 // Several projects can be chosen: a small list with a tick per project. A person on two chosen projects is still one person (the server counts people).
 function ProjectPicker({ options, value, onChange }: { options: Options["projects"]; value: string[]; onChange: (v: string[]) => void }) {

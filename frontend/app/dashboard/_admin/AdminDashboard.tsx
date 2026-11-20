@@ -208,8 +208,8 @@ export default function AdminDashboard() {
         <>
           {/* 1. overview cards */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-            <Stat label="People" value={d.people.total} href="/dashboard/employees" hint={`${d.people.byRole.EMPLOYEE ?? 0} employees`} />
-            <Stat label="Managers" value={d.people.byRole.MANAGER ?? 0} href="/dashboard/employees?role=MANAGER" />
+            <Stat label="People" value={d.people.total} href="/dashboard/employees?status=ACTIVE,INVITED" hint={`${d.people.byRole.EMPLOYEE ?? 0} employees`} />
+            <Stat label="Managers" value={d.people.byRole.MANAGER ?? 0} href="/dashboard/employees?role=MANAGER&status=ACTIVE,INVITED" />
             <Stat label="Companies" value={d.people.companies} href="/dashboard/companies" />
             <Stat label="Projects" value={d.people.projects} href="/dashboard/projects" />
             <Stat label="Present today" value={present} href="/dashboard/team-attendance" hint={`of ${d.attendance.peopleTracked}`} tone="text-emerald-700" />
@@ -234,7 +234,7 @@ export default function AdminDashboard() {
               </ul>
               <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
                 {(["ADMIN", "HR", "MANAGER", "EMPLOYEE"] as const).map((r) => (
-                  <Link key={r} href={`/dashboard/employees?role=${r}`} className="rounded-xl bg-[#F3F7F6] px-2 py-2 hover:bg-indigo-50">
+                  <Link key={r} href={`/dashboard/employees?role=${r}&status=ACTIVE,INVITED`} className="rounded-xl bg-[#F3F7F6] px-2 py-2 hover:bg-indigo-50">
                     <p className="text-base font-semibold tabular-nums text-slate-900">{d.people.byRole[r] ?? 0}</p>
                     <p className="text-slate-500">{roleLabel(r)}</p>
                   </Link>

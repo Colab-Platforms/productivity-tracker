@@ -16,6 +16,7 @@
 // say so. The Live Team page is the real-time view.
 // ===========================================================================
 
+import { PRIORITY_WEIGHT, weightedPerformance, type Weighted } from "../tasks/tasks.weighted.js";
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds } from "../hr-filters/hrFilters.service.js";
 import { starsFor } from "../tasks/tasks.rating.js";
@@ -33,12 +34,9 @@ import { loadEarlyLogoutPolicy } from "../attendance/earlyLogout.js";
 
 export type GroupBy = "person" | "day" | "week" | "month" | "year";
 
-const WEIGHT_VALUES: Record<string, number> = {
-  LOW: 1,
-  MEDIUM: 2,
-  HIGH: 3,
-  CRITICAL: 5,
-};
+// The same weight table as the Daily Tasks pages (Critical 5, High 5, Medium 4, Low 1).
+// The same weight table as the Daily Tasks pages (Critical 5, High 5, Medium 4, Low 1).
+const WEIGHT_VALUES: Record<string, number> = { ...PRIORITY_WEIGHT };
 
 const EXCLUDED_STATUSES = new Set(["CANDIDATE", "OFFER_SENT", "OFFER_ACCEPTED"]);
 
@@ -322,6 +320,7 @@ export async function getTeamReport(
       targetSeconds: 0,
       attainment: 0,
       taskScore: 0,
+      weighted: weightedPerformance([]),
       tasksTotal: 0,
       tasksDone: 0,
       tasksCompleted: 0,
@@ -483,6 +482,8 @@ export async function getTeamReport(
 
   // --- tasks ----------------------------------------------------------------
 
+  const tasksOf = new Map<string, typeof tasks>();
+  for (const t of tasks) { const l = tasksOf.get(t.userId) ?? []; l.push(t); tasksOf.set(t.userId, l); }
   const stars = await starsFor(tasks); // the managers' star ratings (batched)
   for (const t of tasks) {
     const person = byPerson.get(t.userId);
@@ -533,6 +534,7 @@ export async function getTeamReport(
     person.attainment =
       person.targetSeconds > 0 ? person.productiveSeconds / person.targetSeconds : 0;
     person.taskScore = person.tasksTotal > 0 ? person.tasksDone / person.tasksTotal : 0;
+    person.weighted = weightedPerformance(tasksOf.get(person.userId) ?? []);
     const counted = person.tasksCompleted + person.tasksPending;
     person.taskCompletion = counted > 0 ? person.tasksCompleted / counted : 0;
     person.avgRating = person.ratedCount > 0 ? Math.round((person.ratingSum / person.ratedCount) * 10) / 10 : null;
@@ -598,6 +600,7 @@ export async function getTeamReport(
   totals.attainment =
     totals.targetSeconds > 0 ? totals.productiveSeconds / totals.targetSeconds : 0;
   totals.taskScore = totals.tasksTotal > 0 ? totals.tasksDone / totals.tasksTotal : 0;
+  totals.weighted = weightedPerformance(people.filter((p) => p.role !== "MANAGER").flatMap((p) => tasksOf.get(p.userId) ?? []));
   totals.taskCompletion =
     totals.tasksCompleted + totals.tasksPending > 0 ? totals.tasksCompleted / (totals.tasksCompleted + totals.tasksPending) : 0;
 
@@ -648,6 +651,7 @@ type PersonRow = {
   targetSeconds: number;
   attainment: number;
   taskScore: number;
+  weighted: Weighted;
   tasksTotal: number;
   tasksDone: number;
   tasksCompleted: number;
@@ -698,6 +702,7 @@ function blankTotals() {
     targetSeconds: 0,
     attainment: 0,
     taskScore: 0,
+    weighted: weightedPerformance([]),
     tasksTotal: 0,
     tasksDone: 0,
     tasksCompleted: 0,

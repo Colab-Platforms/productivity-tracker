@@ -299,13 +299,14 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
       { href: "/dashboard/chat", label: "Chat", ready: true, badge: "chat", icon: I.chat },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },
+      { href: "/dashboard/my-login-activity", label: "My Login Activity", ready: true, icon: I.shield },
       { href: "/dashboard/leave", label: "Leave", ready: true, notRoles: ["HR", "ADMIN"], icon: I.holidays },
       { href: "/dashboard/meetings", label: "Team Huddle", ready: true, notRoles: ["ADMIN"], icon: I.huddle },
       { href: "/dashboard/policies", label: "Policies", ready: true, notRoles: ["ADMIN"], icon: I.shield },
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, notRoles: ["ADMIN"], icon: I.receipt },
       { href: "/dashboard/queries", label: "Query Desk", ready: true, notRoles: ["MANAGER", "HR", "ADMIN"], badge: "queries", icon: I.ticket },
       { href: "/dashboard/talk-to-management", label: "Talk to Management", ready: true, roles: ["EMPLOYEE", "MANAGER", "HR"], icon: I.lock },
-      { href: "/dashboard/talk-to-management", label: "Management Inbox", ready: true, roles: ["ADMIN"], icon: I.mail },
+      { href: "/dashboard/talk-to-management", label: "Suggestion Box", ready: true, roles: ["ADMIN"], icon: I.mail },
       { href: "/change-password", label: "Change password", ready: true, icon: I.lock },
     ],
   },
@@ -323,7 +324,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       // Admin only: organisation-wide controls. HR has none of these.
       { href: "/dashboard/audit-logs", label: "Audit Logs", ready: true, roles: ["ADMIN"], icon: I.list },
       { href: "/dashboard/login-activity", label: "Login Activity", ready: true, roles: ["ADMIN", "HR"], icon: I.shield },
-      { href: "/dashboard/employees?tab=Teams", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
+      { href: "/dashboard/system-settings", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
     ],
   },
@@ -334,12 +335,12 @@ const SUPERVISOR_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "My Workspace",
     items: [
-      { href: "/dashboard/profile", label: "My Profile", ready: true, icon: I.admin },
       { href: "/dashboard/employee", label: "Clock In / Clock Out", ready: true, icon: I.today },
       { href: "/dashboard/attendance-calendar", label: "My Attendance", ready: true, icon: I.holidays },
       { href: "/dashboard/tasks", label: "My Daily Tasks", ready: true, icon: I.tasks },
       { href: "/dashboard/leave", label: "My Leave", ready: true, icon: I.holidays },
       { href: "/dashboard/meetings", label: "Meetings", ready: true, icon: I.huddle },
+      { href: "/dashboard/my-login-activity", label: "My Login Activity", ready: true, icon: I.shield },
     ],
   },
   {
@@ -501,6 +502,19 @@ export default function DashboardLayout({
     setOpen(false);
   }, [pathname]);
 
+  // The drawer must also close when the item tapped is the page you are ALREADY on (My Profile from My Profile, a profile tab, Daily Tasks from Daily
+  // Tasks): the address does not change then, so the effect above never runs and the menu stayed open over the whole screen with the page dimmed behind
+  // it. So it also closes on Escape, and when the screen becomes wide enough for the permanent sidebar (a turned phone, a resized window).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const wide = window.matchMedia("(min-width: 1024px)");
+    const onWide = () => { if (wide.matches) setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    wide.addEventListener("change", onWide);
+    return () => { window.removeEventListener("keydown", onKey); wide.removeEventListener("change", onWide); };
+  }, [open]);
+
   async function signOut() {
     // Tell the server this sign-in is ending (it stamps the logout time in the login history). Best effort: a slow or failed call never stops the sign-out.
     try {
@@ -588,7 +602,7 @@ export default function DashboardLayout({
               <Link
                 href="/dashboard/profile"
                 aria-current={pathname === "/dashboard/profile" ? "page" : undefined}
-                className={`block truncate text-[12px] font-medium hover:underline ${pathname === "/dashboard/profile" ? "text-[var(--nav-active)]" : "text-indigo-600"}`}
+                className={`-my-1.5 block truncate py-1.5 text-[12px] font-medium hover:underline ${pathname === "/dashboard/profile" ? "text-[var(--nav-active)]" : "text-indigo-600"}`}
               >
                 My Profile
               </Link>
@@ -709,18 +723,24 @@ export default function DashboardLayout({
 
         {/* Mobile drawer — people will open this on a phone to clock in */}
         {open && (
-          <div className="fixed inset-0 z-40 lg:hidden">
+          <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="Menu">
             <div
               className="absolute inset-0 bg-slate-900/50"
               onClick={() => setOpen(false)}
             />
-            <div className="absolute left-0 top-0 h-full animate-in p-3">{renderSidebar(false)}</div>
+            {/* Any link tapped inside the menu closes it, whether or not it leads to a different page. */}
+            <div
+              className="absolute left-0 top-0 h-full animate-in p-3"
+              onClickCapture={(e) => { if ((e.target as HTMLElement).closest("a[href]")) setOpen(false); }}
+            >
+              {renderSidebar(false)}
+            </div>
           </div>
         )}
 
         <div className="min-w-0 flex-1">
           {/* Mobile top bar */}
-          <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--card)]/90 backdrop-blur lg:hidden">
+          <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--card)] lg:hidden">
             <div className="app-container flex h-14 items-center gap-3">
             <button
               onClick={() => setOpen(true)}

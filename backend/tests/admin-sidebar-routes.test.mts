@@ -9,7 +9,9 @@ let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, x?: unknown) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n + (c || x === undefined ? "" : "  -> " + JSON.stringify(x))); };
 
 const FE = join(import.meta.dirname, "..", "..", "frontend", "app");
-const layout = readFileSync(join(FE, "dashboard", "layout.tsx"), "utf8");
+// The Productivity Supervisor has a menu of its own further down the file; this test is about the main role menu (Admin, HR, Manager, Employee).
+const fullLayout = readFileSync(join(FE, "dashboard", "layout.tsx"), "utf8");
+const layout = fullLayout.split("// The Productivity Supervisor's own menu")[0];
 
 type Item = { href: string; label: string; roles: string[] | null; notRoles: string[] | null };
 const items: Item[] = [];
@@ -54,14 +56,15 @@ const gate = readFileSync(join(FE, "dashboard", "_routing", "useRoleGate.ts"), "
 ok("the route guard decides by role only (no employee code, name or id check)", !/employeeCode|firstName|lastName|OWNER_CODES|=== "AI-|=== "SSB|=== "JAY/.test(gate));
 
 // 5. the active-highlight rule: exactly one item lit; a ?tab= shortcut when the address carries its tab, otherwise the plain page entry
-ok("the sidebar uses the shared isNavActive rule", layout.includes("isNavActive(item.href, allHrefs, pathname"));
+ok("the sidebar uses the shared isNavActive rule", fullLayout.includes("isNavActive(item.href, allHrefs, pathname"));
 const hrefs = admin.map((i) => i.href);
 const lit = (pathname: string, q: string) => hrefs.filter((h) => isNavActive(h, hrefs, pathname, new URLSearchParams(q)));
 ok("Reports with no tab lights only Reports & Analytics", lit("/dashboard/reports", "").join() === "/dashboard/reports");
 ok("Reports on the productivity tab lights only the Productivity shortcut", lit("/dashboard/reports", "tab=productivity").join() === "/dashboard/reports?tab=productivity");
 ok("Reports on another tab (shift) lights the plain entry", lit("/dashboard/reports", "tab=shift").join() === "/dashboard/reports");
 ok("User Management with no tab lights only User Management", lit("/dashboard/employees", "").join() === "/dashboard/employees");
-ok("the Teams tab lights only System Settings", lit("/dashboard/employees", "tab=Teams").join() === "/dashboard/employees?tab=Teams");
+ok("User Management on its Teams tab still lights only User Management (System Settings has its own page)", lit("/dashboard/employees", "tab=Teams").join() === "/dashboard/employees");
+ok("System Settings is its own page and lights only itself, on either tab", lit("/dashboard/system-settings", "").join() === "/dashboard/system-settings" && lit("/dashboard/system-settings", "tab=Thresholds").join() === "/dashboard/system-settings");
 ok("the People tab lights only User Management", lit("/dashboard/employees", "tab=People").join() === "/dashboard/employees");
 ok("filters in the address do not stop the plain entry being lit", lit("/dashboard/reports", "company=x&project=y").join() === "/dashboard/reports");
 ok("every other page lights exactly its own item", admin.every((i) => { const p = i.href.split("?")[0]; if (p === "/dashboard/reports" || p === "/dashboard/employees" || p === "/change-password") return true; return lit(p, "").join() === i.href; }));

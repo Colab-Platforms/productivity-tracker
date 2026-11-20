@@ -32,7 +32,7 @@ const norm = (s) => String(s).toLowerCase().replace(/\s*\/\s*/g, "/").replace(/\
   const mk = async (code, first, role, designation) => (await q(`insert into users (id,"platformId",email,"passwordHash","firstName","lastName","employeeCode",role,status,"mustChangePassword","trackerAccessEnabled","onboardingStatus","dateOfJoining",designation,"createdAt","updatedAt") values (gen_random_uuid(),$1,$2,$3,$4,'Tcc',$5,$6,'ACTIVE',false,true,'ACTIVE','2026-01-01',$7,now(),now()) returning id`, [A.id, code.toLowerCase() + "@tcc.test", hash, first, code, role, designation ?? null]))[0].id;
   const login = async (code) => (await (await fetch(API + "/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: code, password: PW }) })).json()).token;
   const AD = await mk("TCC-AD", "Admin", "ADMIN"), HR = await mk("TCC-HR", "Hrp", "HR");
-  const E1 = await mk("TCC-E1", "Empone", "EMPLOYEE"), E2 = await mk("TCC-E2", "Emptwo", "EMPLOYEE", "Trainer"), E3 = await mk("TCC-E3", "Empthree", "EMPLOYEE");
+  const E1 = await mk("TCC-E1", "Empone", "EMPLOYEE"), E2 = await mk("TCC-E2", "Emptwo", "EMPLOYEE", "Telecaller"), E3 = await mk("TCC-E3", "Empthree", "EMPLOYEE");
   const tAD = await login("TCC-AD"), tHR = await login("TCC-HR"), tE1 = await login("TCC-E1");
   // everyone who existed before: their designation must be exactly the same afterwards
   const fingerprint = async () => JSON.stringify(await q(`select id, designation from users where "employeeCode" not like 'TCC-%' order by id`));
@@ -44,26 +44,26 @@ const norm = (s) => String(s).toLowerCase().replace(/\s*\/\s*/g, "/").replace(/\
     const list = dd.b.designations ?? [];
     ok(`${who}: the Add/Edit dropdown offers "Content Creator" exactly once`, dd.s === 200 && list.filter((d) => d === "Content Creator").length === 1, [dd.s, list.length]);
     ok(`${who}: the list has no duplicates (ignoring capitals/spacing)`, new Set(list.map(norm)).size === list.length, list);
-    ok(`${who}: the existing designations are still all there`, ["Accountant", "Graphic Designer", "HR Generalist", "Trainer", "Video Editor", "Creative Head", "Business Operations & Legal"].every((d) => list.includes(d)), list);
+    ok(`${who}: the existing designations are still all there`, ["Accountant", "Graphic Designer", "HR Generalist", "Telecaller", "Video Editor", "Creative Head", "Business Operations & Legal"].every((d) => list.includes(d)), list);
     ok(`${who}: it sits in alphabetical order, between its neighbours`, list.indexOf("Content Creator") === list.indexOf("Business Operations & Legal") + 1 && list.indexOf("Content Creator") === list.indexOf("Creative Head") - 1, list.slice(0, 12));
   }
   const lookups = await call("GET", "/admin/employees/lookups", tHR);
   ok("the Add Employee / Import lookups offer it too", (lookups.b.allDesignations ?? []).includes("Content Creator"), lookups.s);
   const listSize = (await call("GET", `/admin/employees/dropdowns?companyId=${A.id}`, tAD)).b.designations.length;
-  ok("exactly one entry was added (41 in total)", listSize === 41, listSize);
+  ok("exactly one entry was added (31 in total after the 12 unused titles were retired)", listSize === 31, listSize);
 
   console.log("\n## Edit employee (HR and Admin)");
   const hrEdit = await call("PATCH", `/admin/users/${E1}`, tHR, { designation: "  content   CREATOR " });
   ok("HR can set it on a person; it is stored in the list's own spelling", hrEdit.s === 200 && (await q(`select designation from users where id=$1`, [E1]))[0].designation === "Content Creator", hrEdit);
   const noConfirm = await call("PATCH", `/admin/users/${E2}`, tAD, { designation: "Content Creator" });
-  ok("replacing an existing designation still asks for confirmation (unchanged rule)", noConfirm.s === 409 && (await q(`select designation from users where id=$1`, [E2]))[0].designation === "Trainer", noConfirm);
+  ok("replacing an existing designation still asks for confirmation (unchanged rule)", noConfirm.s === 409 && (await q(`select designation from users where id=$1`, [E2]))[0].designation === "Telecaller", noConfirm);
   const adEdit = await call("PATCH", `/admin/users/${E2}`, tAD, { designation: "Content Creator", confirmOverwrite: { designation: true } });
   ok("Admin can replace a designation with it once confirmed", adEdit.s === 200 && (await q(`select designation from users where id=$1`, [E2]))[0].designation === "Content Creator", adEdit);
   const adEdit3 = await call("PATCH", `/admin/users/${E3}`, tAD, { designation: "Content Creator" });
   ok("Admin can set it on a person with no designation", adEdit3.s === 200 && (await q(`select designation from users where id=$1`, [E3]))[0].designation === "Content Creator", adEdit3);
   const typo = await call("PATCH", `/admin/users/${E3}`, tAD, { designation: "Content Creater", confirmOverwrite: { designation: true } });
   ok("a near-spelling is NOT accepted (no duplicate entry can be created)", typo.s === 400 && (await q(`select designation from users where id=$1`, [E3]))[0].designation === "Content Creator", typo);
-  const empEdit = await call("PATCH", `/admin/users/${E1}`, tE1, { designation: "Trainer", confirmOverwrite: { designation: true } });
+  const empEdit = await call("PATCH", `/admin/users/${E1}`, tE1, { designation: "Telecaller", confirmOverwrite: { designation: true } });
   ok("an Employee cannot edit designations (403)", empEdit.s === 403, empEdit.s);
 
   console.log("\n## Add employee (import pipeline, as HR and as Admin)");

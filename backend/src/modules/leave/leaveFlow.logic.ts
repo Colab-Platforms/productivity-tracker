@@ -25,12 +25,18 @@ export function needsHrFinal(requesterRole: string): boolean {
 
 export const AUTO_APPROVED_ROLE = "ADMIN";
 
-export type Stage = "PENDING_MANAGER" | "PENDING_ADMIN" | "PENDING_HR" | "APPROVED" | "REJECTED" | "CANCELLED";
+// ON_HOLD = an approver paused the request (with a reason). It is neither approved nor rejected and still waits for the same approver.
+export type Stage = "PENDING_MANAGER" | "PENDING_ADMIN" | "PENDING_HR" | "ON_HOLD" | "APPROVED" | "REJECTED" | "CANCELLED";
+
+/** A request that still needs an answer: waiting, or paused by an approver. */
+export const OPEN_STATUSES = ["PENDING", "ON_HOLD"] as const;
+export const isOpenStatus = (s: unknown): boolean => s === "PENDING" || s === "ON_HOLD";
 
 export const STAGE_LABEL: Record<Stage, string> = {
   PENDING_MANAGER: "Pending Manager Approval",
   PENDING_ADMIN: "Pending Admin Approval",
   PENDING_HR: "Pending HR Approval",
+  ON_HOLD: "On Hold",
   APPROVED: "Approved",
   REJECTED: "Rejected",
   CANCELLED: "Cancelled",
@@ -45,6 +51,7 @@ export function stageOf(input: { requesterRole: string; requestStatus: string; s
   if (requestStatus === "APPROVED") return "APPROVED";
   if (requestStatus === "REJECTED") return "REJECTED";
   if (requestStatus === "CANCELLED") return "CANCELLED";
+  if (requestStatus === "ON_HOLD") return "ON_HOLD";
   if (stepStatus === "PENDING") return firstLevelFor(requesterRole) === "ADMIN" ? "PENDING_ADMIN" : "PENDING_MANAGER";
   return "PENDING_HR"; // first level done (or none): HR's turn
 }

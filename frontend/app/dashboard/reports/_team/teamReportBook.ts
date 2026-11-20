@@ -19,6 +19,7 @@ export type TRAttendance = {
   note: string | null; tasksCompleted: number; tasksPlanned: number | null;
 };
 export type TRTask = {
+  weightPoints?: number | null; earnedPoints?: number | null; partial?: boolean; // the server's weighted score of this task (blank = not scored)
   id: string; userId: string; title: string; description: string | null; project: string | null; taggedManager: string | null; date: string; priority: string; hoursSpent: number | null;
   progress: string; blockedReason?: string | null; submittedAt?: string; late?: { lateByDays: number; outsideWindow: boolean; reason: string | null } | null; approvalStatus: string; completedAt: string | null; rating: number | null; ratingComment: string | null; completionNote: string | null; rejectionNote: string | null; counted: boolean;
 };
@@ -92,6 +93,8 @@ export type Summary = {
   lateLogins: number; lateRemarks: number; workedSec: number; productiveSec: number; breakSec: number; washroomSec: number; huddleSec: number;
   meetingsJoined: number; meetingSec: number; submitted: number; waiting: number; approved: number; rejected: number; todo: number; inProgress: number; blocked: number; completed: number; counted: number;
   rated: number; ratings: string; taskHours: number; leaveTaken: number; leavePending: number; leaveRejected: number; corrections: number;
+  // Priority-weighted score: SUMS of the server's per-task points for tasks dated inside the period (no rule is applied here).
+  wEarned: number; wPossible: number;
 };
 export function summaryOf(data: TeamReportData, ix: Index, id: string): Summary {
   const att = ix.att.get(id) ?? [];
@@ -118,6 +121,8 @@ export function summaryOf(data: TeamReportData, ix: Index, id: string): Summary 
     taskHours: sum(tasks.map((k) => k.hoursSpent)),
     leaveTaken: sum(ld.map((x) => (x.halfDay ? 0.5 : 1))), leavePending: lv.filter((l) => l.status === "PENDING").length, leaveRejected: lv.filter((l) => l.status === "REJECTED").length,
     corrections: (ix.corrections.get(id) ?? []).length,
+    wEarned: sum(tasks.filter((k) => k.date >= data.from && k.date <= data.to).map((k) => k.earnedPoints)),
+    wPossible: sum(tasks.filter((k) => k.date >= data.from && k.date <= data.to).map((k) => k.weightPoints)),
   };
 }
 
@@ -154,6 +159,8 @@ function summarySheet(data: TeamReportData, ix: Index): SheetSpec {
     { header: "To Do", kind: "int", width: 8 }, { header: "In progress", kind: "int", width: 9 }, { header: "Blocked", kind: "int", width: 9 }, { header: "Completed", kind: "int", width: 10 }, { header: "Counted as completed", kind: "int", width: 11, note: "Completed, approved and not rated below the completed star: the number the Task productivity report counts." },
     { header: "Tasks rated", kind: "int", width: 9 }, { header: "Ratings given", width: 18 }, { header: "Task hours recorded", kind: "duration", width: 11 },
     { header: "Leave days taken", kind: "decimal", width: 10 }, { header: "Leave requests pending", kind: "int", width: 10 }, { header: "Leave requests rejected", kind: "int", width: 10 }, { header: "Attendance corrections", kind: "int", width: 11 },
+    { header: "Weighted score %", kind: "percent", width: 12, note: "Points earned / points possible for the approved tasks dated in this period (Critical 5, High 5, Medium 4, Low 1; completed earns all, a manager-marked partial half). N/A when nothing was scored." },
+    { header: "Weighted points earned", kind: "decimal", width: 12 }, { header: "Weighted points possible", kind: "int", width: 12 },
   ];
   const rows = byPerson(data).map((id) => {
     const s = summaryOf(data, ix, id);
@@ -165,6 +172,7 @@ function summarySheet(data: TeamReportData, ix: Index): SheetSpec {
       s.meetingsJoined, s.meetingSec,
       s.submitted, s.waiting, s.approved, s.rejected, s.todo, s.inProgress, s.blocked, s.completed, s.counted, s.rated, s.ratings || null, Math.round(s.taskHours * 3600),
       s.leaveTaken, s.leavePending, s.leaveRejected, s.corrections,
+      s.wPossible > 0 ? Math.round((s.wEarned / s.wPossible) * 10000) / 100 : "N/A", s.wPossible > 0 ? s.wEarned : null, s.wPossible > 0 ? s.wPossible : null,
     ] as Value[];
   });
   return { name: "Team Productivity Summary", cols, rows };
@@ -198,6 +206,7 @@ function tasksSheet(data: TeamReportData, ix: Index): SheetSpec {
     { header: "Priority", width: 10 }, { header: "Progress", width: 12 }, { header: "Blocked reason", width: 34, wrap: true }, { header: "Hours recorded", kind: "duration", width: 10 }, { header: "Approval status", width: 18 }, { header: "Approver (tagged manager)", width: 22 },
     { header: "Completed on", kind: "date", width: 13 }, { header: "Completed at", kind: "time", width: 11 }, { header: "Counted as completed", width: 11 },
     { header: "Rating (stars)", kind: "int", width: 9 }, { header: "Manager feedback", width: 36, wrap: true }, { header: "Employee note on completion", width: 30, wrap: true }, { header: "Reason sent back", width: 30, wrap: true },
+    { header: "Task weight (points)", kind: "int", width: 12 }, { header: "Points earned", kind: "decimal", width: 11 }, { header: "Partially completed", width: 12 },
   ];
   const rows: Value[][] = [];
   for (const id of byPerson(data)) {
@@ -206,6 +215,7 @@ function tasksSheet(data: TeamReportData, ix: Index): SheetSpec {
         ...who(ix, id), k.date, k.project, k.title, k.description, title(k.priority), PROGRESS[k.progress] ?? title(k.progress), k.progress === "BLOCKED" ? k.blockedReason ?? null : null, k.hoursSpent === null ? null : Math.round(k.hoursSpent * 3600),
         APPROVAL[k.approvalStatus] ?? title(k.approvalStatus), k.taggedManager, d(k.completedAt, tz), t(k.completedAt, tz), k.counted ? "Yes" : "No",
         k.rating, k.ratingComment, k.completionNote, k.rejectionNote,
+        k.weightPoints ?? null, k.earnedPoints ?? null, k.partial ? "Yes" : null,
       ]);
     }
   }

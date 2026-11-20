@@ -53,6 +53,7 @@ type Task = {
   title: string;
   description: string | null;
   weight: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  partial?: boolean;
   status: string;
   approvalStatus: string;
   // The manager's star rating (1-5) and comment; null = not rated yet.
@@ -137,8 +138,8 @@ function rangeFor(preset: string, today: string, customFrom: string, customTo: s
 
 const WEIGHTS = [
   { value: "LOW", label: "Low", points: 1 },
-  { value: "MEDIUM", label: "Medium", points: 2 },
-  { value: "HIGH", label: "High", points: 3 },
+  { value: "MEDIUM", label: "Medium", points: 4 },
+  { value: "HIGH", label: "High", points: 5 },
   { value: "CRITICAL", label: "Critical", points: 5 },
 ];
 
@@ -728,6 +729,16 @@ export default function ReviewQueue() {
 
               {t.completedAt && t.date && doneDay(t.completedAt) > t.date && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Task was for ${t.date}; the employee ticked it done on ${doneDay(t.completedAt)}. Check their note and grade it as you see fit.`}>ticked later · {doneDay(t.completedAt)}</span>}
               {t.reopened?.resubmitted && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Reopened (${t.reopened.label}) and finished again`}>resubmitted</span>}
+              {t.partial && <span className="shrink-0 rounded bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800" title="Counts as half of this task's weight in the weighted score">partially completed</span>}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => run(() => call<Queue>(`/tasks/review/${t.id}/partial`, "POST", { partial: !t.partial }))}
+                title={t.partial ? "Remove the partial mark (the task counts as fully completed again)" : "Mark this task as partially completed: it earns half its weight"}
+                className="shrink-0 rounded-xl border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-50 disabled:opacity-40"
+              >
+                {t.partial ? "Undo partial" : "Mark partial"}
+              </button>
               <button
                 type="button"
                 disabled={busy}

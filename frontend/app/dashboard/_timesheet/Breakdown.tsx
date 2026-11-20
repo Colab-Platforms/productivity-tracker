@@ -29,7 +29,7 @@ export default function Breakdown({ totals, days, tz, today, rangeLabel }: { tot
   const tiles: [string, number, string][] = [
     ["Productive work", productiveWork, "Your productive time without the Team Huddle part."],
     ["Team Huddle", huddle, "Time in a Team Huddle. It counts as productive time and does not use your break allowance."],
-    ["Break", breakSecs, "Tea, lunch and personal breaks. These use your daily break allowance. Washroom and Team Huddle are never counted here."],
+    ["Break", breakSecs, "Lunch and personal breaks (older Tea breaks too). These use your daily Break Time. Washroom and Team Huddle are never counted here."],
     ["Washroom", washroomSecs, "Washroom time is tracked on its own. It is not a break (it does not use your allowance) and it is not productive time."],
     ["Total time on site", onSite, "Clock-in to clock-out (to now if you are still in): productive work + Team Huddle + break + washroom."],
   ];

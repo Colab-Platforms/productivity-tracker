@@ -67,7 +67,7 @@ export default function LeaveApprovalQueue({ onCount }: { onCount?: (waiting: nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload]);
 
-  async function decide(id: string, decision: "APPROVE" | "REJECT", comment: string) {
+  async function decide(id: string, decision: "APPROVE" | "REJECT" | "HOLD", comment: string) {
     if (busyId) return;
     setBusyId(id);
     setError("");
@@ -75,7 +75,7 @@ export default function LeaveApprovalQueue({ onCount }: { onCount?: (waiting: nu
     try {
       await apiPost(`/leave/manager/requests/${id}/decide`, { decision, note: comment });
       const done = (data?.pending ?? []).find((x) => x.id === id);
-      setNotice(decision === "APPROVE" ? (done?.requesterRole === "HR" ? "Approved. This leave is now approved." : "Approved. HR has been told and makes the final decision.") : "Rejected. The person has been told.");
+      setNotice(decision === "HOLD" ? "Put on hold. The person has been told; you can approve or reject it later." : decision === "APPROVE" ? (done?.requesterRole === "HR" ? "Approved. This leave is now approved." : "Approved. HR has been told and makes the final decision.") : "Rejected. The person has been told.");
       setReload((n) => n + 1);
     } catch (e) {
       setError((e as Error).message);
@@ -105,7 +105,7 @@ export default function LeaveApprovalQueue({ onCount }: { onCount?: (waiting: nu
             <p className="mt-0.5 text-sm text-slate-500">“{r.reason}”</p>
             <p className="mt-1 text-xs text-slate-400">Already taken this year: {num(r.takenThisYear.total)} {unit(r.takenThisYear.total, "day")}</p>
             <FlowLine r={r} />
-            <ManagerDecisionBox busy={busyId === r.id} onDecide={(d, c) => decide(r.id, d, c)} hint={r.requesterRole === "HR" ? "Your approval is final for HR's leave. A rejection is final." : "After you approve, HR makes the final decision. A rejection is final."} />
+            <ManagerDecisionBox allowHold held={r.status === "ON_HOLD"} busy={busyId === r.id} onDecide={(d, c) => decide(r.id, d, c)} hint={r.requesterRole === "HR" ? "Your approval is final for HR's leave. A rejection is final." : "After you approve, HR makes the final decision. A rejection is final."} />
           </div>
         ))}
       </div>

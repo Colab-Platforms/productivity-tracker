@@ -119,10 +119,10 @@ async function ready() {
   if (!(await selfTasksReady())) throw new Error("FEATURES_NOT_READY");
 }
 
-/** A manager assigns; only MANAGERS do (HR and Admin keep the approval and monitoring role). */
+/** A manager assigns, and so does an ADMIN (owner decision 2026-11-21: Admin assigns work to employees). HR does not. An Admin reaches the employees of the companies they act on. */
 async function managerContext(userId: string) {
   const ctx = await userContext(userId);
-  if (String(ctx.role) !== "MANAGER") throw new Error("NOT_ALLOWED");
+  if (String(ctx.role) !== "MANAGER" && String(ctx.role) !== "ADMIN") throw new Error("NOT_ALLOWED");
   return { id: userId, role: String(ctx.role), platformId: ctx.platformId };
 }
 
@@ -138,8 +138,9 @@ async function ownedByManager(managerId: string, taskId: string) {
 export async function assignablePeople(managerId: string) {
   const actor = await managerContext(managerId);
   const ids = (await manageableUserIds(actor)).filter((i) => i !== managerId);
+  // An Admin assigns to EMPLOYEES only (never to a manager, HR or another Admin); a manager keeps the earlier rule (anyone of their team but a manager).
   const people = await prisma.user.findMany({
-    where: { id: { in: ids }, status: "ACTIVE" as never, role: { not: "MANAGER" as never } },
+    where: { id: { in: ids }, status: "ACTIVE" as never, role: actor.role === "ADMIN" ? ("EMPLOYEE" as never) : { not: "MANAGER" as never } },
     select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
@@ -174,7 +175,13 @@ export async function assignNew(managerId: string, body: Record<string, unknown>
   const target = await prisma.user.findUnique({ where: { id: targetId }, include: { platform: true } });
   if (!target || String(target.status) !== "ACTIVE") throw new Error("USER_NOT_FOUND");
   if (String(target.role) === "MANAGER") throw new Error("MANAGER_TASKS_ARE_PERSONAL");
-  await assertCanManage(actor, targetId);
+  if (actor.role === "ADMIN") {
+    // An Admin assigns to employees of the companies they act on (company access), never to HR or another Admin.
+    if (String(target.role) !== "EMPLOYEE") throw new Error("ADMIN_ASSIGNS_EMPLOYEES");
+    if (!(await manageableUserIds(actor)).includes(targetId)) throw new Error("NOT_YOUR_TEAM");
+  } else {
+    await assertCanManage(actor, targetId);
+  }
 
   const title = String(body.title ?? "").trim();
   if (!title) throw new Error("TITLE_REQUIRED");

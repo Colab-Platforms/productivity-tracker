@@ -16,6 +16,7 @@ router.use(requireAuth);
 // The service throws codes; only this layer decides wording and status.
 const MESSAGES: Record<string, { status: number; message: string }> = {
   USER_NOT_FOUND: { status: 404, message: "User not found" },
+  BREAK_TYPE_RETIRED: { status: 400, message: "Tea and Washroom are no longer available. Pick Lunch, Personal or Meeting / Team Huddle." },
   TRACKER_LOCKED: {
     status: 403,
     message: "Your tracker access has not been enabled yet",
@@ -106,7 +107,11 @@ router.post("/break/start", async (req, res) => {
   const { breakType, remark } = req.body ?? {};
 
   // DISCUSSION = "Meeting / Team Huddle" from the activity menu (needs a remark). OTHER is not offered to people: the system uses it itself.
-  const allowed = ["TEA", "LUNCH", "WASHROOM", "PERSONAL", "OTHER", "DISCUSSION"];
+  // TEA and WASHROOM were retired as choices (2026-11-21). Old rows keep their type; nobody can start a new one.
+  if (breakType === "TEA" || breakType === "WASHROOM") {
+    return res.status(400).json({ error: "Tea and Washroom are no longer available. Pick Lunch, Personal or Meeting / Team Huddle." });
+  }
+  const allowed = ["LUNCH", "PERSONAL", "OTHER", "DISCUSSION"];
   if (!allowed.includes(breakType)) {
     return res.status(400).json({ error: "Pick a valid break type" });
   }

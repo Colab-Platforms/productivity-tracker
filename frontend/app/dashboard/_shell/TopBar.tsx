@@ -34,7 +34,7 @@ export default function TopBar({ me, title, onSignOut, collapsed, onToggleSideba
   }, [menu]);
 
   return (
-    <header className="sticky top-0 z-30 hidden border-b border-[var(--border)] bg-[var(--card)]/90 backdrop-blur lg:block">
+    <header className="sticky top-0 z-30 hidden border-b border-[var(--border)] bg-[var(--card)] lg:block">
     <div className="app-container flex h-16 items-center gap-4">
       <button
         type="button"

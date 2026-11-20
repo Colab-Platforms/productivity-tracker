@@ -119,10 +119,14 @@ const near = (a, b, tol = 10) => Math.abs(a - b) <= tol;
   const sid2 = (await q(`select id from work_sessions where "userId"=$1`, [E2.id]))[0].id;
   await q(`update work_sessions set "loginAt"=$2 where id=$1`, [sid2, ago(60)]); // on site for an hour
   const backdate = (min) => q(`update tracker_breaks set "startedAt"=$2 where "workSessionId"=$1 and "endedAt" is null`, [sid2, ago(min)]);
-  ok("start Tea", (await call("POST", "/tracker/break/start", E2.tok, { breakType: "TEA" })).s === 200);
+  ok("start Lunch (Tea was retired as a choice 2026-11-21; Lunch is the same kind of counted break)", (await call("POST", "/tracker/break/start", E2.tok, { breakType: "LUNCH" })).s === 200);
   await backdate(10);
-  ok("end Tea", (await call("POST", "/tracker/break/end", E2.tok)).s === 200);
-  ok("start Washroom after Tea", (await call("POST", "/tracker/break/start", E2.tok, { breakType: "WASHROOM" })).s === 200);
+  ok("end Lunch", (await call("POST", "/tracker/break/end", E2.tok)).s === 200);
+  ok("starting Tea or Washroom through the API is refused (400): retired choices", (await call("POST", "/tracker/break/start", E2.tok, { breakType: "TEA" })).s === 400 && (await call("POST", "/tracker/break/start", E2.tok, { breakType: "WASHROOM" })).s === 400);
+  ok("...and nothing was started", (await q(`select count(*)::int n from tracker_breaks where "workSessionId"=$1 and "endedAt" is null`, [sid2]))[0].n === 0);
+  // A Washroom started before the retirement may still be running: simulate that row directly (nobody can start one any more).
+  await q(`insert into tracker_breaks (id,"workSessionId","breakType","startedAt","autoClosed","createdAt") values (gen_random_uuid(),$1,'WASHROOM',now(),false,now())`, [sid2]);
+  ok("an older open Washroom row exists", true);
   await backdate(6);
   ok("cannot start another activity while Washroom runs (400, one at a time)", (await call("POST", "/tracker/break/start", E2.tok, { breakType: "TEA" })).s === 400);
   const live1 = (await call("GET", "/tracker/session", E2.tok)).b.session;
@@ -136,9 +140,9 @@ const near = (a, b, tol = 10) => Math.abs(a - b) <= tol;
   const ses2 = (await call("GET", "/tracker/session", E2.tok)).b;
   ok("break = 10 (tea only), washroom = 6, productive = 60 - 16 = 44 min", ses2.session.breakSeconds === 10 * MIN && near(ses2.session.washroomSeconds, 6 * MIN) && near(ses2.session.productiveSeconds, 44 * MIN), ses2.session);
   ok("remaining allowance = budget - 10 min (washroom did not touch it)", ses2.config.breakBudgetMinutes * MIN - ses2.session.breakSeconds === ses2.config.breakBudgetMinutes * MIN - 10 * MIN);
-  ok("start Tea after Washroom", (await call("POST", "/tracker/break/start", E2.tok, { breakType: "TEA" })).s === 200);
+  ok("start Lunch after Washroom", (await call("POST", "/tracker/break/start", E2.tok, { breakType: "LUNCH" })).s === 200);
   await backdate(3);
-  ok("end Tea again", (await call("POST", "/tracker/break/end", E2.tok)).s === 200);
+  ok("end Lunch again", (await call("POST", "/tracker/break/end", E2.tok)).s === 200);
   const ses3 = (await call("GET", "/tracker/session", E2.tok)).b.session;
   ok("two teas now count as break (13 min); washroom still 6", near(ses3.breakSeconds, 13 * MIN, 5) && near(ses3.washroomSeconds, 6 * MIN), ses3);
   const out = await call("POST", "/tracker/clock-out", E2.tok, {});
@@ -195,7 +199,7 @@ const near = (a, b, tol = 10) => Math.abs(a - b) <= tol;
   ok("report: break stays 0 (productive keeps the time)", rp4.breakSeconds === 0 && rp4.washroomSeconds === 0, rp4);
   const sb4 = (await call("GET", "/team-attendance/shift-breakdown?date=" + today, M.tok)).b.rows.find((r) => r.userId === E4.id);
   ok("shift breakdown: no break or 'other' time from the discussion", sb4.breakSeconds === 0 && sb4.otherSeconds === 0, sb4);
-  ok("Tea after the discussion still works and counts as break", (await call("POST", "/tracker/break/start", E4.tok, { breakType: "TEA" })).s === 200 && (await q('update tracker_breaks set "startedAt"=$2 where "workSessionId"=$1 and "endedAt" is null', [sid4, ago(5)]), (await call("POST", "/tracker/break/end", E4.tok)).s === 200));
+  ok("Lunch after the discussion still works and counts as break", (await call("POST", "/tracker/break/start", E4.tok, { breakType: "LUNCH" })).s === 200 && (await q('update tracker_breaks set "startedAt"=$2 where "workSessionId"=$1 and "endedAt" is null', [sid4, ago(5)]), (await call("POST", "/tracker/break/end", E4.tok)).s === 200));
   const after = (await call("GET", "/tracker/session", E4.tok)).b.session;
   ok("then break = 5 min (tea only), discussion still 12 min", near(after.breakSeconds, 5 * MIN) && near(after.discussionSeconds, 12 * MIN), after);
 
