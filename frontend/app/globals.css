@@ -422,6 +422,13 @@ html.dark {
   --surface-chip: #1d3029; /* chips and tinted blocks */
   --surface-canvas: #14231f;
 
+  /* rows of lists and trees (Organization Hierarchy): row, hover, selected. --brand-50 is the light-theme hover tint used all over the app; in dark it must be the dark hover. */
+  --row-bg: #111f1b;
+  --row-hover: #1a3029;
+  --row-selected: #1b4035;
+  --row-border: #29443a;
+  --brand-50: #1a3029;
+
   --nav-bg: #101a17;
   --nav-hover: #172421;
   --nav-text: #8fa39e;
@@ -441,7 +448,7 @@ html.dark {
   --color-slate-100: #1b2925;
   --color-slate-200: #22332e;
   --color-slate-300: #2f453e;
-  --color-slate-400: #6f8a82;
+  --color-slate-400: #819990; /* muted text; was #6f8a82, which fell under 4.5:1 on the hover row */
   --color-slate-500: #8fa39e;
   --color-slate-600: #a9bab5;
   --color-slate-700: #c0cdc9;
@@ -483,6 +490,19 @@ html.dark .bg-\[\#F3F7F6\]\/70 { background-color: rgb(23 36 33 / 0.7); }
 html.dark .bg-\[\#F5F8F7\] { background-color: #15221e; }
 html.dark .bg-\[\#EDF3F1\] { background-color: var(--surface-canvas); }
 html.dark .bg-\[\#E7F6F1\] { background-color: var(--surface-chip); }
+
+/* hover states written as hover:bg-white (buttons on a white card) would flash white in dark; use the dark hover instead */
+html.dark .hover\:bg-white:hover { background-color: var(--row-hover); }
+
+/* Organization Hierarchy rows: one dark background for every row, a subtle green hover, a darker emerald selection, and a muted-amber row when the
+   reporting line needs attention (the amber chip beside the name keeps the warning readable). Light theme is untouched (these rules apply to dark only). */
+html.dark .org-row { background-color: var(--row-bg); box-shadow: inset 0 0 0 1px var(--row-border); }
+html.dark .org-row:hover, html.dark .org-row:focus-within { background-color: var(--row-hover); }
+html.dark .org-row[aria-selected="true"], html.dark .org-row[data-selected="true"] { background-color: var(--row-selected); }
+html.dark .org-row-issue { background-color: rgb(251 191 36 / 0.06); box-shadow: inset 3px 0 0 #b7791f, inset 0 0 0 1px var(--row-border); }
+html.dark .org-row-issue:hover, html.dark .org-row-issue:focus-within { background-color: rgb(251 191 36 / 0.11); }
+/* a picked option in a list (the Change manager dialog) */
+html.dark [role="option"][aria-selected="true"] { background-color: var(--row-selected); }
 
 /* links and accents used as TEXT (the same steps are button fills, so these are explicit) */
 html.dark .text-indigo-500 { color: #3fd9a8; }

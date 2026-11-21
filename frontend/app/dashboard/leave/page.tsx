@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
+import { useRealtime } from "@/lib/realtime";
 import { unit } from "@/lib/plural";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
@@ -129,6 +130,9 @@ function LeaveContent() {
   const isAdmin = me?.role === "ADMIN";
   const [tabState, setTab] = useState<"mine" | "review" | "taken" | "team">("mine");
   const [reload, setReload] = useState(0);
+  // Every leave step (a request, the manager's answer, HR's decision, a hold) notifies exactly the people concerned, and each notification pings that person's
+  // private inbox channel. Reloading on that ping keeps the lists current without a manual refresh (the poll below is the fallback when the live link is down).
+  useRealtime(["notifications:changed"], () => setReload((n) => n + 1));
   const [asking, setAsking] = useState(false);
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");

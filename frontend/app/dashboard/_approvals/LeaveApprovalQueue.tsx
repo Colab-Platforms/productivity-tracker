@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import { useRealtime } from "@/lib/realtime";
 import { unit } from "@/lib/plural";
 import { ManagerDecisionBox, StepNote, stepBadge, type ManagerStep } from "./ManagerStep";
 import { FlowLine, StageBadge, type FlowFields } from "./LeaveFlow";
@@ -47,6 +48,9 @@ export default function LeaveApprovalQueue({ onCount }: { onCount?: (waiting: nu
   const [data, setData] = useState<TeamLeave | null>(null);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  // Every leave step (a request, the manager's answer, HR's decision, a hold) notifies exactly the people concerned, and each notification pings that person's
+  // private inbox channel. Reloading on that ping keeps the lists current without a manual refresh (the poll below is the fallback when the live link is down).
+  useRealtime(["notifications:changed"], () => setReload((n) => n + 1));
   const [busyId, setBusyId] = useState("");
   const [notice, setNotice] = useState("");
 

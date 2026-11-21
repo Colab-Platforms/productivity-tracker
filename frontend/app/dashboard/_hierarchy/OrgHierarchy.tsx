@@ -160,7 +160,7 @@ function Row({ n, open, onToggle, onChange, dim }: { n: TreeNode; open: boolean;
   const p = n.person;
   const canChange = p.role !== "ADMIN";
   return (
-    <div data-person={p.id} className={`flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 ${dim ? "opacity-60" : ""} ${n.issue ? "bg-amber-50/50" : "hover:bg-[var(--brand-50)]"}`}>
+    <div data-person={p.id} className={`org-row flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 ${n.issue ? "org-row-issue" : ""} ${dim ? "opacity-60" : ""} ${n.issue ? "bg-amber-50/50" : "hover:bg-[var(--brand-50)]"}`}>
       {n.children.length > 0 ? (
         <button type="button" onClick={onToggle} aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${p.name}'s team`} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-indigo-100 text-slate-500 hover:bg-white">
           <Chevron open={open} />
