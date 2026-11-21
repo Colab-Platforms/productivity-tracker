@@ -27,9 +27,10 @@ import RepetitionSummary from "../tasks/_repetition/RepetitionSummary";
 import RepetitionAlerts from "../tasks/_repetition/RepetitionAlerts";
 import { HistoryChart, StatusChart, WorkloadChart } from "./AnalyticsCharts";
 import { WeightedCard, pctText, type Weighted } from "../_weighted/Weighted";
+import { TILE_LABEL, tileMembers, type TileKey } from "./analytics";
 import { DEFAULT_OVERDUE_DAYS, NO_PROJECT, OVERDUE_CHOICES, byDay, byEmployee, byProject, countRows, narrow, overdueList, progressOf, type Counts, type Row as BaseRow } from "./analytics";
 
-type Row = BaseRow & { title: string };
+type Row = BaseRow & { title: string; weight?: string | null; taggedManager?: string | null; company?: string | null };
 type Queue = { date: string; weighted?: Weighted; weightedByUser?: Record<string, Weighted>; scope?: { orgTotal: number; filteredTotal: number }; members: { id: string; name: string; employeeCode: string | null }[]; all: Row[] };
 type Assigned = { counts: { total: number; todo: number; inProgress: number; awaiting: number; confirmed: number; overdue: number } };
 
@@ -39,13 +40,21 @@ const dayShort = (iso: string) => new Date(iso + "T00:00:00Z").toLocaleDateStrin
 const dayFull = (iso: string) => new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 const rating = (c: Counts) => (c.avgRating === null ? "Not rated" : `${c.avgRating.toFixed(1)} (${c.rated})`);
 
-function Tile({ label, value, tone = "text-slate-900", hint, testId }: { label: string; value: string | number; tone?: string; hint?: string; testId?: string }) {
-  return (
-    <div className="rounded-2xl bg-white p-3.5 shadow-[var(--shadow-card)]" data-testid={testId}>
+// A tile is a whole-card button: it lists the tasks behind its number (the selected one is ringed). `tile` omitted = plain card.
+function Tile({ label, value, tone = "text-slate-900", hint, testId, tile, active, onPick }: { label: string; value: string | number; tone?: string; hint?: string; testId?: string; tile?: TileKey; active?: TileKey | null; onPick?: (k: TileKey | null) => void }) {
+  const body = (
+    <>
       <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
       <p className={`mt-1 text-2xl font-semibold tabular-nums ${tone}`}>{value}</p>
       {hint && <p className="mt-0.5 text-[11px] text-slate-400">{hint}</p>}
-    </div>
+    </>
+  );
+  if (!tile || !onPick) return <div className="rounded-2xl bg-white p-3.5 shadow-[var(--shadow-card)]" data-testid={testId}>{body}</div>;
+  const on = active === tile;
+  return (
+    <button type="button" data-testid={testId} aria-pressed={on} onClick={() => onPick(on ? null : tile)} title={on ? "Click again to close the list" : `Show the tasks behind ${label.toLowerCase()}`} className={`w-full cursor-pointer rounded-2xl bg-white p-3.5 text-left shadow-[var(--shadow-card)] ring-2 transition hover:shadow-[var(--shadow-lift)] ${on ? "ring-indigo-500" : "ring-transparent hover:ring-indigo-200"}`}>
+      {body}
+    </button>
   );
 }
 
@@ -136,6 +145,8 @@ export default function TasksPerformancePage() {
     try { window.localStorage.setItem("hrms-overdue-days", String(n)); } catch { /* the choice just is not remembered */ }
   }
 
+  const [tile, setTile] = useState<TileKey | null>(null);
+  const [tq, setTq] = useState("");
   const all = useMemo(() => queue?.all ?? [], [queue]);
   const projects = useMemo(() => [...new Set(all.map((r) => r.project || NO_PROJECT))].sort(), [all]);
   const rows = useMemo(() => narrow(all, person, project), [all, person, project]);
@@ -145,6 +156,8 @@ export default function TasksPerformancePage() {
   const projectRows = useMemo(() => byProject(narrow(all, person, ""), today, overdueDays), [all, person, today, overdueDays]);
   const history = useMemo(() => byDay(rows).map((d) => ({ label: dayShort(d.day), submitted: d.submitted, completed: d.completed })), [rows]);
   const old = useMemo(() => overdueList(rows, today, overdueDays), [rows, today, overdueDays]);
+  const behind = useMemo(() => (tile ? tileMembers(rows, tile, today, overdueDays) : []), [rows, tile, today, overdueDays]);
+  const behindShown = useMemo(() => { const s = tq.trim().toLowerCase(); return [...behind].sort((a, b) => b.date.localeCompare(a.date) || a.who.localeCompare(b.who)).filter((r) => !s || [r.who, r.employeeCode, r.title, r.project, r.taggedManager].filter(Boolean).join(" ").toLowerCase().includes(s)); }, [behind, tq]);
   const personRow = person ? employees.find((g) => g.key === person) : null;
 
   async function download() {
@@ -247,23 +260,43 @@ export default function TasksPerformancePage() {
         <>
           <section aria-label="Task counts" className="space-y-3">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Tile testId="kpi-submitted" label="Submitted" value={totals.submitted} hint="withdrawn tasks left out" />
-              <Tile testId="kpi-approved" label="Approved" value={totals.approved} tone="text-emerald-700" />
-              <Tile testId="kpi-pending" label="Waiting for approval" value={totals.pending} tone="text-amber-700" hint="shown to the manager who decides" />
-              <Tile testId="kpi-rejected" label="Rejected" value={totals.rejected} tone="text-rose-700" />
+              <Tile tile="submitted" active={tile} onPick={setTile} testId="kpi-submitted" label="Submitted" value={totals.submitted} hint="withdrawn tasks left out" />
+              <Tile tile="approved" active={tile} onPick={setTile} testId="kpi-approved" label="Approved" value={totals.approved} tone="text-emerald-700" />
+              <Tile tile="pending" active={tile} onPick={setTile} testId="kpi-pending" label="Waiting for approval" value={totals.pending} tone="text-amber-700" hint="shown to the manager who decides" />
+              <Tile tile="rejected" active={tile} onPick={setTile} testId="kpi-rejected" label="Rejected" value={totals.rejected} tone="text-rose-700" />
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Tile testId="kpi-todo" label="To Do" value={totals.todo} />
-              <Tile testId="kpi-inprogress" label="In Progress" value={totals.inProgress} tone="text-sky-700" />
-              <Tile testId="kpi-completed" label="Completed" value={totals.completed} tone="text-emerald-700" />
-              <Tile testId="kpi-blocked" label="Blocked" value={totals.blocked} tone="text-violet-700" />
+              <Tile tile="todo" active={tile} onPick={setTile} testId="kpi-todo" label="To Do" value={totals.todo} />
+              <Tile tile="inProgress" active={tile} onPick={setTile} testId="kpi-inprogress" label="In Progress" value={totals.inProgress} tone="text-sky-700" />
+              <Tile tile="completed" active={tile} onPick={setTile} testId="kpi-completed" label="Completed" value={totals.completed} tone="text-emerald-700" />
+              <Tile tile="blocked" active={tile} onPick={setTile} testId="kpi-blocked" label="Blocked" value={totals.blocked} tone="text-violet-700" />
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Tile testId="kpi-rated" label="Rated tasks" value={totals.rated} hint="of the tasks in view" />
+              <Tile tile="rated" active={tile} onPick={setTile} testId="kpi-rated" label="Rated tasks" value={totals.rated} hint="of the tasks in view" />
               <Tile testId="kpi-avg" label="Average rating" value={totals.avgRating === null ? "Not rated" : totals.avgRating.toFixed(1)} hint="rated tasks only; unrated are never counted as 0" />
-              <Tile testId="kpi-open" label="Open tasks" value={totals.open} tone="text-amber-700" hint="not completed, not rejected" />
-              <Tile testId="kpi-overdue" label="Overdue" value={totals.overdue} tone="text-rose-700" hint={`open and older than ${overdueDays} days`} />
+              <Tile tile="open" active={tile} onPick={setTile} testId="kpi-open" label="Open tasks" value={totals.open} tone="text-amber-700" hint="not completed, not rejected" />
+              <Tile tile="overdue" active={tile} onPick={setTile} testId="kpi-overdue" label="Overdue" value={totals.overdue} tone="text-rose-700" hint={`open and older than ${overdueDays} days`} />
             </div>
+            {tile && (
+              <section data-testid="tile-detail" className="rounded-2xl bg-white p-4 shadow-[var(--shadow-card)]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold text-slate-900">{TILE_LABEL[tile]}: {behind.length} {behind.length === 1 ? "task" : "tasks"}</h2>
+                  <div className="flex items-center gap-2">
+                    <input value={tq} onChange={(e) => setTq(e.target.value)} placeholder="Search employee, ID, task, project" aria-label="Search these tasks" className="h-9 w-64 max-w-full rounded-xl border border-indigo-100 px-3 text-sm" />
+                    <button type="button" data-testid="tile-close" onClick={() => { setTile(null); setTq(""); }} className="h-9 rounded-xl border border-indigo-100 px-3 text-xs font-medium text-slate-700 hover:bg-[var(--brand-50)]">Close</button>
+                  </div>
+                </div>
+                {behind.length === 0 ? <p className="mt-3 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">No tasks match this card for the dates and filters in view.</p> : (
+                  <div className="mt-3 max-h-96 overflow-auto">
+                    <table className="w-full min-w-[760px] text-left text-sm"><thead className="text-[11px] uppercase tracking-wide text-slate-400"><tr><th className="py-2 pr-3">Employee</th><th className="pr-3">Task</th><th className="pr-3">Project</th><th className="pr-3">Manager</th><th className="pr-3">Priority</th><th className="pr-3">Status</th><th>Date</th></tr></thead>
+                      <tbody className="divide-y divide-indigo-50">{behindShown.map((r) => (
+                        <tr key={r.id}><td className="py-2 pr-3"><span className="font-medium text-slate-900">{r.who}</span><span className="block text-xs text-slate-400">{r.employeeCode ?? ""}</span></td><td className="max-w-[18rem] break-words pr-3 text-slate-700">{r.title}</td><td className="pr-3 text-slate-600">{r.project ?? "—"}</td><td className="pr-3 text-slate-600">{r.taggedManager ?? "—"}</td><td className="pr-3 text-slate-600">{r.weight ? r.weight.charAt(0) + r.weight.slice(1).toLowerCase() : "—"}</td><td className="pr-3 text-slate-600">{String(r.approvalStatus) === "REJECTED" ? "Rejected" : String(r.approvalStatus) === "PENDING" ? "Waiting for approval" : PROGRESS_LABEL[progressOf(r)]}</td><td className="text-slate-600">{dayFull(r.date)}</td></tr>
+                      ))}</tbody></table>
+                  </div>
+                )}
+                {tq && <p className="mt-2 text-xs text-slate-400">Showing {behindShown.length} of {behind.length} after the search.</p>}
+              </section>
+            )}
             {(() => {
               // The server's own figure for the people in view (it follows the dates and filters of the queue; a project choice made on this page is not applied to it).
               const w = person ? queue.weightedByUser?.[person] : queue.weighted;

@@ -473,14 +473,20 @@ export async function listRequests(viewerId: string, status?: unknown, f: LeaveL
   if (from && to && to.getTime() < from.getTime()) throw new Error("BAD_RANGE");
   const stage = STAGES.find((x) => x === f.stage) ?? null;
   const filtering = narrowed.scope.filteredTotal !== narrowed.scope.orgTotal;
+  // Same conditions for the list and for the clickable status counts (the counts leave the status itself out), so a chip's number is the list it opens.
+  const baseWhere = {
+    ...scopeOf(v),
+    ...(filtering ? { userId: { in: narrowed.ids } } : {}),
+    ...(type ? { leaveType: type } : {}),
+    ...(from ? { toDate: { gte: from } } : {}),
+    ...(to ? { fromDate: { lte: to } } : {}),
+  };
+  const byStatus = await prisma.leaveRequest.groupBy({ by: ["status"], where: baseWhere, _count: { _all: true } });
+  const statusCounts = Object.fromEntries((["PENDING", "ON_HOLD", "APPROVED", "REJECTED", "CANCELLED"] as const).filter((s) => holdOn || s !== "ON_HOLD").map((s) => [s, byStatus.find((x) => String(x.status) === s)?._count._all ?? 0]));
   const found = await prisma.leaveRequest.findMany({
     where: {
-      ...scopeOf(v),
+      ...baseWhere,
       ...(wanted ? { status: wanted } : {}),
-      ...(filtering ? { userId: { in: narrowed.ids } } : {}),
-      ...(type ? { leaveType: type } : {}),
-      ...(from ? { toDate: { gte: from } } : {}),
-      ...(to ? { fromDate: { lte: to } } : {}),
     },
     orderBy: [{ createdAt: "desc" }],
     take: 300,
@@ -499,6 +505,10 @@ export async function listRequests(viewerId: string, status?: unknown, f: LeaveL
     year,
     scope: narrowed.scope,
     requestCount: rows.length,
+    // counts per status for the same filters (without the stage filter, which is worked out per request); total = every request matching them
+    statusCounts,
+    totalCount: Object.values(statusCounts).reduce((n, x) => n + x, 0),
+    capped: found.length >= 300,
     requests: rows.map((r) => ({
       ...requestView(r),
       managerStep: steps.get(r.id) ?? null,

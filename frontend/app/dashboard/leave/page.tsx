@@ -168,7 +168,7 @@ function LeaveContent() {
   if (dFrom) reviewParams.set("from", dFrom);
   if (dTo) reviewParams.set("to", dTo);
   const badRange = !!dFrom && !!dTo && dTo < dFrom;
-  const review = useApi<{ requests: Review[]; scope?: PeopleScope; requestCount?: number }>(isHr && tab === "review" && ready && !badRange ? "/leave/requests?" + reviewParams.toString() : null, reload);
+  const review = useApi<{ requests: Review[]; scope?: PeopleScope; requestCount?: number; statusCounts?: Record<string, number>; totalCount?: number; capped?: boolean }>(isHr && tab === "review" && ready && !badRange ? "/leave/requests?" + reviewParams.toString() : null, reload);
   const pendingCount = useApi<{ requests: Review[] }>(isHr ? "/leave/requests?status=PENDING" : null, reload);
 
   const team = useApi<TeamLeave>(isApprover ? "/leave/manager/requests" : null, reload);
@@ -415,6 +415,20 @@ function LeaveContent() {
               <option value="">All</option>
             </select>
           </div>
+          {review.data?.statusCounts && (
+            <div role="group" aria-label="Show requests by status" data-testid="leave-status-chips" className="mt-3 flex flex-wrap gap-1.5">
+              {([["", "All", review.data.totalCount ?? 0], ...Object.entries(review.data.statusCounts).map(([k, n]) => [k, STATUS_LABEL[k] ?? k, n])] as [string, string, number][]).map(([k, label, n]) => {
+                const on = status === k;
+                return (
+                  <button key={k || "all"} type="button" data-testid={`leave-chip-${(k || "all").toLowerCase()}`} aria-pressed={on} onClick={() => setStatus(k)} title={`Show ${label.toLowerCase()} requests`} className={`h-8 rounded-full border px-3 text-xs font-medium ${on ? "border-indigo-600 bg-indigo-600 text-white" : "border-indigo-100 bg-white text-slate-600 hover:bg-[var(--brand-50)]"}`}>
+                    {k === "PENDING" ? "Pending" : label}<span className={`ml-1.5 tabular-nums ${on ? "text-white/80" : "text-slate-400"}`}>{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {review.data?.capped && <p className="mt-2 text-xs text-amber-700">Showing the newest 300 requests. Narrow the dates or filters to see the rest.</p>}
+          {stageFilter && <p className="mt-2 text-xs text-slate-500">The approval-stage filter is on, so the list can be shorter than the chip numbers.</p>}
           {review.error && <p className="mt-3 text-sm text-red-600">{review.error}</p>}
           {review.data && review.data.requests.length === 0 && <p className="mt-4 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">Nothing here.</p>}
           <div className="mt-4 divide-y divide-indigo-100">
