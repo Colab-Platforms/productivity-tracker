@@ -16,11 +16,13 @@ enum UserRole {
 }
 
 enum UserStatus {
-  CANDIDATE // offer sent, not yet an employee
-  INVITED // account created, never logged in
+  CANDIDATE // LEGACY: offer sent, not yet an employee (no longer assignable)
+  INVITED // LEGACY: account created, never logged in (no longer assignable)
   ACTIVE
-  SUSPENDED
+  SUSPENDED // LEGACY (no longer assignable; blocked as before)
   EXITED
+  TERMINATED // dismissed by the company (no access)
+  ABSCONDED // left without notice (no access)
 }
 
 // Drives the tracker access gate. Access is granted only at ACTIVE.

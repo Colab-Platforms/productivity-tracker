@@ -31,7 +31,7 @@ import { ViewTabs } from "../_assigned/ViewTabs";
 import AssignedToMe from "../_assigned/AssignedToMe";
 import AssignedByMe from "../_assigned/AssignedByMe";
 import ReviewQueue from "../approvals/ReviewQueue";
-import { WeightedCard, type Weighted } from "../_weighted/Weighted";
+import { type Weighted } from "../_weighted/Weighted";
 import EmployeeRepetitionAlert from "./_repetition/EmployeeRepetitionAlert";
 
 const API = API_BASE;
@@ -461,7 +461,6 @@ function TasksPageInner() {
           </p>
         </section>
       )}
-      {data?.weighted && <WeightedCard w={data.weighted} title="Weighted task performance (today)" />}
 
       {/* --- propose ------------------------------------------------------ */}
       {data?.entryForm?.ready && (

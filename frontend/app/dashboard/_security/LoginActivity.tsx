@@ -68,6 +68,8 @@ export default function LoginActivity({ mode }: { mode: "mine" | "org" }) {
   const [location, setLocation] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  // A clicked "last 24 hours" card: the list shows exactly those attempts (same moment on the server, so the totals match).
+  const [within, setWithin] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [data, setData] = useState<Page | null>(null);
@@ -83,12 +85,13 @@ export default function LoginActivity({ mode }: { mode: "mine" | "org" }) {
       if (location.trim()) p.set("location", location.trim());
       if (from) p.set("from", from);
       if (to) p.set("to", to);
+      if (within) p.set("within", "24h");
     }
     if (status) p.set(org ? "status" : "result", status);
     p.set("page", String(page));
     p.set("pageSize", String(pageSize));
     return p.toString();
-  }, [org, q, status, device, ip, location, from, to, page, pageSize]);
+  }, [org, q, status, device, ip, location, from, to, within, page, pageSize]);
 
   const path = org ? "/login-activity" : "/login-activity/mine";
   useEffect(() => {
@@ -103,8 +106,8 @@ export default function LoginActivity({ mode }: { mode: "mine" | "org" }) {
 
   // any filter change goes back to the first page
   const set = useCallback(<T,>(setter: (v: T) => void) => (v: T) => { setter(v); setPage(1); }, []);
-  const filtering = !!(q || status || device || ip || location || from || to);
-  const clear = () => { setQ(""); setStatus(""); setDevice(""); setIp(""); setLocation(""); setFrom(""); setTo(""); setPage(1); };
+  const filtering = !!(q || status || device || ip || location || from || to || within);
+  const clear = () => { setWithin(false); setQ(""); setStatus(""); setDevice(""); setIp(""); setLocation(""); setFrom(""); setTo(""); setPage(1); };
   const tz = data?.timezone ?? me?.platform?.timezone ?? "Asia/Kolkata";
   const items = data?.items ?? [];
 
@@ -112,16 +115,21 @@ export default function LoginActivity({ mode }: { mode: "mine" | "org" }) {
     <div className="space-y-4" data-testid="login-activity">
       {org && data?.ready && data.summary && (
         <section aria-label="Last 24 hours" className="grid grid-cols-3 gap-3">
-          {[
-            ["Successful sign-ins", data.summary.last24Hours.success, "text-emerald-700"],
-            ["Failed attempts", data.summary.last24Hours.failed, data.summary.last24Hours.failed ? "text-amber-700" : "text-slate-900"],
-            ["Blocked (network)", data.summary.last24Hours.blocked, data.summary.last24Hours.blocked ? "text-red-700" : "text-slate-900"],
-          ].map(([label, n, tone]) => (
-            <div key={String(label)} className="rounded-2xl bg-white p-3.5 shadow-[var(--shadow-card)]">
-              <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label} · last 24 hours</p>
-              <p className={`mt-1 text-2xl font-bold tabular-nums ${tone}`}>{n as number}</p>
-            </div>
-          ))}
+          {([
+            ["Successful sign-ins", data.summary.last24Hours.success, "text-emerald-700", "SUCCESS"],
+            ["Failed attempts", data.summary.last24Hours.failed, data.summary.last24Hours.failed ? "text-amber-700" : "text-slate-900", "FAILED"],
+            ["Blocked (network)", data.summary.last24Hours.blocked, data.summary.last24Hours.blocked ? "text-red-700" : "text-slate-900", "BLOCKED"],
+          ] as [string, number, string, string][]).map(([label, n, tone, key]) => {
+            const on = within && status === key;
+            return (
+              <button key={label} type="button" data-testid={`la-${key.toLowerCase()}`} aria-pressed={on} title={on ? "Click again to show every attempt" : `Show the ${label.toLowerCase()} of the last 24 hours`}
+                onClick={() => { if (on) { setWithin(false); setStatus(""); } else { setWithin(true); setStatus(key); setFrom(""); setTo(""); } setPage(1); }}
+                className={`w-full cursor-pointer rounded-2xl bg-white p-3.5 text-left shadow-[var(--shadow-card)] ring-2 transition hover:shadow-[var(--shadow-lift)] ${on ? "ring-indigo-500" : "ring-transparent hover:ring-indigo-200"}`}>
+                <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label} · last 24 hours</p>
+                <p className={`mt-1 text-2xl font-bold tabular-nums ${tone}`}>{n}</p>
+              </button>
+            );
+          })}
         </section>
       )}
 

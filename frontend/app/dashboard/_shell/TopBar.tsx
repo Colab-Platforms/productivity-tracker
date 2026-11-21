@@ -15,7 +15,7 @@ type Person = { id: string; firstName: string; lastName: string; role: string; e
 
 const iconBtn = "flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-[var(--nav-hover)] hover:text-indigo-600";
 
-export default function TopBar({ me, title, onSignOut, collapsed, onToggleSidebar }: { me: Person; title: string; onSignOut: () => void; collapsed: boolean; onToggleSidebar: () => void }) {
+export default function TopBar({ me, title, onSignOut, collapsed, onToggleSidebar, chatUnread = 0, onOpenChat }: { me: Person; title: string; onSignOut: () => void; collapsed: boolean; onToggleSidebar: () => void; chatUnread?: number; onOpenChat?: () => void }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [menu, setMenu] = useState(false);
@@ -78,6 +78,12 @@ export default function TopBar({ me, title, onSignOut, collapsed, onToggleSideba
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <ThemeIconButton className={iconBtn} />
+        {onOpenChat && (
+          <button type="button" onClick={onOpenChat} aria-label={chatUnread > 0 ? `Open chat, ${chatUnread} unread` : "Open chat"} title="Chat" aria-controls="chat-drawer" data-testid="chat-open" className={`${iconBtn} relative`}>
+            <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3.5 5.5A2 2 0 0 1 5.5 3.5h9a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3h0a2 2 0 0 1-2-2z" /></svg>
+            {chatUnread > 0 && <span data-testid="chat-header-badge" className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-rose-500 px-1 text-center text-[10px] font-bold leading-4 text-white">{Math.min(99, chatUnread)}</span>}
+          </button>
+        )}
         <Bell />
         <div ref={ref} className="relative ml-1">
           <button

@@ -11,6 +11,7 @@ import ExportButtons from "./ExportButtons";
 import { useMe } from "../../layout";
 import { PRESETS, rangeFor, type Preset } from "./ranges";
 import TargetsPanel from "./TargetsPanel";
+import PersonTasks, { REASON_TEXT, type Reason, type TaskSummary } from "./ProductivityPersonTasks";
 import { PROGRESS_LABEL } from "../../_progress/progress";
 
 // Task productivity: tasks completed ÷ the daily target set by HR/Admin.
@@ -25,6 +26,8 @@ type Person = {
   targetPerDay: number | null; targetSource: "PERSON" | "TEAM" | "COMPANY" | null;
   daysWithData: number; completedTotal: number | null; targetTotal: number | null; overallPercent: number | null; days: Day[];
   weighted?: Weighted; // priority-weighted score from the server
+  // why a figure is missing and the task counts behind the row (added 2026-11-22; older answers do not have them)
+  tasks?: TaskSummary; reason?: Reason; targetState?: "CONFIGURED" | "NOT_CONFIGURED" | "ZERO"; mappedToTeam?: boolean;
 };
 type Productivity = { generatedAt: string; timezone: string; today: string; from: string; to: string; targetsReady: boolean; scope?: { orgTotal: number; filteredTotal: number }; weightedTotal?: Weighted; people: Person[] };
 // The tasks behind the report (GET /team-attendance/productivity/tasks), fetched when Excel is exported.
@@ -137,7 +140,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
     downloadCsv(
       `task-productivity-${data.from}_to_${data.to}.csv`,
       ["Employee", "Employee ID", "Team", "Daily target", "Target level", "Days with data", "Tasks completed", "Productivity %", "Weighted score %", "Weighted points"],
-      data.people.map((p) => [p.name, p.employeeCode, p.teamName, p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : "", p.daysWithData, p.completedTotal ?? "No task data available", p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : "No task data available"), p.weighted?.percent ?? "N/A", p.weighted ? pointsText(p.weighted) : ""])
+      data.people.map((p) => [p.name, p.employeeCode, p.teamName, p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : "", p.daysWithData, p.completedTotal ?? (p.reason ? REASON_TEXT[p.reason] : "No task data available"), p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : p.targetPerDay === 0 ? "Target is 0" : p.reason ? REASON_TEXT[p.reason] || "" : "No task data available"), p.weighted?.percent ?? "N/A", p.weighted ? pointsText(p.weighted) : ""])
     );
   }
 
@@ -162,7 +165,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
     const peopleRows = data.people.map((p) => [
       p.employeeCode, p.name, p.teamName, (p.projects ?? []).join(", ") || null, p.reportingManager ?? null,
       p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : null, p.daysWithData,
-      p.completedTotal ?? "No task data available", p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : "No task data available"),
+      p.completedTotal ?? (p.reason ? REASON_TEXT[p.reason] : "No task data available"), p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : p.targetPerDay === 0 ? "Target is 0" : p.reason ? REASON_TEXT[p.reason] || "" : "No task data available"),
       p.weighted?.percent ?? "N/A", p.weighted?.possible ? p.weighted.earned : null, p.weighted?.possible ? p.weighted.possible : null,
       ...(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).map((pr) => { const l = p.weighted?.byPriority.find((x) => x.priority === pr); return l && l.possible ? `${l.earned} / ${l.possible}` : null; }),
     ]);
@@ -236,7 +239,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
         <Kpi label="People" value={data ? String(k.people) : "—"} />
         <Kpi label="Tasks completed" value={data ? String(k.completed) : "—"} sub="counted in the hour they were finished" />
         <Kpi label="Team productivity" value={k.percent === null ? "—" : `${k.percent}%`} sub={k.percent === null ? "needs a target and task data" : "completed ÷ daily targets"} />
-        <Kpi label="No target set" value={data ? String(k.noTarget) : "—"} sub="people" />
+        <Kpi label="No target set" value={data ? String(k.noTarget) : "—"} sub={k.noTarget > 0 ? (canSetTargets && !self ? "people. Set targets below (nothing is assigned automatically)" : "people. HR or Admin sets targets") : "people"} />
       </div>
 
       <section className="rounded-2xl bg-white shadow-[var(--shadow-card)]">
@@ -263,24 +266,27 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
                   <Fragment key={p.userId}>
                     <tr className="cursor-pointer border-t border-indigo-50 hover:bg-slate-50" onClick={() => setOpen(open === p.userId ? null : p.userId)}>
                       <td className="px-3 py-2.5">
-                        <p className="font-medium text-slate-900">{p.name}</p>
+                        <button type="button" aria-expanded={open === p.userId} onClick={(e) => { e.stopPropagation(); setOpen(open === p.userId ? null : p.userId); }} className="text-left font-medium text-slate-900 hover:text-indigo-700 hover:underline">{p.name}</button>
                         <p className="text-xs text-slate-400">{p.employeeCode ?? "—"}</p>
                       </td>
-                      <td className="px-3 py-2.5 text-slate-600">{p.teamName ?? "—"}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{p.teamName ?? (p.mappedToTeam === false ? <span className="text-xs text-amber-700" title="This person is not on any team, so only a personal or company-wide daily target can apply to them">No team</span> : "—")}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-slate-900">
-                        {p.targetPerDay ?? <span className="text-xs text-slate-400">Target not configured</span>}
+                        {p.targetPerDay !== null ? (p.targetPerDay === 0 ? <span className="text-xs text-amber-700" title="A target of 0 is set, so no percentage can be calculated">0 (no percentage)</span> : p.targetPerDay) : (
+                          <span className="text-xs text-slate-400">Target not configured{canSetTargets && !self ? <button type="button" onClick={(e) => { e.stopPropagation(); document.getElementById("task-targets")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} className="ml-1 font-medium text-indigo-700 hover:underline">Set</button> : null}</span>
+                        )}
                         {p.targetSource && <span className="ml-1 text-xs text-slate-400">({SOURCE[p.targetSource]})</span>}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{p.daysWithData}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-900">{p.completedTotal ?? <span className="text-xs text-slate-400">No task data available</span>}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-900">{p.completedTotal !== null ? p.completedTotal : <span className="text-xs text-slate-400" title={p.reason === "NO_TASKS" ? "Nothing was submitted or approved for the selected dates" : undefined}>{p.reason ? REASON_TEXT[p.reason] : "No task data available"}</span>}{p.completedTotal === 0 && p.reason === "NONE_COMPLETED" && <span className="ml-1 text-xs text-slate-400">(none finished)</span>}</td>
                       <td className={`px-3 py-2.5 text-right tabular-nums font-semibold ${pctClass(p.overallPercent)}`}>
-                        {p.overallPercent !== null ? `${p.overallPercent}%` : <span className="text-xs font-normal text-slate-400">{p.targetPerDay === null ? "Target not configured" : "No task data available"}</span>}
+                        {p.overallPercent !== null ? `${p.overallPercent}%` : <span className="text-xs font-normal text-slate-400">{p.targetPerDay === null ? "Target not configured" : p.targetPerDay === 0 ? "Target is 0" : p.reason ? REASON_TEXT[p.reason] || "—" : "No task data available"}</span>}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900" title={p.weighted ? `${pointsText(p.weighted)} points` : undefined}>{pctText(p.weighted)}</td>
                     </tr>
                     {open === p.userId && (
                       <tr className="bg-slate-50/60">
-                        <td colSpan={7} className="px-6 py-3">
+                        <td colSpan={7} className="space-y-4 px-6 py-4">
+                          {p.tasks && data && <PersonTasks userId={p.userId} from={data.from} to={data.to} hrQuery={hrQuery} summary={p.tasks} />}
                           <table className="w-full max-w-xl text-xs">
                             <thead><tr className="text-slate-400"><th className="py-1 text-left font-medium">Day</th><th className="py-1 text-right font-medium">Completed</th><th className="py-1 text-right font-medium">Target</th><th className="py-1 text-right font-medium">Productivity</th></tr></thead>
                             <tbody>
@@ -347,7 +353,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
         <div className="h-4" />
       </section>}
 
-      {canSetTargets && !self && <TargetsPanel onChanged={() => setReloadTargets((n) => n + 1)} />}
+      {canSetTargets && !self && <div id="task-targets"><TargetsPanel onChanged={() => setReloadTargets((n) => n + 1)} /></div>}
     </div>
   );
 }

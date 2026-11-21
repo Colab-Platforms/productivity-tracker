@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { roleLabel } from "@/lib/roles";
-import { settingsTabFor, settingsTabsFor, tabFor, tabsFor, type Tab as AdminTab } from "./tabs";
+import { tabFor, tabsFor, type Tab as AdminTab } from "./tabs";
 import { useRoleGate } from "../_routing/useRoleGate";
 import FilterBar from "../_filters/FilterBar";
 import StatusStrip from "../_filters/StatusStrip";
@@ -150,26 +150,28 @@ const STATUS_CHIP: Record<string, string> = {
   CANDIDATE: "bg-[#F3F7F6] text-slate-600 ring-slate-200",
   SUSPENDED: "bg-amber-50 text-amber-700 ring-amber-200",
   EXITED: "bg-rose-50 text-rose-700 ring-rose-200",
+  TERMINATED: "bg-rose-50 text-rose-700 ring-rose-200",
+  ABSCONDED: "bg-orange-50 text-orange-700 ring-orange-200",
 };
 
 // ===========================================================================
 
-// mode "users" = User Management (all tabs, as before); mode "settings" = System Settings (Admin only: just the Shifts and Thresholds tabs).
-// Both modes render the SAME tab components, so nothing is duplicated.
-export function AdminScreen({ mode = "users" }: { mode?: "users" | "settings" }) {
+// User Management (Admin: all tabs incl. Shifts and Thresholds; HR: People, Teams and Leave). The separate System Settings page was removed (2026-11-22):
+// its Shifts and Thresholds tabs are these same components, still here.
+export function AdminScreen() {
   const me = useMe();
-  useRoleGate(mode === "settings" ? ["ADMIN"] : ["ADMIN", "HR"]);
+  useRoleGate(["ADMIN", "HR"]);
   // /dashboard/employees?tab=Teams opens that tab, so the menu can link straight
   // to it. Read once when the page first renders, rather than with
   // useSearchParams, which would force this page behind a Suspense boundary.
   // (The layout only renders pages after sign-in resolves, so window exists.)
   const [wantedTab, setTab] = useState<string>(() => {
-    if (typeof window === "undefined") return mode === "settings" ? "Shifts" : "People";
-    return new URLSearchParams(window.location.search).get("tab") ?? (mode === "settings" ? "Shifts" : "People");
+    if (typeof window === "undefined") return "People";
+    return new URLSearchParams(window.location.search).get("tab") ?? "People";
   });
   // The tabs depend on the role: Admin gets the whole page; HR gets People, Teams and Leave (no organization-wide shifts and thresholds).
-  const tabs = mode === "settings" ? settingsTabsFor(me?.role) : tabsFor(me?.role);
-  const tab = mode === "settings" ? settingsTabFor(me?.role, wantedTab) : tabFor(me?.role, wantedTab);
+  const tabs = tabsFor(me?.role);
+  const tab = tabFor(me?.role, wantedTab);
   const [options, setOptions] = useState<Options | null>(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -193,7 +195,7 @@ export function AdminScreen({ mode = "users" }: { mode?: "users" | "settings" })
     return () => clearTimeout(t);
   }, [toast]);
 
-  const allowed = mode === "settings" ? me?.role === "ADMIN" : me?.role === "ADMIN" || me?.role === "HR";
+  const allowed = me?.role === "ADMIN" || me?.role === "HR";
 
   if (me && !allowed) {
     return (
@@ -220,9 +222,9 @@ export function AdminScreen({ mode = "users" }: { mode?: "users" | "settings" })
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{mode === "settings" ? "System Settings" : me?.role === "ADMIN" ? "User Management" : "Employees"}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{me?.role === "ADMIN" ? "User Management" : "Employees"}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          {mode === "settings" ? "Shifts, alert thresholds and attendance policies for the companies you look after." : me?.role === "ADMIN" ? "People, teams, shifts and the thresholds every alert is measured against." : "Employee records, teams and leave for the companies you look after."}
+          {me?.role === "ADMIN" ? "People, teams, shifts and the thresholds every alert is measured against." : "Employee records, teams and leave for the companies you look after."}
         </p>
       </div>
 
@@ -287,8 +289,11 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
   const { options: filterOptions } = useFilterOptions(filters, update, ready);
   const [scope, setScope] = useState<{ orgTotal: number; filteredTotal: number } | null>(null);
 
+  // ?employeesOnly=1 (from an Admin-dashboard card that counts employees): Admin accounts are left out, so the list matches that card.
+  const [employeesOnly, setEmployeesOnly] = useState(false);
   // A link from the Admin dashboard can open this list already filtered by role (?role=MANAGER). Read once, on arrival.
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("employeesOnly") === "1") setEmployeesOnly(true);
     const r = new URLSearchParams(window.location.search).get("role");
     if (r && ["ADMIN", "HR", "MANAGER", "EMPLOYEE"].includes(r)) setRole(r);
   }, []);
@@ -299,13 +304,14 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
 
   const filterString = filterQuery(filters, { q: "search", company: "companyId" });
   // The same filters as the list, without the status, for the status counts.
-  const statusCountQuery = (() => { const x = new URLSearchParams(filterString); x.delete("status"); if (role) x.set("role", role); return x.toString(); })();
+  const statusCountQuery = (() => { const x = new URLSearchParams(filterString); x.delete("status"); if (role) x.set("role", role); if (employeesOnly) x.set("employeesOnly", "1"); return x.toString(); })();
   const load = useCallback(async () => {
     if (!ready) return;
     setLoading(true);
     try {
       const query = new URLSearchParams(filterString);
       if (role) query.set("role", role);
+      if (employeesOnly) query.set("employeesOnly", "1");
       const data = await call<{ users: Person[]; scope?: { orgTotal: number; filteredTotal: number } }>(`/admin/users?${query}`);
       setPeople(data.users);
       setScope(data.scope ?? null);
@@ -316,7 +322,7 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
     }
     // onError is stable enough for this page; re-running on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterString, role, ready]);
+  }, [filterString, role, ready, employeesOnly]);
 
   // Debounced so typing in the search box doesn't fire a request per keypress.
   useEffect(() => {
@@ -338,6 +344,11 @@ function PeopleTab({ options, onError, onDone }: TabProps) {
       </div>
 
       {/* Clickable status counts: counted by the server for the same people (same filters, status left out), so they match the list below. */}
+      {employeesOnly && (
+        <button type="button" data-testid="employees-only" onClick={() => { setEmployeesOnly(false); const u = new URL(window.location.href); u.searchParams.delete("employeesOnly"); window.history.replaceState(null, "", u.pathname + u.search); }} className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--brand-50)] px-3 text-xs font-medium text-indigo-700 hover:bg-indigo-100" title="Show Admin accounts too">
+          Employees only (Admin accounts hidden) <span aria-hidden="true">✕</span>
+        </button>
+      )}
       <StatusStrip query={statusCountQuery} status={filters.status} onPick={(s) => update({ status: s })} refresh={people} />
 
       <FilterBar
@@ -482,7 +493,7 @@ function PersonDrawer({
     phone: person?.phone ?? "",
     password: "",
     role: person?.role ?? "EMPLOYEE",
-    status: person?.status ?? "INVITED",
+    status: person?.status ?? "ACTIVE",
     designation: person?.designation ?? "",
     employeeCode: person?.employeeCode ?? "",
     shiftId: person?.shift?.id ?? "",
@@ -1045,7 +1056,8 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
       <div className="grid grid-cols-2 gap-3">
         <Field label="Employment status">
           <Select value={f.status} onChange={(v) => set("status", v)}>
-            {dd.statuses.map((s) => <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</option>)}
+            {/* Only Active / Exited / Terminated / Absconded can be chosen. A person who still holds an older value (Suspended, Invited, Candidate) keeps it shown until it is changed. */}
+            {(dd.statuses.includes(f.status) || !f.status ? dd.statuses : [f.status, ...dd.statuses]).map((s) => <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}{dd.statuses.includes(s) ? "" : " (older status)"}</option>)}
           </Select>
         </Field>
         <Field label="Employee type">

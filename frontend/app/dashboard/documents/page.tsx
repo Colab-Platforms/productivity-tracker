@@ -4,7 +4,8 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { apiPost } from "@/lib/api";
 import { useMe } from "../layout";
 import { Modal } from "../_employees/Modal";
-import { MyDocuments, Chip, card, readFile, useApi, viewFile, type Mine, type Summary } from "../_documents/MyDocuments";
+import { apiGet } from "@/lib/api";
+import { MyDocuments, Chip, card, date, readFile, useApi, viewFile, type Mine, type Summary } from "../_documents/MyDocuments";
 
 // ---------------------------------------------------------------------------
 // DOCUMENTS
@@ -144,6 +145,7 @@ function ChecklistModal({ userId, onClose, onChanged }: { userId: string; onClos
   const [err, setErr] = useState("");
   const picker = useRef<HTMLInputElement>(null);
   const [uploadFor, setUploadFor] = useState<string | null>(null);
+  const [historyOf, setHistoryOf] = useState<string | null>(null);
 
   const done = () => { setReload((n) => n + 1); onChanged(); };
   // HR uploads on the employee's behalf. The server marks an HR upload as verified (nobody else reviews it).
@@ -208,8 +210,9 @@ function ChecklistModal({ userId, onClose, onChanged }: { userId: string; onClos
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-medium text-slate-900">{i.name} <span className="ml-1 text-xs font-normal text-slate-400">{i.isMandatory ? "Required" : "Optional"}{i.uploadedByEmployee ? "" : " · HR uploads"}</span></p>
                   <div className="flex items-center gap-2">
-                    <Chip s={i.status} label={i.status === "SUBMITTED" ? "Waiting for review" : i.statusLabel} />
-                    <button disabled={busy} onClick={() => { setUploadFor(i.requirementId); picker.current?.click(); }} className="rounded-lg border border-indigo-100 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{i.documentId ? "Replace" : "Upload"}</button>
+                    <Chip s={i.status} label={i.status === "SUBMITTED" ? "Pending verification" : i.statusLabel} />
+                    {/* Employees upload their own documents. HR can upload only the documents that are HR's own (for example a signed contract). */}
+                    {!i.uploadedByEmployee && <button disabled={busy} onClick={() => { setUploadFor(i.requirementId); picker.current?.click(); }} className="rounded-lg border border-indigo-100 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{i.documentId ? "Replace" : "Upload"}</button>}
                     {i.documentId && i.fileName && <button onClick={() => viewFile(i.documentId as string).catch((e: Error) => setErr(e.message))} className="rounded-lg border border-indigo-100 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">View</button>}
                     {i.documentId && i.status === "SUBMITTED" && (
                       <>
@@ -219,8 +222,16 @@ function ChecklistModal({ userId, onClose, onChanged }: { userId: string; onClos
                     )}
                   </div>
                 </div>
+                {i.status === "NOT_SUBMITTED" && i.uploadedByEmployee && <p className="mt-1 text-xs text-slate-500">Not submitted yet. The employee uploads this document from My Profile.</p>}
+                {i.documentId && i.fileName && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    {i.fileName} · uploaded {date(i.uploadedAt)}{i.reviewedAt ? ` · ${i.status === "VERIFIED" ? "verified" : "reviewed"} ${date(i.reviewedAt)}${i.reviewedBy ? ` by ${i.reviewedBy}` : ""}` : ""}
+                    <button type="button" onClick={() => setHistoryOf(historyOf === i.documentId ? null : (i.documentId as string))} className="ml-2 font-medium text-indigo-700 hover:underline">{historyOf === i.documentId ? "Hide history" : "History"}</button>
+                  </p>
+                )}
+                {historyOf === i.documentId && i.documentId && <DocHistory id={i.documentId} />}
                 {i.status === "REJECTED" && i.rejectionReason && <p className="mt-1 text-xs text-red-600">Rejected: {i.rejectionReason}</p>}
-                {rejecting === i.documentId && (
+                {rejecting !== null && rejecting === i.documentId && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="Why is it being rejected? (required)" className="min-w-[14rem] flex-1 rounded-xl border border-indigo-100 px-3 py-2 text-sm" />
                     <button disabled={busy || reason.trim().length < 3} onClick={() => review(i.documentId as string, false)} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Confirm reject</button>
@@ -234,6 +245,28 @@ function ChecklistModal({ userId, onClose, onChanged }: { userId: string; onClos
         </div>
       )}
     </Modal>
+  );
+}
+
+// Every upload, re-upload, verification and rejection of one document, from the audit log (HR and Admin only).
+type HistoryEvent = { at: string; by: string; summary: string; before: { status: string | null; fileName: string | null; rejectionReason: string | null }; after: { status: string | null; fileName: string | null; rejectionReason: string | null } };
+function DocHistory({ id }: { id: string }) {
+  const [events, setEvents] = useState<HistoryEvent[] | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let live = true;
+    apiGet<{ events: HistoryEvent[] }>(`/documents/history/${id}`).then((r) => live && setEvents(r.events)).catch((e: Error) => live && setErr(e.message));
+    return () => { live = false; };
+  }, [id]);
+  if (err) return <p className="mt-1 text-xs text-red-600">{err}</p>;
+  if (!events) return <p className="mt-1 text-xs text-slate-400">Loading history…</p>;
+  return (
+    <ol data-testid="doc-history" className="mt-2 space-y-1 rounded-xl bg-[#F3F7F6] px-3 py-2 text-xs text-slate-600">
+      {events.length === 0 && <li>No history recorded for this document yet.</li>}
+      {events.map((e, n) => (
+        <li key={n}><span className="text-slate-400">{new Date(e.at).toLocaleString()}</span> · {e.by}: {e.summary}{e.after.rejectionReason ? ` (reason: ${e.after.rejectionReason})` : ""}{e.before.fileName && e.before.fileName !== e.after.fileName ? ` · replaced ${e.before.fileName}` : ""}</li>
+      ))}
+    </ol>
   );
 }
 

@@ -16,6 +16,7 @@
 // say so. The Live Team page is the real-time view.
 // ===========================================================================
 
+import { NOT_ADMIN, withoutAdmins } from "../../lib/tracked.js";
 import { PRIORITY_WEIGHT, weightedPerformance, type Weighted } from "../tasks/tasks.weighted.js";
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds } from "../hr-filters/hrFilters.service.js";
@@ -106,11 +107,11 @@ async function resolveScope(viewerId: string) {
   } else if (viewer.role === "MANAGER") {
     // Same rule as Live Team and the task queue: teams they run + direct reports (plus themselves).
     const team = await visibleUserIds(viewer);
-    userIds = await onlyPinnedCompany(Array.from(new Set([viewer.id, ...team])));
+    userIds = await withoutAdmins(await onlyPinnedCompany(Array.from(new Set([viewer.id, ...team]))));
   } else {
     // HR and Admin: every company they act on (company access), not only their own.
     const everyone = await prisma.user.findMany({
-      where: { ...scopeWhere(await accessFor(viewer.id)) },
+      where: { ...scopeWhere(await accessFor(viewer.id)), ...NOT_ADMIN },
       select: { id: true, status: true },
     });
     userIds = everyone

@@ -30,6 +30,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_CATEGORY: { status: 400, message: "Pick a valid document category." },
   REASON_REQUIRED: { status: 400, message: "Say why you're sending it back." },
   HR_UPLOADS_THIS: { status: 400, message: "HR uploads that document, not you." },
+  EMPLOYEE_UPLOADS_THIS: { status: 400, message: "The employee uploads this document themselves. HR reviews it: verify it or reject it with a reason." },
+  ALREADY_VERIFIED: { status: 409, message: "That document is already verified, so it cannot be replaced." },
   DUPLICATE_LABEL: { status: 409, message: "A requirement with that name already exists." },
   NAME_TOO_LONG: { status: 400, message: "Keep the name under 100 characters." },
   HELP_TOO_LONG: { status: 400, message: "Keep the description under 300 characters." },

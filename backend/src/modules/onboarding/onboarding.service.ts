@@ -26,6 +26,8 @@ import { viewerIsOwner, ownerAdminIds } from "../../lib/owner.js";
 import { saveUpload, readStored, deleteStored, contentTypeFor } from "../../lib/storage.js";
 import { parseIsoDay } from "../../lib/dates.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
+import { notifyUsers } from "../../lib/notify.js";
+import { deciderIdsForCompany } from "../../lib/companyAccess.js";
 
 const BCRYPT_COST = 10;
 const STAFF_ROLES = new Set(["HR", "ADMIN"]);
@@ -722,7 +724,7 @@ export async function uploadMyDocument(
 
   const requirement = await prisma.documentRequirement.findUnique({
     where: { id: data.requirementId },
-    select: { id: true, platformId: true, category: true, uploadedByEmployee: true, isActive: true },
+    select: { id: true, platformId: true, category: true, label: true, uploadedByEmployee: true, isActive: true },
   });
   if (!requirement || requirement.platformId !== user.platformId) throw new Error("NOT_FOUND");
   if (!requirement.uploadedByEmployee) throw new Error("HR_UPLOADS_THIS");
@@ -742,12 +744,17 @@ export async function uploadMyDocument(
 
   const existing = await prisma.employeeDocument.findFirst({
     where: { userId, requirementId: requirement.id },
-    select: { id: true, storageKey: true },
+    select: { id: true, storageKey: true, status: true, fileName: true, uploadedAt: true, reviewedAt: true, rejectionReason: true },
   });
+  // A verified document is final: only a document HR sent back (or one still waiting) can be replaced.
+  if (existing && String(existing.status) === "APPROVED") throw new Error("ALREADY_VERIFIED");
 
+  let documentId: string;
   if (existing) {
+    documentId = existing.id;
     // Re-uploading after a rejection replaces the file and clears the review,
-    // so it goes back into HR's queue as new.
+    // so it goes back into HR's queue as new. The PREVIOUS file is NOT deleted (it stays in the private store) and what the record said
+    // before is written to the audit log, so the history of every submission and every verification is kept.
     await prisma.employeeDocument.update({
       where: { id: existing.id },
       data: {
@@ -761,9 +768,8 @@ export async function uploadMyDocument(
         consentAcceptedAt: new Date(),
       },
     });
-    if (existing.storageKey) await deleteStored(existing.storageKey);
   } else {
-    await prisma.employeeDocument.create({
+    const created = await prisma.employeeDocument.create({
       data: {
         platformId: user.platformId,
         userId,
@@ -776,11 +782,43 @@ export async function uploadMyDocument(
         // The DPDP consent record: captured at the moment of upload.
         consentAcceptedAt: new Date(),
       },
+      select: { id: true },
     });
+    documentId = created.id;
   }
 
+  auditNote({
+    recordType: "EmployeeDocument",
+    recordId: documentId,
+    targetUserId: userId,
+    summary: `${existing ? "Re-uploaded" : "Uploaded"} the document "${requirement.label}"`,
+    before: existing
+      ? { status: String(existing.status), fileName: existing.fileName, uploadedAt: existing.uploadedAt?.toISOString() ?? null, reviewedAt: existing.reviewedAt?.toISOString() ?? null, rejectionReason: existing.rejectionReason }
+      : undefined,
+    after: { status: "SUBMITTED", fileName: data.fileName ? String(data.fileName).slice(0, 160) : null },
+  } as never);
+
   const status = await recomputeOnboarding(userId);
+  await tellHrSubmitted(user.platformId, userId, documentId, requirement.label, !!existing);
   return { ok: true, onboardingStatus: status };
+}
+
+// HR / Admin of the company are told a document is waiting for review (once per submission).
+async function tellHrSubmitted(platformId: string, userId: string, documentId: string, label: string, again: boolean) {
+  try {
+    const who = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true } });
+    await notifyUsers({
+      platformId,
+      userIds: await deciderIdsForCompany(platformId, userId),
+      type: "DOCUMENT_SUBMITTED",
+      title: again ? "Document re-submitted for review" : "Document submitted for review",
+      body: `${who ? `${who.firstName} ${who.lastName}`.trim() : "An employee"} uploaded ${label}.`,
+      link: "/dashboard/documents",
+      dedupeKey: `doc:${documentId}:submitted:${Date.now()}`,
+    });
+  } catch (e) {
+    console.error("[documents] notify failed", e);
+  }
 }
 
 // ===========================================================================
@@ -798,7 +836,7 @@ export async function reviewDocument(
 
   const doc = await prisma.employeeDocument.findUnique({
     where: { id: documentId },
-    select: { id: true, platformId: true, userId: true, status: true, category: true, rejectionReason: true },
+    select: { id: true, platformId: true, userId: true, status: true, category: true, rejectionReason: true, requirementId: true, fileName: true },
   });
   // A warning letter is not an onboarding document: it has its own route and must never be reviewed here (that would overwrite its details).
   if (!doc || isLetterRow(doc.rejectionReason)) throw new Error("NOT_FOUND");
@@ -824,12 +862,28 @@ export async function reviewDocument(
     recordType: "EmployeeDocument",
     recordId: doc.id,
     targetUserId: doc.userId,
-    before: { status: String(doc.status) },
-    after: { status: approve ? "APPROVED" : "REJECTED", rejectionReason: approve ? null : rejectionReason!.trim() },
+    before: { status: String(doc.status), fileName: doc.fileName },
+    after: { status: approve ? "APPROVED" : "REJECTED", rejectionReason: approve ? null : rejectionReason!.trim(), fileName: doc.fileName },
     summary: `${approve ? "Verified" : "Rejected"} a ${String(doc.category).toLowerCase()} document`,
   });
 
   const status = await recomputeOnboarding(doc.userId);
+  // The employee is told the result. A rejection carries HR's reason, so they know what to correct.
+  try {
+    const req = doc.requirementId ? await prisma.documentRequirement.findUnique({ where: { id: doc.requirementId }, select: { label: true } }) : null;
+    const label = req?.label ?? "your document";
+    await notifyUsers({
+      platformId: doc.platformId,
+      userIds: [doc.userId],
+      type: approve ? "DOCUMENT_VERIFIED" : "DOCUMENT_REJECTED",
+      title: approve ? "Document verified" : "Document rejected: please upload a corrected one",
+      body: approve ? `HR verified ${label}.` : `${label} was rejected. Reason: ${rejectionReason!.trim()}`,
+      link: "/dashboard/profile?tab=My Documents",
+      dedupeKey: `doc:${doc.id}:${approve ? "verified" : "rejected"}:${Date.now()}`,
+    });
+  } catch (e) {
+    console.error("[documents] notify failed", e);
+  }
   return { ok: true, onboardingStatus: status };
 }
 
@@ -846,11 +900,13 @@ export async function uploadForCandidate(
 
   const requirement = await prisma.documentRequirement.findUnique({
     where: { id: data.requirementId },
-    select: { id: true, platformId: true, category: true },
+    select: { id: true, platformId: true, category: true, uploadedByEmployee: true },
   });
   if (!requirement || requirement.platformId !== viewer.platformId) {
     throw new Error("NOT_FOUND");
   }
+  // Employees upload their own documents. HR only uploads the ones that are HR's own (for example a signed contract).
+  if (requirement.uploadedByEmployee) throw new Error("EMPLOYEE_UPLOADS_THIS");
 
   const stored = await saveUpload({
     platformId: viewer.platformId,
@@ -880,7 +936,7 @@ export async function uploadForCandidate(
         rejectionReason: null,
       },
     });
-    if (existing.storageKey) await deleteStored(existing.storageKey);
+    // the previous file is kept in the private store (history is never deleted)
   } else {
     await prisma.employeeDocument.create({
       data: {

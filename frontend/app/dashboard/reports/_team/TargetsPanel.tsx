@@ -8,6 +8,8 @@ import { apiGet, apiPost } from "@/lib/api";
 
 type Targets = {
   ready: boolean;
+  companyId?: string;
+  companies?: { id: string; name: string }[];
   company: number | null;
   teams: { teamId: string; name: string; tasksPerDay: number | null }[];
   people: { userId: string; name: string; employeeCode: string | null; tasksPerDay: number | null }[];
@@ -23,15 +25,17 @@ export default function TargetsPanel({ onChanged }: { onChanged: () => void }) {
   const [scope, setScope] = useState<"company" | "team" | "user">("company");
   const [target, setTarget] = useState("");
   const [value, setValue] = useState("");
+  // HR / Admin who act on several companies choose which company's targets they are setting (the server checks the access)
+  const [company, setCompany] = useState("");
 
   const load = useCallback(async () => {
     try {
-      setT(await apiGet<Targets>("/team-attendance/targets"));
+      setT(await apiGet<Targets>(`/team-attendance/targets${company ? `?companyId=${company}` : ""}`));
       setError("");
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [company]);
   useEffect(() => { const x = setTimeout(() => void load(), 0); return () => clearTimeout(x); }, [load]);
 
   async function save(remove: boolean) {
@@ -43,7 +47,7 @@ export default function TargetsPanel({ onChanged }: { onChanged: () => void }) {
     if (!remove && (!Number.isInteger(n) || n < 1 || n > 1000)) { setError("Enter a whole number from 1 to 1000."); return; }
     setBusy(true);
     try {
-      setT(await apiPost<Targets>("/team-attendance/targets", { scope, id: scope === "company" ? undefined : target, tasksPerDay: remove ? null : n }));
+      setT(await apiPost<Targets>("/team-attendance/targets", { scope, id: scope === "company" ? undefined : target, tasksPerDay: remove ? null : n, companyId: t?.companyId }));
       setNotice(remove ? "Target removed." : "Target saved.");
       setValue("");
       onChanged();
@@ -67,6 +71,11 @@ export default function TargetsPanel({ onChanged }: { onChanged: () => void }) {
       {notice && <p className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</p>}
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
+        {(t?.companies?.length ?? 0) > 1 && (
+          <select value={t?.companyId ?? ""} onChange={(e) => { setCompany(e.target.value); setTarget(""); }} className={input} aria-label="Company">
+            {t!.companies!.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        )}
         <select value={scope} onChange={(e) => { setScope(e.target.value as typeof scope); setTarget(""); }} className={input} aria-label="Applies to">
           <option value="company">Company default</option>
           <option value="team">A team</option>

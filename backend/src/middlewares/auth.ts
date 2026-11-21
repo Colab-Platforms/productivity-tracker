@@ -1,4 +1,5 @@
 ﻿import type { Request, Response, NextFunction } from "express";
+import { isBlockedStatus } from "../lib/userStatus.js";
 import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma.js";
 import { getPinnedCompany } from "../lib/deployment.js";
@@ -58,7 +59,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       select: { status: true, role: true, platformId: true, platform: { select: { isActive: true } } },
     });
 
-    if (!live || live.status === "SUSPENDED" || live.status === "EXITED") {
+    if (!live || isBlockedStatus(live.status)) {
       res.status(401).json({ error: "ACCOUNT_INACTIVE" });
       return;
     }

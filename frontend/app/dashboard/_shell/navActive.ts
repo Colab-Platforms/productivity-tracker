@@ -12,8 +12,12 @@ function queryMatches(query: string, search: SearchLike): boolean {
   return true;
 }
 
+// An item that opens a section with several addresses stays lit on all of them (Organization Management: /company, /hierarchy, /projects).
+const SECTIONS: Record<string, string> = { "/dashboard/organization/company": "/dashboard/organization/" };
+
 export function isNavActive(href: string, allHrefs: string[], pathname: string, search: SearchLike): boolean {
   const [path, query] = href.split("?");
+  if (SECTIONS[path] && pathname.startsWith(SECTIONS[path])) return true;
   if (pathname !== path) return false;
   if (query) return queryMatches(query, search);
   return !allHrefs.some((h) => {

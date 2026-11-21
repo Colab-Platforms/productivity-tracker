@@ -1,0 +1,3 @@
+-- Postgres cannot drop an enum value. To roll back, move anyone on the new values to a legacy one first, then leave the values unused:
+--   UPDATE "users" SET "status" = 'EXITED' WHERE "status" IN ('TERMINATED', 'ABSCONDED');
+-- The app falls back to the old behaviour by itself only if the values are absent; unused values are harmless.

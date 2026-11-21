@@ -8,7 +8,7 @@ export function upcomingAnniversaries(people: { id: string; name: string; employ
   const t = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)));
   const out: Anniversary[] = [];
   for (const p of people) {
-    if (p.status === "EXITED" || p.status === "SUSPENDED") continue;
+    if (["EXITED", "SUSPENDED", "TERMINATED", "ABSCONDED"].includes(p.status ?? "")) continue;
     const doj = (p.dateOfJoining ?? "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(doj)) continue;
     const y = Number(doj.slice(0, 4)), m = Number(doj.slice(5, 7)), d = Number(doj.slice(8, 10));

@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import { useMe } from "../layout";
+import HuddleWord from "../_shell/HuddleWord";
 import { Modal } from "../_employees/Modal";
 import { useRealtime } from "@/lib/realtime";
 import { HistoryModal, InviteResponse, JoinControl, ParticipationPanel, PastRecord, type TrackedFields } from "./_participation/Participation";
@@ -111,7 +112,7 @@ function MeetingsInner() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Team Huddle</h1>
+          <h1 className="text-2xl font-semibold text-slate-900"><HuddleWord /></h1>
           <p className="mt-1 text-sm text-slate-500">Meetings and huddles you organize or are invited to: invitations, joining, who attended and for how long.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -295,7 +296,7 @@ function DetailsModal({ id, tz, onClose, onEdit, onChanged }: { id: string; tz: 
           )}
           {m.tracked && !m.isOrganizer && m.state !== "cancelled" && (
             <div>
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Team Huddle</p>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400"><HuddleWord /></p>
               {m.state === "past" && m.me?.state !== "IN_MEETING" ? <PastRecord f={m} tz={tz} /> : <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={() => setRl((n) => n + 1)} />}
             </div>
           )}

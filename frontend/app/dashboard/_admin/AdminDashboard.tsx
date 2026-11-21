@@ -157,7 +157,7 @@ export default function AdminDashboard() {
   const joiners = useGet<{ candidates: { pendingReview: number }[] }>("/onboarding/candidates", reload);
   const d = ov.data;
   // Employee status, events and anniversaries use the same endpoints the Employees, Calendar and Team Huddle pages read.
-  const users = useGet<{ users: { id: string; name: string; employeeCode: string | null; status: string; designation: string | null; teams?: { id: string; name: string }[]; dateOfJoining?: string | null; photoAt?: string | null }[] }>("/admin/users", reload);
+  const users = useGet<{ users: { id: string; name: string; employeeCode: string | null; status: string; designation: string | null; teams?: { id: string; name: string }[]; dateOfJoining?: string | null; photoAt?: string | null }[] }>("/admin/users?employeesOnly=1", reload);
   const calToday = useGet<{ rows: { userId: string; status: string }[] }>(d ? `/attendance-calendar?from=${d.today}&to=${d.today}` : null, reload);
   const holidays = useGet<{ today: string; holidays: { id: string; date: string; name: string }[] }>("/holidays", reload);
   const meetings = useGet<{ timezone: string; meetings: { id: string; title: string; startsAt: string; state: string }[] }>("/meetings?scope=upcoming", reload);
@@ -173,7 +173,7 @@ export default function AdminDashboard() {
     : [];
   const attOf = new Map((calToday.data?.rows ?? []).map((r) => [r.userId, r.status]));
   const attLabel = (id: string) => { const st = attOf.get(id); return st === "PRESENT" || st === "LATE" || st === "HALF_DAY" ? "Present" : st === "LEAVE" || st === "HALF_DAY_LEAVE" ? "On leave" : st === "ABSENT" ? "Absent" : "—"; };
-  const statusRows: StatusRow[] = (users.data?.users ?? []).filter((u) => u.status !== "EXITED").sort((a, b) => a.name.localeCompare(b.name))
+  const statusRows: StatusRow[] = (users.data?.users ?? []).filter((u) => !["EXITED", "TERMINATED", "ABSCONDED"].includes(u.status)).sort((a, b) => a.name.localeCompare(b.name))
     .map((u) => ({ id: u.id, name: u.name, code: u.employeeCode, photoAt: u.photoAt, designation: u.designation, department: (u.teams ?? []).map((t) => t.name).join(", "), status: u.status, attendance: attLabel(u.id) }));
   const anniversaries = todayIso0 ? upcomingAnniversaries((users.data?.users ?? []).map((u) => ({ ...u })), todayIso0) : [];
   const att = d?.attendance.today ?? {};
@@ -195,7 +195,7 @@ export default function AdminDashboard() {
         {/* 7. quick actions */}
         <div className="flex flex-wrap items-center gap-2" aria-label="Quick actions">
           <EmployeeActions onDone={() => setReload((n) => n + 1)} />
-          <Link href="/dashboard/projects" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Add Project</Link>
+          <Link href="/dashboard/organization/projects" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Add Project</Link>
           <Link href="/dashboard/employees" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Manage Employees</Link>
           <Link href="/dashboard/reports" className="flex h-10 items-center rounded-xl border border-indigo-200 bg-[var(--card)] px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50">View Reports</Link>
         </div>
@@ -207,11 +207,12 @@ export default function AdminDashboard() {
       {d && (
         <>
           {/* 1. overview cards */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-            <Stat label="People" value={d.people.total} href="/dashboard/employees?status=ACTIVE,INVITED" hint={`${d.people.byRole.EMPLOYEE ?? 0} employees`} />
-            <Stat label="Managers" value={d.people.byRole.MANAGER ?? 0} href="/dashboard/employees?role=MANAGER&status=ACTIVE,INVITED" />
-            <Stat label="Companies" value={d.people.companies} href="/dashboard/companies" />
-            <Stat label="Projects" value={d.people.projects} href="/dashboard/projects" />
+          {/* As many cards per row as fit at a readable width (never squeezed until the labels are cut off): 8 on a wide screen, 4 or fewer on a laptop. */}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 min-[1800px]:grid-cols-8">
+            <Stat label="People" value={d.people.total} href="/dashboard/employees?status=ACTIVE,INVITED&employeesOnly=1" hint={`${d.people.byRole.EMPLOYEE ?? 0} employees`} />
+            <Stat label="Managers" value={d.people.byRole.MANAGER ?? 0} href="/dashboard/employees?role=MANAGER&status=ACTIVE,INVITED&employeesOnly=1" />
+            <Stat label="Companies" value={d.people.companies} href="/dashboard/organization/company" />
+            <Stat label="Projects" value={d.people.projects} href="/dashboard/organization/projects" />
             <Stat label="Present today" value={present} href="/dashboard/team-attendance" hint={`of ${d.attendance.peopleTracked}`} tone="text-emerald-700" />
             <Stat label="Late today" value={att.LATE ?? 0} href={`/dashboard/attendance-calendar?from=${todayIso}&to=${todayIso}&status=LATE`} />
             <Stat label="On leave today" value={onLeave} href={`/dashboard/attendance-calendar?from=${todayIso}&to=${todayIso}&status=LEAVE`} tone="text-sky-700" />

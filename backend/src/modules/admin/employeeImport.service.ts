@@ -20,6 +20,7 @@
 //     A duplicate is reported, not renumbered.
 // ===========================================================================
 
+import { leftStatuses } from "../../lib/userStatus.js";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import readXlsxFile from "read-excel-file/node";
@@ -141,7 +142,7 @@ export type RowResult = {
 // 1. PARSING
 // ===========================================================================
 
-function parseCsv(text: string): Cell[][] {
+export function parseCsv(text: string): Cell[][] {
   const src = text.replace(/^﻿/, "");
   const first = src.split(/\r?\n/, 1)[0] ?? "";
   const count = (ch: string) => first.split(ch).length - 1;
@@ -187,7 +188,7 @@ function parseCsv(text: string): Cell[][] {
 // text, so a real date becomes YYYY-MM-DD and a time-of-day (Excel stores
 // those on 1899-12-30) becomes HH:MM. UTC parts are used so the viewer's
 // timezone can never move a day.
-function cellToPlain(v: unknown): Cell {
+export function cellToPlain(v: unknown): Cell {
   if (v === null || v === undefined || v === "") return null;
   if (v instanceof Date) {
     if (Number.isNaN(v.getTime())) return null;
@@ -200,7 +201,7 @@ function cellToPlain(v: unknown): Cell {
   return String(v);
 }
 
-const isBlank = (c: Cell) => c === null || (typeof c === "string" && c.trim() === "");
+export const isBlank = (c: Cell) => c === null || (typeof c === "string" && c.trim() === "");
 
 function guessMapping(headers: Cell[]): Mapping {
   const used = new Set<number>();
@@ -1153,7 +1154,7 @@ export async function commitEmployees(viewerId: string, input: CommitInput) {
               phone: p.phone,
               employeeCode: code,
               role: p.role,
-              status: "INVITED",
+              status: "ACTIVE",
               designation: p.designation,
               dateOfJoining: p.dateOfJoining ? new Date(`${p.dateOfJoining}T00:00:00Z`) : null,
               shiftId,
@@ -1246,7 +1247,7 @@ export async function employeeLookups(viewerId: string) {
     prisma.team.findMany({ where: { ...scope, isActive: true }, select: { id: true, name: true, platformId: true }, orderBy: { name: "asc" } }),
     prisma.shift.findMany({ where: { ...scope, isActive: true }, select: { id: true, name: true, platformId: true, startTime: true, endTime: true, workingDays: true }, orderBy: { name: "asc" } }),
     prisma.user.findMany({
-      where: { ...scope, status: { not: "EXITED" } },
+      where: { ...scope, status: { notIn: await leftStatuses() } },
       select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, platformId: true, designation: true },
       orderBy: { firstName: "asc" },
     }),
@@ -1256,7 +1257,7 @@ export async function employeeLookups(viewerId: string) {
     // scoped to one company - several managers run teams across more than
     // one. Same rule as getAdminOptions, so the two lists cannot drift.
     prisma.user.findMany({
-      where: { role: { in: ["MANAGER", "ADMIN"] }, status: { not: "EXITED" } },
+      where: { role: { in: ["MANAGER", "ADMIN"] }, status: { notIn: await leftStatuses() } },
       select: {
         id: true, firstName: true, lastName: true, employeeCode: true,
         role: true, platformId: true, designation: true,

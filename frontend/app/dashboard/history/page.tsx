@@ -1,5 +1,6 @@
 "use client";
 
+import HuddleWord from "../_shell/HuddleWord";
 import { pctText, pointsText, type Weighted } from "../_weighted/Weighted";
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch } from "@/lib/api";
@@ -349,7 +350,7 @@ export default function HistoryPage() {
                     Washroom
                   </th>
                   <th className="text-right px-4 py-3 font-medium text-slate-500">
-                    Team Huddle
+                    <HuddleWord />
                   </th>
                   <th className="text-right px-5 py-3 font-medium text-slate-500">
                     Tasks

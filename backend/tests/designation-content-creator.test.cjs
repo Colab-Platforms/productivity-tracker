@@ -50,7 +50,7 @@ const norm = (s) => String(s).toLowerCase().replace(/\s*\/\s*/g, "/").replace(/\
   const lookups = await call("GET", "/admin/employees/lookups", tHR);
   ok("the Add Employee / Import lookups offer it too", (lookups.b.allDesignations ?? []).includes("Content Creator"), lookups.s);
   const listSize = (await call("GET", `/admin/employees/dropdowns?companyId=${A.id}`, tAD)).b.designations.length;
-  ok("exactly one entry was added (31 in total after the 12 unused titles were retired)", listSize === 31, listSize);
+  ok("the list has 32 titles (Content Creator, then Business Advisor added 2026-11-22)", listSize === 32, listSize);
 
   console.log("\n## Edit employee (HR and Admin)");
   const hrEdit = await call("PATCH", `/admin/users/${E1}`, tHR, { designation: "  content   CREATOR " });

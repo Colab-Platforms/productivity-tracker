@@ -9,7 +9,7 @@ import { PROGRESS_CHIP_CLASS, PROGRESS_LABEL } from "../../_progress/progress";
 import { EditTaskModal } from "../../_taskedit/EditTaskModal";
 import { EditButton } from "../../_taskedit/EditButton";
 import { EditedChip } from "../../_taskedit/EditedChip";
-import { WeightedCard, type Weighted } from "../../_weighted/Weighted";
+import { type Weighted } from "../../_weighted/Weighted";
 import { TaskHistoryModal } from "../../_taskedit/TaskHistoryModal";
 import type { EditChoices, EditableTask } from "../../_taskedit/editTypes";
 
@@ -121,7 +121,6 @@ export function RangeTasks({ from, to, choices, latePolicy, reloadKey = 0, onCha
       <p className="text-sm text-slate-500">
         {data.score.done} of {data.score.total} approved tasks done{data.score.percent !== null ? ` · score ${data.score.percent}%` : ""}. Forgot to tick one? Open that day in <a href="/dashboard/history" className="font-medium text-indigo-700 hover:underline">My history</a>.
       </p>
-      {data.weighted && <WeightedCard w={data.weighted} title="Weighted task performance (selected dates)" />}
       {days.map((d) => (
         <section key={d} className="rounded-2xl bg-white p-5 shadow-[var(--shadow-card)]">
           <h2 className="text-sm font-semibold text-slate-900">{dayLabel(d)}</h2>

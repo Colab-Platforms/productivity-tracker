@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { NOT_ADMIN } from "../../lib/tracked.js";
 import { awayOf } from "./activityClass.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { closeStaleBreaks, closeStaleMeetings } from "./tracker.service.js";
@@ -157,7 +158,7 @@ export async function generateAlerts() {
     const nowMinutes = localMinutes(new Date(), platform.timezone);
 
     const sessions = await prisma.workSession.findMany({
-      where: { platformId: platform.id, date: today },
+      where: { platformId: platform.id, date: today, user: NOT_ADMIN },
       include: {
         breaks: true,
         user: {
@@ -253,7 +254,7 @@ export async function generateAlerts() {
     const clockedIn = new Set(sessions.map((s) => s.userId));
 
     const members = await prisma.teamMember.findMany({
-      where: { isActive: true, team: { platformId: platform.id, isActive: true } },
+      where: { isActive: true, team: { platformId: platform.id, isActive: true }, user: NOT_ADMIN },
       include: {
         user: { include: { shift: true } },
         team: { include: { shift: true } },

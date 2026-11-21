@@ -25,12 +25,15 @@ export type ReportingError = "BAD_MANAGER" | "MANAGER_WRONG_ROLE" | "ADMIN_TOP_L
  * Employee -> Manager only; Manager -> Admin only. HR may have a Manager or Admin boss, as before. An Admin reports to NOBODY: the Admins are the
  * top level of the organization, so no boss is accepted for an Admin (clearing one is always fine and never reaches this function).
  */
+// A person who has left (or is suspended, a legacy value) cannot be someone's reporting manager. Plain strings, no database.
+const isGone = (s: string): boolean => ["EXITED", "SUSPENDED", "TERMINATED", "ABSCONDED"].includes(s);
+
 export function reportingError(subject: { id: string; role: string; platformId: string }, boss: ReportingCandidate | null, opts: { anyCompany?: boolean } = {}): ReportingError | null {
   if (!boss) return "BAD_MANAGER";
   if (boss.id === subject.id) return "BAD_MANAGER";
   if (subject.role === "ADMIN") return "ADMIN_TOP_LEVEL";
   if (!opts.anyCompany && boss.platformId !== subject.platformId) return "BAD_MANAGER";
-  if (boss.status === "EXITED" || boss.status === "SUSPENDED") return "BAD_MANAGER";
+  if (isGone(boss.status)) return "BAD_MANAGER";
   const need = requiredBossRole(subject.role);
   if (need) return boss.role === need ? null : "MANAGER_WRONG_ROLE";
   return boss.role === "MANAGER" || boss.role === "ADMIN" ? null : "MANAGER_WRONG_ROLE";
@@ -38,9 +41,9 @@ export function reportingError(subject: { id: string; role: string; platformId: 
 
 /** A person who needs a reporting line but has none that fits (used to list people HR must configure by hand). */
 export function needsManualMapping(subject: { role: string; status: string }, boss: { role: string; status: string } | null): boolean {
-  if (subject.status === "EXITED" || subject.status === "SUSPENDED") return false;
+  if (isGone(subject.status)) return false;
   const need = requiredBossRole(subject.role);
   if (!need) return false;
   if (!boss) return true;
-  return boss.role !== need || boss.status === "EXITED" || boss.status === "SUSPENDED";
+  return boss.role !== need || isGone(boss.status);
 }

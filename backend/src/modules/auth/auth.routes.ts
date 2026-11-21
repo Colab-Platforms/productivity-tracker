@@ -1,6 +1,8 @@
 import { Router } from "express";
 import * as authService from "./auth.service.js";
-import { requireAuth } from "../../middlewares/auth.js";
+import { requireAuth, requireRole } from "../../middlewares/auth.js";
+import { clientIp } from "../../lib/clientIp.js";
+import { evaluate, policyFromEnv } from "../../lib/ipPolicy.js";
 import { prisma } from "../../lib/prisma.js";
 import { photoStamps } from "../photos/photos.service.js";
 import { isOwnerAdmin } from "../../lib/owner.js";
@@ -57,6 +59,22 @@ router.post("/login", async (req, res) => {
 });
 
 // Logout: stamps the end of THIS sign-in in the login history (once). The token itself is dropped by the browser; it is not revoked on the server.
+// ADMIN ONLY: what the server sees for THIS request, to check the network rule on the live server (no secrets: the list itself is not returned).
+router.get("/ip-check", requireAuth, requireRole("ADMIN"), (req, res) => {
+  const p = policyFromEnv();
+  const ip = clientIp(req);
+  const v = evaluate(ip, p);
+  res.json({
+    detectedIp: ip,
+    connectionAddress: req.socket?.remoteAddress ?? null,
+    forwardedForHeader: typeof req.headers["x-forwarded-for"] === "string" ? req.headers["x-forwarded-for"].slice(0, 200) : null,
+    mode: p.mode,
+    allowedEntries: p.rules.length,
+    problem: p.problem,
+    thisRequestAllowed: v.allowed,
+  });
+});
+
 router.post("/logout", requireAuth, async (req, res) => {
   const sid = req.user!.sid;
   if (sid) await markLogout(sid, req.user!.userId);

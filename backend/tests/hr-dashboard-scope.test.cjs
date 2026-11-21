@@ -82,7 +82,7 @@ const PW = "Hds@12345678";
     ok("the live board lists active people of both companies", people.filter((p) => p.status === "ACTIVE").every((p) => liveIds.has(p.id)), [...liveIds].length);
     const att = await call("GET", "/team-attendance/live", HRALL.tok);
     ok("the Attendance board (same scope) lists both companies too", (att.b.rows ?? []).some((r) => people.find((x) => x.id === r.userId)?.p === B) && (att.b.rows ?? []).some((r) => people.find((x) => x.id === r.userId)?.p === A), (att.b.rows ?? []).length);
-    ok("...and its x-of-y counts exclude exited/suspended people", att.b.scope.orgTotal === (await dbCount(`status not in ('EXITED','SUSPENDED')`)), att.b.scope);
+    ok("...and its x-of-y counts exclude exited/suspended people", att.b.scope.orgTotal === (await dbCount(`status in ('ACTIVE','INVITED') and role <> 'ADMIN'`)) /* Admins are not on the board (2026-11-21) */, att.b.scope);
     const attCo = await call("GET", `/team-attendance/live?company=${B}`, HRALL.tok);
     ok("the Attendance board's company filter narrows to that company", attCo.b.rows.length > 0 && attCo.b.rows.every((r) => people.find((x) => x.id === r.userId)?.p === B || !people.find((x) => x.id === r.userId)), attCo.b.rows.length);
     const own = await call("GET", "/team-attendance/live", HROWN.tok);

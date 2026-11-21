@@ -90,6 +90,20 @@ router.get("/productivity/tasks", async (req, res) => {
   }
 });
 
+// One person's tasks for the drill-down (same people, range and filters as /productivity).
+router.get("/productivity/person", async (req, res) => {
+  try {
+    const userId = text(req.query.userId, 40);
+    if (!userId || !goodIds(userId)) {
+      res.status(400).json({ error: "One of the values sent is not valid." });
+      return;
+    }
+    res.json(await productivity.getPersonTasks(req.user!.userId, { userId, from: text(req.query.from, 10), to: text(req.query.to, 10), filters: parseFilters(req.query as Record<string, unknown>) }));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 router.get("/productivity/hourly", async (req, res) => {
   try {
     const userId = text(req.query.userId, 40);
@@ -107,7 +121,12 @@ router.get("/productivity/hourly", async (req, res) => {
 // --- Daily targets: HR/Admin only --------------------------------------------------------------
 router.get("/targets", requireRole("HR", "ADMIN"), async (req, res) => {
   try {
-    res.json(await productivity.listTargets(req.user!.userId));
+    const companyId = text(req.query.companyId, 40);
+    if (companyId && !UUID.test(companyId)) {
+      res.status(400).json({ error: "One of the values sent is not valid." });
+      return;
+    }
+    res.json(await productivity.listTargets(req.user!.userId, companyId));
   } catch (error) {
     fail(res, error);
   }
@@ -120,7 +139,12 @@ router.post("/targets", requireRole("HR", "ADMIN"), async (req, res) => {
       res.status(400).json({ error: "One of the values sent is not valid." });
       return;
     }
-    res.json(await productivity.setTarget(req.user!.userId, { scope: req.body?.scope, id, tasksPerDay: req.body?.tasksPerDay }));
+    const companyId = typeof req.body?.companyId === "string" && req.body.companyId ? req.body.companyId : undefined;
+    if (companyId && !UUID.test(companyId)) {
+      res.status(400).json({ error: "One of the values sent is not valid." });
+      return;
+    }
+    res.json(await productivity.setTarget(req.user!.userId, { scope: req.body?.scope, id, tasksPerDay: req.body?.tasksPerDay, companyId }));
   } catch (error) {
     fail(res, error);
   }

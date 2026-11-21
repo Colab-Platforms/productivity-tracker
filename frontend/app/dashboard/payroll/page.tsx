@@ -65,6 +65,17 @@ type Row = {
   } | null;
 };
 
+// The clickable payroll counts. One predicate per chip decides both its number and the rows shown, so they always agree.
+const PAY_CHIPS: { key: string; label: string; test: (r: Row) => boolean; tone?: string }[] = [
+  { key: "", label: "All employees", test: () => true },
+  { key: "ready", label: "Ready for payroll", test: (r) => r.payroll.ready },
+  { key: "setup", label: "Need payroll setup (salary missing)", test: (r) => !r.payroll.ready, tone: "amber" },
+  { key: "notUploaded", label: "Ready, no payslip yet", test: (r) => r.payroll.ready && !r.slip },
+  { key: "uploaded", label: "Uploaded", test: (r) => !!r.slip },
+  { key: "unreleased", label: "Uploaded, not released", test: (r) => !!r.slip && !r.slip.publishedAt },
+  { key: "released", label: "Released", test: (r) => !!r.slip?.publishedAt },
+];
+
 type Payload = {
   month: number;
   year: number;
@@ -99,6 +110,7 @@ export default function PayrollPage() {
   const [net, setNet] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [company, setCompany] = useState(""); // "" = every company I can run payroll for
+  const [payChip, setPayChip] = useState(""); // the clicked count ("" = everyone)
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
 
@@ -205,20 +217,22 @@ export default function PayrollPage() {
     }
   }
 
-  const allowed = ["HR", "ADMIN"].includes(me?.role ?? "");
+  const allowed = me?.role === "HR"; // payroll management is HR only
 
   if (me && !allowed) {
     return (
       <div>
         <div className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-8 text-center text-sm text-slate-600">
-          Payroll is limited to HR and administrators.
+          Payroll is limited to HR.
         </div>
       </div>
     );
   }
 
   const pending = data ? data.uploaded - data.published : 0;
-  const shownRows = (data?.rows ?? []).filter((r) => !company || r.companyId === company);
+  const companyRows = (data?.rows ?? []).filter((r) => !company || r.companyId === company);
+  const chip = PAY_CHIPS.find((x) => x.key === payChip) ?? PAY_CHIPS[0];
+  const shownRows = companyRows.filter(chip.test);
   const multi = (data?.companies.length ?? 0) > 1;
 
   return (
@@ -271,16 +285,19 @@ export default function PayrollPage() {
         <div className="flex flex-wrap items-center gap-4 rounded-2xl bg-white shadow-[var(--shadow-card)] px-5 py-4">
           <p className="text-sm text-slate-700">
             <span className="font-medium">{data.label}</span>
-            <span className="ml-3 text-slate-500">
-              {data.employees} employee{data.employees === 1 ? "" : "s"} · {data.eligible} ready for payroll ·{" "}
-              {data.uploaded} uploaded · {data.published} released
-            </span>
-            {data.setupRequired > 0 && (
-              <span className="ml-3 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700" data-testid="setup-required-count">
-                {data.setupRequired} need payroll setup
-              </span>
-            )}
           </p>
+          <span className="sr-only" data-testid="setup-required-count">{data.setupRequired} need payroll setup</span>
+          <div role="group" aria-label="Show employees by payroll status" data-testid="pay-chips" className="flex w-full flex-wrap gap-1.5">
+            {PAY_CHIPS.map((x) => {
+              const on = payChip === x.key;
+              const n = companyRows.filter(x.test).length;
+              return (
+                <button key={x.key || "all"} type="button" data-testid={`pay-${x.key || "all"}`} aria-pressed={on} onClick={() => setPayChip(on ? "" : x.key)} title={`Show ${x.label.toLowerCase()}`} className={`h-8 rounded-full border px-3 text-xs font-medium ${on ? "border-indigo-600 bg-indigo-600 text-white" : x.tone === "amber" && n > 0 ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100" : "border-indigo-100 bg-white text-slate-600 hover:bg-[var(--brand-50)]"}`}>
+                  {x.label}<span className={`ml-1.5 tabular-nums ${on ? "text-white/80" : "text-slate-400"}`}>{n}</span>
+                </button>
+              );
+            })}
+          </div>
 
           {multi && (
             <select

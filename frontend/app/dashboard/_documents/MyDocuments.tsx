@@ -63,6 +63,10 @@ export function MyDocuments() {
   const picker = useRef<HTMLInputElement>(null);
   const [uploadFor, setUploadFor] = useState<string | null>(null);
   const mine = useApi<Mine>("/documents/mine", reload);
+  // The document types this person can upload themselves (a verified one is final, so it is not offered).
+  const uploadable = (mine.data?.items ?? []).filter((i) => i.uploadedByEmployee && i.status !== "VERIFIED");
+  const [pick, setPick] = useState("");
+  const target = uploadable.find((i) => i.requirementId === pick)?.requirementId ?? uploadable[0]?.requirementId ?? "";
 
   async function upload(file: File | undefined) {
     const id = uploadFor;
@@ -73,7 +77,7 @@ export function MyDocuments() {
     setNotice("");
     try {
       await apiPost("/onboarding/me/documents", { requirementId: id, fileName: file.name, data: await readFile(file), mimeType: file.type });
-      setNotice("Uploaded. HR will review it.");
+      setNotice("Uploaded. It is now Pending Verification: HR will review it.");
       setReload((n) => n + 1);
     } catch (e) {
       setError((e as Error).message);
@@ -97,8 +101,19 @@ export function MyDocuments() {
       {!mine.data && !mine.error && <div className="space-y-2" aria-busy="true">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-14" />)}</div>}
       {mine.data && (
         <>
+          {uploadable.length > 0 && (
+            <div data-testid="upload-bar" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl bg-[#F3F7F6] p-3">
+              <label className="text-sm text-slate-600">Document type
+                <select aria-label="Document type" value={target} onChange={(e) => setPick(e.target.value)} className="mt-1 block h-10 min-w-[14rem] rounded-xl border border-indigo-100 bg-white px-3 text-sm">
+                  {uploadable.map((i) => <option key={i.requirementId} value={i.requirementId}>{i.name}{i.status === "REJECTED" ? " (rejected: upload a corrected one)" : i.status === "SUBMITTED" ? " (pending: replaces it)" : ""}</option>)}
+                </select>
+              </label>
+              <button type="button" disabled={!!busy || !target} onClick={() => { setUploadFor(target); picker.current?.click(); }} className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Upload document</button>
+              <p className="text-xs text-slate-500">PDF, image or Word file, up to 10 MB. HR verifies it after you upload.</p>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2 text-xs">
-            {([["Required", mine.data.summary.required, "bg-indigo-50 text-indigo-700"], ["Verified", mine.data.summary.verified, "bg-emerald-50 text-emerald-700"], ["Waiting for HR", mine.data.summary.submitted, "bg-amber-50 text-amber-700"], ["Rejected", mine.data.summary.rejected, "bg-red-50 text-red-600"], ["Not submitted", mine.data.summary.missing, "bg-slate-100 text-slate-600"]] as const).map(([l, n, c]) => (
+            {([["Required", mine.data.summary.required, "bg-indigo-50 text-indigo-700"], ["Verified", mine.data.summary.verified, "bg-emerald-50 text-emerald-700"], ["Pending verification", mine.data.summary.submitted, "bg-amber-50 text-amber-700"], ["Rejected", mine.data.summary.rejected, "bg-red-50 text-red-600"], ["Not submitted", mine.data.summary.missing, "bg-slate-100 text-slate-600"]] as const).map(([l, n, c]) => (
               <span key={l} className={`rounded-full px-3 py-1 font-medium ${c}`}>{l} {n}</span>
             ))}
           </div>
@@ -117,12 +132,12 @@ export function MyDocuments() {
                   {i.status === "VERIFIED" && i.reviewedBy && <p className="mt-0.5 text-xs text-emerald-700">Verified by {i.reviewedBy}{i.reviewedAt ? ` on ${date(i.reviewedAt)}` : ""}</p>}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Chip s={i.status} label={i.status === "SUBMITTED" ? "Waiting for HR" : i.statusLabel} />
+                  <Chip s={i.status} label={i.status === "SUBMITTED" ? "Pending verification" : i.statusLabel} />
                   {i.documentId && i.fileName && <button onClick={() => viewFile(i.documentId as string).catch((e: Error) => setError(e.message))} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">View</button>}
                   {i.uploadedByEmployee ? (
                     i.status !== "VERIFIED" && (
                       <button disabled={busy === "up" + i.requirementId} onClick={() => { setUploadFor(i.requirementId); picker.current?.click(); }} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
-                        {i.status === "NOT_SUBMITTED" ? "Upload" : "Replace"}
+                        {i.status === "NOT_SUBMITTED" ? "Upload" : i.status === "REJECTED" ? "Upload corrected document" : "Replace"}
                       </button>
                     )
                   ) : (

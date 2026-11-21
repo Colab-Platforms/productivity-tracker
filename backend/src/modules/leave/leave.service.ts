@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { leftStatuses } from "../../lib/userStatus.js";
 import { narrowIds } from "../hr-filters/hrFilters.service.js";
 import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
@@ -66,7 +67,7 @@ const isoWeekday = (d: Date) => d.getUTCDay() || 7; // Mon=1 ... Sun=7
 // days, minus the company's holidays.
 async function workingDates(platformId: string, workingDays: number[], from: Date, to: Date) {
   const holidays = await prisma.holiday.findMany({
-    where: { platformId, date: { gte: from, lte: to }, dayType: { not: "WORKING" } },
+    where: { platformId, date: { gte: from, lte: to }, dayType: { in: ["PUBLIC_HOLIDAY", "WEEKLY_OFF"] } }, // an OPTIONAL holiday is a normal working day (same rule as attendance and reports)
     select: { date: true },
   });
   const off = new Set(holidays.map((h) => iso(h.date)));
@@ -395,7 +396,7 @@ export async function awayList(userId: string, fromParam?: unknown, toParam?: un
   const to = toParam ? parseIsoDay(toParam) : new Date(today.getTime() + 30 * DAY_MS);
   if (to.getTime() < from.getTime() || (to.getTime() - from.getTime()) / DAY_MS > 93) throw new Error("BAD_RANGE");
   const rows = await prisma.leaveDay.findMany({
-    where: { platformId: me.platformId, date: { gte: from, lte: to }, user: { status: { not: "EXITED" } } },
+    where: { platformId: me.platformId, date: { gte: from, lte: to }, user: { status: { notIn: await leftStatuses() } } },
     orderBy: [{ date: "asc" }],
     select: { date: true, leaveType: true, isHalfDay: true, user: { select: { id: true, firstName: true, lastName: true, employeeCode: true } } },
     take: 1000,
@@ -465,7 +466,7 @@ export async function listRequests(viewerId: string, status?: unknown, f: LeaveL
   const wanted = (["PENDING", "ON_HOLD", "APPROVED", "REJECTED", "CANCELLED"] as const).find((s) => s === status && (holdOn || s !== "ON_HOLD"));
   // The HR filters (company, project, reporting manager, name/ID search) narrow the PEOPLE the viewer may see; leave type, date range and
   // approval stage narrow their requests. All of it only narrows what the viewer's company access already allows.
-  const everyone = await prisma.user.findMany({ where: { ...scopeOf(v), status: { not: "EXITED" } }, select: { id: true } });
+  const everyone = await prisma.user.findMany({ where: { ...scopeOf(v), status: { notIn: await leftStatuses() } }, select: { id: true } });
   const narrowed = await narrowIds(everyone.map((u) => u.id), f.hr);
   const type = (["CASUAL", "SICK", "EARNED", "UNPAID", "PLANNED", "COMP_OFF", "OTHER"] as const).find((t) => t === f.leaveType);
   const from = f.from ? parseIsoDay(f.from) : null;
@@ -473,14 +474,20 @@ export async function listRequests(viewerId: string, status?: unknown, f: LeaveL
   if (from && to && to.getTime() < from.getTime()) throw new Error("BAD_RANGE");
   const stage = STAGES.find((x) => x === f.stage) ?? null;
   const filtering = narrowed.scope.filteredTotal !== narrowed.scope.orgTotal;
+  // Same conditions for the list and for the clickable status counts (the counts leave the status itself out), so a chip's number is the list it opens.
+  const baseWhere = {
+    ...scopeOf(v),
+    ...(filtering ? { userId: { in: narrowed.ids } } : {}),
+    ...(type ? { leaveType: type } : {}),
+    ...(from ? { toDate: { gte: from } } : {}),
+    ...(to ? { fromDate: { lte: to } } : {}),
+  };
+  const byStatus = await prisma.leaveRequest.groupBy({ by: ["status"], where: baseWhere, _count: { _all: true } });
+  const statusCounts = Object.fromEntries((["PENDING", "ON_HOLD", "APPROVED", "REJECTED", "CANCELLED"] as const).filter((s) => holdOn || s !== "ON_HOLD").map((s) => [s, byStatus.find((x) => String(x.status) === s)?._count._all ?? 0]));
   const found = await prisma.leaveRequest.findMany({
     where: {
-      ...scopeOf(v),
+      ...baseWhere,
       ...(wanted ? { status: wanted } : {}),
-      ...(filtering ? { userId: { in: narrowed.ids } } : {}),
-      ...(type ? { leaveType: type } : {}),
-      ...(from ? { toDate: { gte: from } } : {}),
-      ...(to ? { fromDate: { lte: to } } : {}),
     },
     orderBy: [{ createdAt: "desc" }],
     take: 300,
@@ -499,6 +506,10 @@ export async function listRequests(viewerId: string, status?: unknown, f: LeaveL
     year,
     scope: narrowed.scope,
     requestCount: rows.length,
+    // counts per status for the same filters (without the stage filter, which is worked out per request); total = every request matching them
+    statusCounts,
+    totalCount: Object.values(statusCounts).reduce((n, x) => n + x, 0),
+    capped: found.length >= 300,
     requests: rows.map((r) => ({
       ...requestView(r),
       managerStep: steps.get(r.id) ?? null,
@@ -733,16 +744,20 @@ async function managerOnly(managerId: string) {
 }
 
 // Requests waiting for this manager, and the ones they answered recently.
+// WHO SEES WHAT: the approval row (request_approvals.approverIds / decidedById) is the ONLY authority for the manager queue. The request's company is
+// deliberately NOT compared with the manager's: a reporting line may cross companies (an Admin sets it on purpose, e.g. Faizan of Colab Esports
+// manages Take Health people), and filtering on the manager's own company silently dropped those requests while the badge still counted them.
 export async function managerRequests(managerId: string) {
   const m = await managerOnly(managerId);
   const rows = await rowsForManager("LEAVE", managerId);
   const ids = [...new Set(rows.map((r) => r.requestId))];
   const reqs = ids.length
-    ? await prisma.leaveRequest.findMany({ where: { id: { in: ids }, ...(m.role === "ADMIN" ? {} : { platformId: m.platformId }) }, include: { user: { select: personSelect }, decidedBy: deciderSelect } })
+    ? await prisma.leaveRequest.findMany({ where: { id: { in: ids } }, include: { user: { select: personSelect }, decidedBy: deciderSelect } })
     : [];
   const byId = new Map(reqs.map((r) => [r.id, r]));
   const year = platformToday(m.timezone).getUTCFullYear();
-  const taken = await takenByUser(m.platformId, year, [...new Set(reqs.map((r) => r.userId))]);
+  // leave taken is counted per PERSON (a person may belong to another company than the manager), so no company filter here
+  const taken = await takenByUser(undefined, year, [...new Set(reqs.map((r) => r.userId))]);
   const [steps, extra] = await Promise.all([stepViews("LEAVE", ids), decorate(reqs)]);
   const view = (id: string) => {
     const r = byId.get(id);
@@ -848,7 +863,7 @@ export async function managerDecide(managerId: string, requestId: string, decisi
 export async function leaveSummary(viewerId: string, yearParam?: unknown, hr?: HrFilters) {
   const v = await decider(viewerId);
   const year = parseYear(yearParam, v.timezone);
-  const everyone = await prisma.user.findMany({ where: { ...scopeOf(v), status: { not: "EXITED" } }, select: { id: true } });
+  const everyone = await prisma.user.findMany({ where: { ...scopeOf(v), status: { notIn: await leftStatuses() } }, select: { id: true } });
   const narrowed = await narrowIds(everyone.map((u) => u.id), hr);
   const [people, taken, pending] = await Promise.all([
     prisma.user.findMany({

@@ -109,7 +109,7 @@ async function viewer(userId: string) {
   return { id: u.id, role, tz: u.platform.timezone, scope, admin };
 }
 
-export type Filters = { q?: unknown; from?: unknown; to?: unknown; ip?: unknown; location?: unknown; device?: unknown; status?: unknown; companyId?: unknown; page?: unknown; pageSize?: unknown };
+export type Filters = { q?: unknown; from?: unknown; to?: unknown; ip?: unknown; location?: unknown; device?: unknown; status?: unknown; companyId?: unknown; page?: unknown; pageSize?: unknown; within?: unknown };
 
 function dayBounds(from: unknown, to: unknown, tz: string) {
   const out: { gte?: Date; lt?: Date } = {};
@@ -151,10 +151,12 @@ export async function list(userId: string, f: Filters) {
   if (company) and.push({ platformId: company });
   const when = dayBounds(f.from, f.to, v.tz);
   if (when.gte || when.lt) and.push({ createdAt: when });
+  // The "last 24 hours" cards: one moment for the cards and for the list they open (?within=24h), so a card's number equals the list's total in the same answer.
+  const since = new Date(Date.now() - 86_400_000);
+  if (f.within === "24h") and.push({ createdAt: { gte: since } });
   const where = { AND: and };
 
   const page = pageOf(f.page), pageSize = sizeOf(f.pageSize);
-  const since = new Date(Date.now() - 86_400_000);
   const [total, rows, last24] = await Promise.all([
     prisma.loginEvent.count({ where }),
     prisma.loginEvent.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * pageSize, take: pageSize }),
