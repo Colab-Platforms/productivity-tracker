@@ -239,6 +239,8 @@ type NavItem = {
   notRoles?: string[];
   // A live count shown beside the label (HR: requests waiting for a decision).
   badge?: "queries" | "chat";
+  // Shown only to the one person the server says may use CRM Reports (GET /crm-reports/access). Not a role rule.
+  crmOnly?: boolean;
   icon: (p: IconProps) => React.ReactElement;
 };
 
@@ -323,6 +325,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     title: "Settings",
     items: [
       // Admin only: organisation-wide controls. HR has none of these.
+      { href: "/dashboard/crm-reports", label: "CRM Reports", ready: true, crmOnly: true, icon: I.reports },
       { href: "/dashboard/audit-logs", label: "Audit Logs", ready: true, roles: ["ADMIN"], icon: I.list },
       { href: "/dashboard/login-activity", label: "Login Activity", ready: true, roles: ["ADMIN", "HR"], icon: I.shield },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
@@ -396,6 +399,7 @@ export default function DashboardLayout({
       }
       return next;
     });
+  const [crmAllowed, setCrmAllowed] = useState(false);
   const [pendingQueries, setPendingQueries] = useState(0);
   const [chatUnread, setChatUnread] = useState(0);
   // The chat drawer (opened from the header icon, the sidebar item, a desktop alert or the old /dashboard/chat address).
@@ -453,6 +457,15 @@ export default function DashboardLayout({
     watch.observe(document.head, { childList: true, characterData: true, subtree: true });
     return () => watch.disconnect();
   }, [pathname, me?.role, me?.supervisor]);
+
+  // CRM Reports: the server decides (one exact user id). Anything but a clear yes keeps the item hidden.
+  const meId = me?.id;
+  useEffect(() => {
+    if (!meId) return;
+    apiGet<{ allowed: boolean }>("/crm-reports/access")
+      .then((r) => setCrmAllowed(r.allowed === true))
+      .catch(() => setCrmAllowed(false));
+  }, [meId]);
 
   // Query Desk / Complaint Centre: how many items are waiting for this person (queries to answer, corrections to decide, information asked of them).
   // Refreshed every minute and when the tab is focused.
@@ -582,7 +595,8 @@ export default function DashboardLayout({
         items: g.items.filter(
           (i) =>
             (!i.roles || i.roles.includes(me.role)) &&
-            !(i.notRoles && i.notRoles.includes(me.role))
+            !(i.notRoles && i.notRoles.includes(me.role)) &&
+        (!i.crmOnly || crmAllowed)
         ),
       })).filter((g) => g.items.length > 0);
 
