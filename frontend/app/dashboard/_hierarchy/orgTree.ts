@@ -47,7 +47,7 @@ export function issueOf(p: OrgPerson, byId: Map<string, OrgPerson>): Issue | nul
   if (!p.reportsTo) return { kind: "NO_MANAGER", text: "No reporting manager" };
   const boss = byId.get(p.reportsTo.id);
   if (!boss) return { kind: "BOSS_UNKNOWN", text: `Reports to ${p.reportsTo.name}, who is outside the people you can see` };
-  if (!isLive(boss)) return { kind: "BOSS_INACTIVE", text: `Reports to ${boss.name}, who is ${boss.status === "SUSPENDED" ? "suspended" : "no longer active"}` };
+  if (!isLive(boss)) return { kind: "BOSS_INACTIVE", text: `Reports to ${boss.name}, who is ${boss.status === "SUSPENDED" ? "suspended" : boss.status === "TERMINATED" ? "terminated" : boss.status === "ABSCONDED" ? "absconded" : "no longer active"}` };
   if (boss.role !== need) return { kind: "WRONG_ROLE", text: `Reports to ${boss.name} (${boss.role === "ADMIN" ? "Admin" : boss.role === "MANAGER" ? "Manager" : boss.role === "HR" ? "HR" : "Employee"}); ${p.role === "EMPLOYEE" ? "an employee" : "a Manager"} should report to ${ROLE_WORD[need]}` };
   return null;
 }

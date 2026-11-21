@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { isBlockedStatus } from "../../lib/userStatus.js";
 import { isOwnerAdmin } from "../../lib/owner.js";
 import { isSupervisor } from "../../lib/supervisor.js";
 import jwt from "jsonwebtoken";
@@ -76,7 +77,7 @@ export async function login(identifier: string, password: string, sessionId?: st
   }
   if (!user) throw new Error("INVALID_CREDENTIALS");
 
-  if (user.status === "SUSPENDED" || user.status === "EXITED") {
+  if (isBlockedStatus(user.status)) {
     throw new Error("ACCOUNT_INACTIVE");
   }
 

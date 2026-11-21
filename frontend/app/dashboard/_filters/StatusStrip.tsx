@@ -9,15 +9,16 @@ import { apiGet } from "@/lib/api";
 
 type Counts = { total: number; byStatus: Record<string, number> };
 
-const CHIPS: { value: string; label: string; parts: string[]; sub?: boolean }[] = [
+const CHIPS: { value: string; label: string; parts: string[]; sub?: boolean; legacy?: boolean }[] = [
   { value: "", label: "All", parts: [] },
   { value: "ACTIVE", label: "Active", parts: ["ACTIVE"] },
-  { value: "SUSPENDED,EXITED", label: "Inactive", parts: ["SUSPENDED", "EXITED"] },
-  { value: "SUSPENDED", label: "Suspended", parts: ["SUSPENDED"], sub: true },
-  { value: "EXITED", label: "Exited", parts: ["EXITED"], sub: true },
-  { value: "INVITED,CANDIDATE", label: "Not started yet", parts: ["INVITED", "CANDIDATE"] },
-  { value: "INVITED", label: "Invited", parts: ["INVITED"], sub: true },
-  { value: "CANDIDATE", label: "Candidates", parts: ["CANDIDATE"], sub: true },
+  { value: "EXITED", label: "Exited", parts: ["EXITED"] },
+  { value: "TERMINATED", label: "Terminated", parts: ["TERMINATED"] },
+  { value: "ABSCONDED", label: "Absconded", parts: ["ABSCONDED"] },
+  // Older statuses: no longer assignable, shown only while somebody still holds one.
+  { value: "SUSPENDED", label: "Suspended (older)", parts: ["SUSPENDED"], sub: true, legacy: true },
+  { value: "INVITED", label: "Invited (older)", parts: ["INVITED"], sub: true, legacy: true },
+  { value: "CANDIDATE", label: "Candidates (older)", parts: ["CANDIDATE"], sub: true, legacy: true },
 ];
 
 /** `query` = the list's own query string WITHOUT the status; `refresh` changes whenever the list reloads, so the counts follow adds and edits. */
@@ -36,6 +37,7 @@ export default function StatusStrip({ query, status, onPick, refresh }: { query:
       {CHIPS.map((c) => {
         const on = status === c.value;
         const n = of(c.parts);
+        if (c.legacy && !on && !n) return null; // an older status nobody holds any more is not offered
         return (
           <button
             key={c.value || "all"}

@@ -1,8 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { AdminScreen } from "../employees/AdminScreen";
-
-// System Settings: Shifts and Thresholds (Admin only). The same tab components User Management uses.
-export default function SystemSettingsPage() {
-  return <AdminScreen mode="settings" />;
+// Old address kept: System Settings was removed from the menu. Its Shifts and Thresholds tabs live in User Management.
+export default function OldSystemSettingsRoute() {
+  redirect("/dashboard/employees?tab=Shifts");
 }

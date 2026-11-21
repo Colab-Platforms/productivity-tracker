@@ -22,6 +22,7 @@
 // (`@socket.io/redis-adapter`) so events reach sockets connected to another instance.
 // ===========================================================================
 
+import { isBlockedStatus } from "../lib/userStatus.js";
 import type { Server as HttpServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { Server, type Socket } from "socket.io";
@@ -59,7 +60,7 @@ export const roomOf = (personId: string) => `person:${personId}`;
 // A room only the person themselves is in (joined by the server, never by the client). Notification signals go
 // here and nowhere else, so a manager who can see an employee's tasks does NOT learn that the employee got a notification.
 import { currentPolicy, recordBlockedSession } from "./securityLog.js";
-import { evaluate, ipBehindProxy } from "./ipPolicy.js";
+import { clientFromChain, evaluate, trustedProxyCheck } from "./ipPolicy.js";
 
 export const inboxRoom = (userId: string) => `inbox:${userId}`;
 
@@ -72,7 +73,7 @@ async function defaultAuthenticate(token: string): Promise<SocketUser | null> {
       where: { id: String(payload.userId) },
       select: { status: true, role: true, platformId: true, platform: { select: { isActive: true } } },
     });
-    if (!live || live.status === "SUSPENDED" || live.status === "EXITED") return null;
+    if (!live || isBlockedStatus(live.status)) return null;
     if (live.platform && !live.platform.isActive) return null;
     const pinned = await getPinnedCompany();
     if (pinned && live.platformId !== pinned.id) return null;
@@ -110,7 +111,7 @@ export function startRealtime(httpServer: HttpServer, deps: RealtimeDeps): Serve
     // Network access policy: the same rule as every other request, with the address worked out by the same hop rule Express uses.
     const policy = currentPolicy();
     if (policy.mode !== "off") {
-      const ip = ipBehindProxy(String(socket.handshake.headers["x-forwarded-for"] ?? ""), socket.handshake.address, Number(process.env.TRUST_PROXY_HOPS ?? 1));
+      const ip = clientFromChain(socket.request?.socket?.remoteAddress ?? socket.handshake.address, String(socket.handshake.headers["x-forwarded-for"] ?? ""), trustedProxyCheck());
       const verdict = evaluate(ip, policy);
       if (!verdict.allowed) {
         void recordBlockedSession(ip, verdict, { userId: user.userId, platformId: user.platformId }, { method: "GET", path: "/socket.io" });

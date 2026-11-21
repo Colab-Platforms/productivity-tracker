@@ -26,29 +26,31 @@ export type OverviewPerson = {
  * What the list shows. ACTIVE = working now. INACTIVE = suspended or exited. NOT_STARTED = invited or candidate (account made, not started yet).
  * The four single statuses (SUSPENDED, EXITED, INVITED, CANDIDATE) are the parts of those two groups, so an Admin can tell them apart. Never merged or renamed.
  */
-export type StatusView = "ACTIVE" | "INACTIVE" | "NOT_STARTED" | "SUSPENDED" | "EXITED" | "INVITED" | "CANDIDATE" | "ALL";
-export const STATUS_VIEWS: StatusView[] = ["ALL", "ACTIVE", "INACTIVE", "NOT_STARTED", "SUSPENDED", "EXITED", "INVITED", "CANDIDATE"];
-export const STATUS_VIEW_LABEL: Record<StatusView, string> = { ALL: "All employees", ACTIVE: "Active", INACTIVE: "Inactive (suspended + exited)", NOT_STARTED: "Not started yet (invited + candidates)", SUSPENDED: "Suspended", EXITED: "Exited", INVITED: "Invited", CANDIDATE: "Candidates" };
+export type StatusView = "ACTIVE" | "INACTIVE" | "NOT_STARTED" | "SUSPENDED" | "EXITED" | "TERMINATED" | "ABSCONDED" | "INVITED" | "CANDIDATE" | "ALL";
+export const STATUS_VIEWS: StatusView[] = ["ALL", "ACTIVE", "INACTIVE", "NOT_STARTED", "EXITED", "TERMINATED", "ABSCONDED", "SUSPENDED", "INVITED", "CANDIDATE"];
+export const STATUS_VIEW_LABEL: Record<StatusView, string> = { ALL: "All employees", ACTIVE: "Active", INACTIVE: "Inactive (exited, terminated, absconded and older suspended)", TERMINATED: "Terminated", ABSCONDED: "Absconded", NOT_STARTED: "Not started yet (invited + candidates)", SUSPENDED: "Suspended", EXITED: "Exited", INVITED: "Invited", CANDIDATE: "Candidates" };
 /** Reads ?show= from the address; anything unknown is ignored (null). Case does not matter. */
 export function parseStatusView(v: string | null | undefined): StatusView | null {
   const u = String(v ?? "").trim().toUpperCase().replace(/-/g, "_");
   return (STATUS_VIEWS as string[]).includes(u) ? (u as StatusView) : null;
 }
 
-const INACTIVE_STATUSES = ["SUSPENDED", "EXITED"];
+const INACTIVE_STATUSES = ["SUSPENDED", "EXITED", "TERMINATED", "ABSCONDED"];
 const NOT_STARTED_STATUSES = ["INVITED", "CANDIDATE"];
 
-export type StatusCounts = { total: number; active: number; inactive: number; notStarted: number; suspended: number; exited: number; invited: number; candidate: number };
+export type StatusCounts = { total: number; active: number; inactive: number; notStarted: number; suspended: number; exited: number; terminated: number; absconded: number; invited: number; candidate: number };
 
 /** Total is every record in view; Active + Inactive + Not started always add up to it. */
 export function statusCounts(people: OverviewPerson[]): StatusCounts {
-  const c: StatusCounts = { total: people.length, active: 0, inactive: 0, notStarted: 0, suspended: 0, exited: 0, invited: 0, candidate: 0 };
+  const c: StatusCounts = { total: people.length, active: 0, inactive: 0, notStarted: 0, suspended: 0, exited: 0, terminated: 0, absconded: 0, invited: 0, candidate: 0 };
   for (const p of people) {
     if (p.status === "ACTIVE") c.active += 1;
     else if (INACTIVE_STATUSES.includes(p.status)) c.inactive += 1;
     else if (NOT_STARTED_STATUSES.includes(p.status)) c.notStarted += 1;
     if (p.status === "SUSPENDED") c.suspended += 1;
     if (p.status === "EXITED") c.exited += 1;
+    if (p.status === "TERMINATED") c.terminated += 1;
+    if (p.status === "ABSCONDED") c.absconded += 1;
     if (p.status === "INVITED") c.invited += 1;
     if (p.status === "CANDIDATE") c.candidate += 1;
   }
@@ -71,6 +73,8 @@ export function viewCount(c: StatusCounts, view: StatusView): number {
     case "NOT_STARTED": return c.notStarted;
     case "SUSPENDED": return c.suspended;
     case "EXITED": return c.exited;
+    case "TERMINATED": return c.terminated;
+    case "ABSCONDED": return c.absconded;
     case "INVITED": return c.invited;
     case "CANDIDATE": return c.candidate;
   }

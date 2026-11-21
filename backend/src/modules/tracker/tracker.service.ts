@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { NOT_ADMIN, withoutAdmins } from "../../lib/tracked.js";
 import { weightOf, weightedPerformance } from "../tasks/tasks.weighted.js";
 import { linkedReportIds } from "../../lib/reportingLinks.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
@@ -165,6 +166,8 @@ export async function getActiveSession(userId: string) {
 
 export async function clockIn(userId: string, teamId?: string | null, lateRemark?: unknown) {
   const ctx = await getContext(userId);
+  // Admins are not tracked: no attendance or productivity is recorded for them (lib/tracked.ts).
+  if (String(ctx.user.role) === "ADMIN") throw new Error("ADMIN_NOT_TRACKED");
 
   // The project is optional, but if given it must be one of THIS person's own teams.
   let projectId: string | null = null;
@@ -716,7 +719,7 @@ export async function visibleUserIds(viewer: {
   // pinned to one company allows only that one). Seeing is not deciding: approvals keep their own rules.
   if (viewer.role === "HR" || viewer.role === "ADMIN") {
     const rows = await prisma.user.findMany({
-      where: { ...scopeWhere(await accessFor(viewer.id)), status: { in: ["ACTIVE", "INVITED"] } },
+      where: { ...scopeWhere(await accessFor(viewer.id)), status: { in: ["ACTIVE", "INVITED"] }, ...NOT_ADMIN },
       select: { id: true },
     });
     return rows.map((u) => u.id);
@@ -726,6 +729,7 @@ export async function visibleUserIds(viewer: {
       where: {
         platformId: viewer.platformId,
         status: { in: ["ACTIVE", "INVITED"] },
+        ...NOT_ADMIN,
       },
       select: { id: true },
     });
@@ -744,13 +748,15 @@ export async function visibleUserIds(viewer: {
     linkedReportIds(viewer.id), // people who have this person as an ADDITIONAL reporting manager
   ]);
 
-  return onlyPinnedCompany(
-    Array.from(
-      new Set([
-        ...managedTeams.flatMap((t) => t.members.map((m) => m.userId)),
-        ...reports.map((r) => r.id),
-        ...linked,
-      ])
+  return withoutAdmins(
+    await onlyPinnedCompany(
+      Array.from(
+        new Set([
+          ...managedTeams.flatMap((t) => t.members.map((m) => m.userId)),
+          ...reports.map((r) => r.id),
+          ...linked,
+        ])
+      )
     )
   );
 }

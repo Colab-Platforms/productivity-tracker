@@ -6,6 +6,7 @@ import { auditNote, changedFields } from "../../lib/auditContext.js";
 import { accessFor, assertCompany, scopeWhere, type Access } from "../../lib/companyAccess.js";
 import { visibleCompanies } from "../../lib/companyAccess.logic.js";
 import { photoStamps } from "../photos/photos.service.js";
+import { ASSIGNABLE_STATUSES, ALL_STATUSES, isLeftStatus, statusReady } from "../../lib/userStatus.js";
 import { sharedDesignations, canonicalDesignation } from "../../lib/designations.js";
 
 // ---------------------------------------------------------------------------
@@ -22,7 +23,7 @@ import { sharedDesignations, canonicalDesignation } from "../../lib/designations
 // ---------------------------------------------------------------------------
 
 const USER_ROLES = ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] as const;
-const USER_STATUSES = ["CANDIDATE", "INVITED", "ACTIVE", "SUSPENDED", "EXITED"] as const;
+// The statuses a person can be GIVEN: Active, Exited, Terminated, Absconded. Candidate / Invited / Suspended are legacy: kept where they already are, never assigned.
 const ONBOARDING_STATUSES = ["OFFER_SENT", "OFFER_ACCEPTED", "DOCUMENTS_PENDING", "DOCUMENTS_SUBMITTED", "AWAITING_RESUME", "ACTIVE"] as const;
 export const EMPLOYMENT_TYPES = ["PERMANENT", "PROBATION", "CONTRACT", "INTERN"] as const;
 const PRIVILEGED = ["HR", "ADMIN"];
@@ -105,7 +106,14 @@ export async function updateEmployee(viewerId: string, userId: string, data: Edi
   const role = USER_ROLES.find((r) => r === data.role);
   if (role && PRIVILEGED.includes(role) && viewerRole !== "ADMIN") throw new Error("ROLE_NOT_ALLOWED");
   if (role && role !== String(current.role) && viewerRole !== "ADMIN") throw new Error("ROLE_NOT_ALLOWED"); // changing a system role is Admin-only
-  const status = USER_STATUSES.find((s) => s === data.status);
+  // Status: only a CHANGE is validated (a legacy value a person already holds stays valid and is never rejected).
+  let status: (typeof ALL_STATUSES)[number] | undefined;
+  if (data.status !== undefined && String(data.status) !== String(current.status)) {
+    const wanted = ASSIGNABLE_STATUSES.find((s) => s === data.status);
+    if (!wanted) throw new Error("STATUS_NOT_ALLOWED");
+    if ((wanted === "TERMINATED" || wanted === "ABSCONDED") && !(await statusReady())) throw new Error("FEATURES_NOT_READY");
+    status = wanted;
+  }
   if (viewerRole !== "ADMIN" && userId === viewer.id && (role || data.status !== undefined || data.trackerAccessEnabled !== undefined)) throw new Error("ROLE_NOT_ALLOWED");
   const onboardingStatus = ONBOARDING_STATUSES.find((s) => s === data.onboardingStatus);
 
@@ -200,7 +208,7 @@ export async function updateEmployee(viewerId: string, userId: string, data: Edi
         ...(data.phone !== undefined ? { phone: data.phone ? String(data.phone).trim() : null } : {}),
         ...(email ? { email } : {}),
         ...(role ? { role } : {}),
-        ...(status ? { status, ...(status === "EXITED" ? { exitDate: new Date() } : {}) } : {}),
+        ...(status ? { status, ...(isLeftStatus(status) ? { exitDate: new Date() } : status === "ACTIVE" && isLeftStatus(String(current.status)) ? { exitDate: null } : {}) } : {}),
         ...(designation !== undefined ? { designation } : {}),
         ...(salary !== undefined ? { monthlySalary: salary } : {}),
         ...(data.shiftId !== undefined ? { shiftId: data.shiftId || null } : {}),
@@ -260,7 +268,7 @@ export async function dropdownsFor(viewerId: string, platformId: string) {
     designations,
     managers: managers.map((m) => ({ id: m.id, name: `${m.firstName} ${m.lastName}`.trim(), employeeCode: m.employeeCode, role: m.role })),
     shifts,
-    statuses: USER_STATUSES.map((s) => s),
+    statuses: ASSIGNABLE_STATUSES.map((s) => s),
     employeeTypes: EMPLOYMENT_TYPES.map((t) => t),
   };
 }

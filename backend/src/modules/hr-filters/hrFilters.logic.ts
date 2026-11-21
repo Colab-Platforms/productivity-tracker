@@ -22,7 +22,7 @@ export type HrFilters = {
 
 export const NO_FILTERS: HrFilters = { companyIds: [], projectIds: [], managerIds: [], departmentIds: [], designation: null, status: null, q: null };
 
-const STATUSES = ["ACTIVE", "INVITED", "SUSPENDED", "EXITED", "CANDIDATE"];
+const STATUSES = ["ACTIVE", "INVITED", "SUSPENDED", "EXITED", "CANDIDATE", "TERMINATED", "ABSCONDED"];
 
 /** A comma-separated (or repeated) list of ids from a query value. Anything that is not a valid id is dropped, never passed to the database. */
 export function idList(v: unknown): string[] {

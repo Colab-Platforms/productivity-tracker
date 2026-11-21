@@ -506,7 +506,7 @@ export async function managerRequests(managerId: string) {
   const ids = [...new Set(rows.map((r) => r.requestId))];
   const reqs = ids.length
     ? await prisma.attendanceCorrectionRequest.findMany({
-        where: { id: { in: ids }, platformId: m.platformId },
+        where: { id: { in: ids } }, // the approval row names who may see it; a reporting line can cross companies
         include: {
           user: { select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true } },
           reviewedBy: { select: { firstName: true, lastName: true } },
@@ -535,7 +535,8 @@ export async function managerDecide(managerId: string, id: string, decision: unk
   const text = String(comment ?? "").trim().slice(0, 500) || null;
   if (decision === "REJECT" && (!text || text.length < 3)) throw new Error("COMMENT_REQUIRED");
 
-  const req = await prisma.attendanceCorrectionRequest.findFirst({ where: { id, platformId: m.platformId } });
+  // the approval row (claimStep below) is the authority: only a person named on the request may answer it, whatever company they belong to
+  const req = await prisma.attendanceCorrectionRequest.findFirst({ where: { id } });
   if (!req) throw new Error("NOT_FOUND");
   if (String(req.status) !== "PENDING") throw new Error("ALREADY_DECIDED");
   await claimStep({ kind: "CORRECTION", requestId: id, managerId, requesterId: req.userId, decision, note: text });

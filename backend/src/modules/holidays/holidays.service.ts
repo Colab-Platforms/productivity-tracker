@@ -17,7 +17,7 @@ import { accessFor } from "../../lib/companyAccess.js";
 const MANAGING_ROLES = ["HR", "ADMIN"];
 export const MAX_BACKDATE_DAYS = 90;
 
-async function viewerContext(viewerId: string) {
+export async function viewerContext(viewerId: string) {
   const user = await prisma.user.findUnique({
     where: { id: viewerId },
     include: { platform: true },
@@ -34,7 +34,7 @@ async function viewerContext(viewerId: string) {
 // their own. You run three companies from one admin login, so scoping Admin
 // to a single platform would make the screen useless to you. If you'd rather
 // HR also covered all three, it's a one-line change here.
-async function allowedPlatforms(ctx: { role: string; platformId: string; userId?: string }) {
+export async function allowedPlatforms(ctx: { role: string; platformId: string; userId?: string }) {
   if (ctx.role === "ADMIN") {
     return prisma.platform.findMany({
       select: { id: true, name: true },
@@ -52,7 +52,7 @@ async function allowedPlatforms(ctx: { role: string; platformId: string; userId?
 
 // YYYY-MM-DD in, UTC midnight out. @db.Date stores UTC midnight, so building
 // the date any other way shifts the holiday by a day in Asia/Kolkata.
-function parseDay(input: unknown): Date {
+export function parseDay(input: unknown): Date {
   const s = String(input ?? "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error("BAD_DATE");
   const [y, m, d] = s.split("-").map(Number);

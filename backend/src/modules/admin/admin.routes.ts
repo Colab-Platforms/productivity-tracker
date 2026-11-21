@@ -86,6 +86,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   MANAGER_CYCLE: { status: 400, message: "That would make two people report to each other." },
   ADMIN_TOP_LEVEL: { status: 400, message: "Admins are at the top level of the organization and do not report to anyone." },
   BAD_EMPLOYMENT_TYPE: { status: 400, message: "Pick a valid employee type." },
+  STATUS_NOT_ALLOWED: { status: 400, message: "Employment status can only be Active, Exited, Terminated or Absconded." },
   FEATURES_NOT_READY: { status: 503, message: "This feature is not set up on this server yet. Ask an administrator to finish the database update." },
   ACCESS_NOT_ALLOWED: { status: 403, message: "Only an Admin or top management can change which companies a person can act on (Admins: HR users only, never the all-companies option), and nobody can change their own." },
   ACCESS_ONLY_HR_ADMIN: { status: 400, message: "Company access can only be given to HR and Admin accounts." },
@@ -297,6 +298,7 @@ router.get("/users/status-counts", async (req, res) => {
     const f = parseFilters(req.query as Record<string, unknown>);
     res.json(
       await admin.userStatusCounts(req.user!.userId, {
+        employeesOnly: req.query.employeesOnly === "1",
         search: req.query.search ? String(req.query.search) : undefined,
         role: req.query.role ? String(req.query.role) : undefined,
         companyId: req.query.companyId ? String(req.query.companyId) : undefined,
@@ -310,12 +312,36 @@ router.get("/users/status-counts", async (req, res) => {
   }
 });
 
+// One page of people for a summary card: server-side filter, search, sort and paging (see admin.userPage).
+router.get("/users/page", async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json(
+      await admin.userPage(
+        req.user!.userId,
+        {
+          employeesOnly: req.query.employeesOnly === "1",
+          role: req.query.role ? String(req.query.role) : undefined,
+          companyId: req.query.companyId ? String(req.query.companyId) : undefined,
+          projectIds: f.projectIds,
+          managerIds: f.managerIds,
+          designation: f.designation ?? undefined,
+        },
+        { view: req.query.view, status: req.query.status, departmentId: req.query.departmentId, search: req.query.search, sort: req.query.sort, dir: req.query.dir, page: req.query.page, pageSize: req.query.pageSize },
+      )
+    );
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
 router.get("/users", async (req, res) => {
   try {
     // project, reporting manager and designation come from the shared HR filters (company, role, status and search keep their own parameters)
     const f = parseFilters(req.query as Record<string, unknown>);
     const [users, orgTotal] = await Promise.all([
       admin.listUsers(req.user!.userId, {
+        employeesOnly: req.query.employeesOnly === "1",
         search: req.query.search ? String(req.query.search) : undefined,
         role: req.query.role ? String(req.query.role) : undefined,
         status: req.query.status ? String(req.query.status) : undefined,
@@ -324,7 +350,7 @@ router.get("/users", async (req, res) => {
         managerIds: f.managerIds,
         designation: f.designation ?? undefined,
       }),
-      admin.peopleScopeCount(req.user!.userId),
+      admin.peopleScopeCount(req.user!.userId, req.query.employeesOnly === "1"),
     ]);
     res.json({ users, scope: { orgTotal, filteredTotal: users.length } });
   } catch (e) {

@@ -89,7 +89,8 @@ const MIGRATION = fs.readFileSync(path.join(__dirname, "..", "prisma", "migratio
   ok("manager, HR and Admin are unaffected (no flag)", [MGR, HR, ADM].every(() => true) && (await call("GET", "/auth/me", MGR.tok)).b.supervisor === false && (await call("GET", "/auth/me", ADM.tok)).b.supervisor === false);
 
   // --- what they SEE ---------------------------------------------------------------------------------------------------
-  const totalActive = Number((await q(`select count(*) n from users where status in ('ACTIVE','INVITED')`))[0].n);
+  // Admins are never on attendance / productivity lists (2026-11-21), so "everyone" means every active / invited non-Admin person.
+  const totalActive = Number((await q(`select count(*) n from users where status in ('ACTIVE','INVITED') and role <> 'ADMIN'`))[0].n);
   for (const [name, S] of [["first", S1], ["second", S2]]) {
     const live = await call("GET", "/team-attendance/live", S.tok);
     ok(`${name} supervisor: live board answers (200)`, live.s === 200, live);

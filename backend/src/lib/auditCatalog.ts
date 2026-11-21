@@ -146,6 +146,18 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/holidays$/, module: "Holidays", action: "CREATE", summary: "Added a holiday" },
   { method: "POST", re: /^\/api\/holidays\/:id\/delete$/, module: "Holidays", action: "DELETE", summary: "Removed a holiday", recordType: "Holiday" },
   { method: "DELETE", re: /^\/api\/holidays\/:id$/, module: "Holidays", action: "DELETE", summary: "Removed a holiday", recordType: "Holiday" },
+  // Holiday Management: services add the detailed summary with auditNote(); these lines make sure every write is recorded either way.
+  { method: "POST", re: /^\/api\/holiday-calendar\/import\/commit$/, module: "Holidays", action: "CREATE", summary: "Imported a holiday sheet as a draft calendar" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/import\/:id\/publish$/, module: "Holidays", action: "APPROVE", summary: "Published a holiday calendar", recordType: "HolidayImport" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/import\/:id\/discard$/, module: "Holidays", action: "DELETE", summary: "Discarded a draft holiday calendar", recordType: "HolidayImport" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/entry$/, module: "Holidays", action: "CREATE", summary: "Added a holiday" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/entry\/:id\/edit$/, module: "Holidays", action: "UPDATE", summary: "Edited a holiday", recordType: "Holiday" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/entry\/:id\/archive$/, module: "Holidays", action: "DELETE", summary: "Deactivated a holiday", recordType: "Holiday" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/archive\/:id\/restore$/, module: "Holidays", action: "UPDATE", summary: "Restored a holiday", recordType: "Holiday" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/policy$/, module: "Holidays", action: "UPDATE", summary: "Changed the optional holiday allowance" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/optional\/:id\/request$/, module: "Holidays", action: "CREATE", summary: "Requested an optional holiday", recordType: "OptionalHolidayRequest" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/requests\/:id\/cancel$/, module: "Holidays", action: "DELETE", summary: "Cancelled an optional holiday request", recordType: "OptionalHolidayRequest" },
+  { method: "POST", re: /^\/api\/holiday-calendar\/requests\/:id\/decide$/, module: "Holidays", action: (b) => verdict(b, "approve", [true], "APPROVE", "REJECT"), summary: (b) => (b?.approve === true ? "Approved an optional holiday request" : "Rejected an optional holiday request"), recordType: "OptionalHolidayRequest" },
 
   { method: "POST", re: /^\/api\/offers\/me\/:id\/respond$/, module: "Offers", action: (b) => verdict(b, "accept", [true], "APPROVE", "REJECT"), summary: (b) => (b?.accept === true ? "Accepted an offer" : "Declined an offer"), recordType: "Offer" },
   { method: "POST", re: /^\/api\/offers\/templates$/, module: "Offers", action: "UPDATE", summary: "Saved an offer template" },

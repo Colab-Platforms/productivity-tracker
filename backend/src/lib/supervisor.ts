@@ -1,4 +1,5 @@
 import { prisma } from "./prisma.js";
+import { NOT_ADMIN } from "./tracked.js";
 import { getPinnedCompany } from "./deployment.js";
 
 // ---------------------------------------------------------------------------
@@ -60,7 +61,7 @@ export async function monitoringWhere(): Promise<{ platformId?: string }> {
 /** The people the supervisor may see: every active or invited person of every company in scope (the same population HR with all-company access sees). */
 export async function monitoringIds(): Promise<string[]> {
   const rows = await prisma.user.findMany({
-    where: { ...(await monitoringWhere()), status: { in: ["ACTIVE", "INVITED"] } },
+    where: { ...(await monitoringWhere()), status: { in: ["ACTIVE", "INVITED"] }, ...NOT_ADMIN },
     select: { id: true },
   });
   return rows.map((r) => r.id);

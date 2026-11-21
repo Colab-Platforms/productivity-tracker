@@ -114,8 +114,8 @@ router.get("/:id/payslip.pdf", async (req, res) => {
 });
 
 
-// --- HR / ADMIN -----------------------------------------------------------
-router.use(requireRole("HR", "ADMIN"));
+// --- HR ONLY (payroll management) -----------------------------------------
+router.use(requireRole("HR"));
 
 
 // --- GENERATION -----------------------------------------------------------

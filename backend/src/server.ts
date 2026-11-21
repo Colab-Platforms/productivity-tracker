@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { policyFromEnv, trustedProxyCheck } from "./lib/ipPolicy.js";
 import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
@@ -15,6 +16,7 @@ import photoRoutes from "./modules/photos/photos.routes.js";
 import onboardingRoutes from "./modules/onboarding/onboarding.routes.js";
 import payrollRoutes from "./modules/payroll/payroll.routes.js";
 import holidayRoutes from "./modules/holidays/holidays.routes.js";
+import holidayCalendarRoutes from "./modules/holidays/holidayCalendar.routes.js";
 import offerRoutes from "./modules/offers/offers.routes.js";
 import projectRoutes from "./modules/projects/projects.routes.js";
 import leaveRoutes from "./modules/leave/leave.routes.js";
@@ -36,6 +38,7 @@ import adminConsoleRoutes from "./modules/admin-console/adminConsole.routes.js";
 import hrFiltersRoutes from "./modules/hr-filters/hrFilters.routes.js";
 import supervisorRoutes from "./modules/supervisor/supervisor.routes.js";
 import loginActivityRoutes from "./modules/login-activity/loginActivity.routes.js";
+import breakMonitorRoutes from "./modules/break-monitor/breakMonitor.routes.js";
 import { startLoginActivityPurge } from "./modules/login-activity/loginEvents.js";
 import { typingAudience } from "./modules/chat/chat.service.js";
 import { startRealtime } from "./lib/realtime.js";
@@ -50,10 +53,16 @@ import { audit } from "./middlewares/audit.js";
 const app = express();
 const PORT = Number(process.env.PORT ?? 5001);
 
-// Render (like most hosts) puts a proxy in front, so the caller's real address arrives in X-Forwarded-For.
-// TRUST_PROXY_HOPS = how many proxies sit in front of this app (default 1). Locally there is none: set it to 0.
-// Express then picks the right entry counting from the proxy side, which a client cannot forge.
-app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
+// The caller's real address: X-Forwarded-For is followed ONLY through trusted proxies (private-network load balancers, plus TRUSTED_PROXIES).
+// The old hop count (TRUST_PROXY_HOPS, default 1) let a client that reached the app directly pick its own address with a header; it is no longer used.
+// The same rule is used for the live connection (lib/realtime.ts), so a sign-in, a request and the socket all see one address.
+app.set("trust proxy", trustedProxyCheck());
+if (process.env.TRUST_PROXY_HOPS) console.warn("[network policy] TRUST_PROXY_HOPS is no longer used: proxies are trusted by address (private network or TRUSTED_PROXIES).");
+{
+  const p = policyFromEnv();
+  console.log(`[network policy] sign-in IP restriction: ${p.mode.toUpperCase()}${p.mode === "off" ? " (nothing is checked: set LOGIN_IP_MODE=enforce and LOGIN_ALLOWED_IPS to restrict)" : `, ${p.rules.length} allowed address(es)`}`);
+  if (p.problem) console.error(`[network policy] ${p.problem}`);
+}
 
 const allowedOrigins = [
   "http://localhost:3000",
@@ -111,6 +120,7 @@ app.use("/api/photos", photoRoutes);
 app.use("/api/onboarding", onboardingRoutes);
 app.use("/api/payroll", payrollRoutes);
 app.use("/api/holidays", holidayRoutes);
+app.use("/api/holiday-calendar", holidayCalendarRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/leave", leaveRoutes);
@@ -132,6 +142,7 @@ app.use("/api/admin-console", adminConsoleRoutes);
 app.use("/api/hr-filters", hrFiltersRoutes);
 app.use("/api/supervisor", supervisorRoutes);
 app.use("/api/login-activity", loginActivityRoutes);
+app.use("/api/break-monitor", breakMonitorRoutes);
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
 });

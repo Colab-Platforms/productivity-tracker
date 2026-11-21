@@ -8,6 +8,7 @@ import { clock, clockTime } from "../reports/_team/format";
 import FilterBar from "../_filters/FilterBar";
 import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 import { useMe } from "../layout";
+import HuddleWord from "../_shell/HuddleWord";
 
 // ATTENDANCE (live): the ONE screen for who is working right now. It replaces the two earlier screens "Your team
 // today" and "Team Attendance", and keeps everything from both: the live board, the alerts panel and meeting invites.
@@ -365,7 +366,7 @@ export default function AttendancePage() {
                   <th className={`${th} text-right`}>Clock out</th>
                   <th className={`${th} text-right`}>Break used</th>
                   <th className={`${th} text-right`} title="Washroom time is tracked on its own. It is not a break and does not use the break allowance.">Washroom</th>
-                  <th className={`${th} text-right`}>Team Huddle</th>
+                  <th className={`${th} text-right`}><HuddleWord /></th>
                   <th className={`${th} text-right`}>Working</th>
                   <th className={th}>Attendance status</th>
                 </tr>

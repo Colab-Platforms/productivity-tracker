@@ -217,7 +217,7 @@ export default function HrDashboard() {
 
   const report = useApi<Report>(rangePath, reload);
   const todayReport = useApi<Report>(todayPath, reload);
-  const users = useApi<{ users: AdminUser[] }>("/admin/users", reload);
+  const users = useApi<{ users: AdminUser[] }>("/admin/users?employeesOnly=1", reload);
   const live = useApi<LiveRow[]>("/tracker/team", reload);
   const alerts = useApi<AlertRow[]>("/tracker/alerts", reload);
   const tickets = useApi<{ tickets: Ticket[] }>("/tickets?scope=all", reload);
@@ -249,7 +249,7 @@ export default function HrDashboard() {
   );
   const companyUserIds = useMemo(() => new Set(companyUsers.map((u) => u.id)), [companyUsers]);
   const staff = useMemo(
-    () => companyUsers.filter((u) => u.status !== "EXITED"),
+    () => companyUsers.filter((u) => !["EXITED", "TERMINATED", "ABSCONDED"].includes(u.status)),
     [companyUsers]
   );
   const activeCount = staff.filter((u) => u.status === "ACTIVE").length;

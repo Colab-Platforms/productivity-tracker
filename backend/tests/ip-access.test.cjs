@@ -2,7 +2,10 @@
 // The backend (port 5012, throwaway DB only) must be started with the mode under test, for example:
 //   LOGIN_IP_MODE=enforce LOGIN_ALLOWED_IPS=206.84.235.169 sh start-be-5012.sh
 // then: MODE=enforce node tests/ip-access.test.cjs        (MODE = off | monitor | enforce | enforce-empty)
-// A proxy is simulated with X-Forwarded-For; the server trusts exactly one proxy hop (the default), so the RIGHTMOST entry is the caller.
+// A proxy is simulated with X-Forwarded-For: the test connects from 127.0.0.1, which (like a hosting load balancer on a private network) is a
+// trusted proxy, so the rightmost entry that is NOT a private address is the caller. A public client connecting directly can never choose its
+// address with a header (that rule is unit-tested in ip-policy.test.mts, since every connection made from this machine is local).
+// enforce-empty (LOGIN_IP_MODE=enforce with no valid LOGIN_ALLOWED_IPS) now FAILS CLOSED: everybody is refused, the office address too.
 require("dotenv").config({ path: require("node:path").join(__dirname, "..", ".env") });
 const fs = require("node:fs"), path = require("node:path");
 const { Client } = require("pg");
@@ -46,7 +49,24 @@ const MIGRATION = fs.readFileSync(path.join(__dirname, "..", "prisma", "migratio
   const codes = { ADMIN: "IPA-ADM", HR: "IPA-HR", MANAGER: "IPA-MGR", EMPLOYEE: "IPA-EMP", SUPERVISOR: "IPA-SUP" };
   const secRows = async (extra = "") => q(`select id, summary, ip, status, "targetUserId", "actorId", after, path from audit_logs where module='Security' and "createdAt" >= $1::timestamp ${extra} order by "createdAt"`, [startedAt]);
   const enforcing = MODE === "enforce";
-  const watching = MODE === "monitor" || MODE === "enforce-empty";
+  const watching = MODE === "monitor";
+  if (MODE === "enforce-empty") {
+    console.log("\n## mode under test: enforce with NO valid allowed address (fail closed)");
+    for (const [role, code] of Object.entries(codes)) {
+      const fromOffice = await call("POST", "/auth/login", null, { email: code, password: PW }, OFFICE);
+      ok(`${role} is refused even from the office address (nothing is allowed)`, fromOffice.s === 403 && fromOffice.b.code === "IP_NOT_ALLOWED" && !fromOffice.b.token, fromOffice);
+      const fromOther = await call("POST", "/auth/login", null, { email: code, password: PW }, OTHER);
+      ok(`${role} is refused from any other address`, fromOther.s === 403 && !fromOther.b.token, fromOther);
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+    const evs = await q(`select result, reason, ip from login_events where "createdAt" >= $1::timestamp and username like 'IPA-%'`, [startedAt]);
+    ok("every refusal is recorded in Login Activity as BLOCKED (office address included)", evs.length >= 10 && evs.every((r) => r.result === "BLOCKED" && r.reason === "IP_NOT_ALLOWED") && evs.some((r) => r.ip === OFFICE), evs.length);
+    ok("passwords, roles and status are untouched", (await q(`select "passwordHash" from users where "employeeCode" like 'IPA-%'`)).every((u) => bcrypt.compareSync(PW, u.passwordHash)));
+    await wipe().catch(() => {});
+    await db.end();
+    console.log(`\n${pass} passed, ${fail} failed`);
+    process.exit(fail ? 1 : 0);
+  }
 
   console.log(`\n## mode under test: ${MODE}`);
   // ---- the office address: every role signs in ----
@@ -85,6 +105,16 @@ const MIGRATION = fs.readFileSync(path.join(__dirname, "..", "prisma", "migratio
     ok("the same address written as IPv6-mapped passes", v6.s === 200, v6);
     const near = await call("POST", "/auth/login", null, { email: "IPA-ADM", password: PW }, "206.84.235.170");
     ok("a neighbouring address is refused", near.s === 403, near);
+    const v6other = await call("POST", "/auth/login", null, { email: "IPA-ADM", password: PW }, "2401:4900:1c3a:9d2::1");
+    ok("a mobile network's IPv6 address is refused", v6other.s === 403, v6other);
+    const home = await call("POST", "/auth/login", null, { email: "IPA-EMP", password: PW }, "122.170.5.6");
+    ok("a home Wi-Fi address is refused", home.s === 403, home);
+    const lan = await call("POST", "/auth/login", null, { email: "IPA-EMP", password: PW }, "192.168.1.25");
+    ok("a private address (no public client in the chain) is not the office address and is refused", lan.s === 403, lan);
+    const chk = await call("GET", "/auth/ip-check", tokens.ADMIN, undefined, OFFICE);
+    ok("Admin's IP check shows what the server sees: the office address, mode enforce, allowed", chk.s === 200 && chk.b.detectedIp === OFFICE && chk.b.mode === "enforce" && chk.b.thisRequestAllowed === true && chk.b.allowedEntries === 1, chk.b);
+    ok("the IP check never returns the allowed list itself", !JSON.stringify(chk.b).includes('"rules"'));
+    ok("HR cannot open the IP check (403)", (await call("GET", "/auth/ip-check", tokens.HR, undefined, OFFICE)).s === 403);
   }
 
   // ---- an existing session on another address ----
@@ -106,21 +136,23 @@ const MIGRATION = fs.readFileSync(path.join(__dirname, "..", "prisma", "migratio
   await new Promise((r) => setTimeout(r, 1200));
   const rows = await secRows();
   const blockedLogins = rows.filter((r) => r.path === "/api/auth/login" && r.ip === OTHER);
+  const hasEvents = (await q(`select to_regclass('public.login_events') t`))[0].t !== null;
+  const ev = hasEvents ? await q(`select result, reason, mode, "wouldBlock", username, ip, "userAgent", "createdAt", "userId" from login_events where "createdAt" >= $1::timestamp and (username like 'IPA-%' or username = 'ghost.person')`, [startedAt]) : [];
   if (MODE === "off") {
     ok("off: nothing is logged at all", rows.length === 0, rows.length);
   } else {
-    ok("every sign-in from another address is logged with its username", ["IPA-ADM", "IPA-HR", "IPA-MGR", "IPA-EMP", "IPA-SUP"].every((u) => blockedLogins.some((r) => r.after.username === u)), blockedLogins.map((r) => r.after.username));
-    const one = blockedLogins.find((r) => r.after.username === "IPA-HR");
-    ok("the row has the username, the address, the time, the result and the reason", !!one && one.ip === OTHER && one.after.reason === "The caller's IP address is not on the authorised list" && !!one.after.mode, one);
-    ok(enforcing ? "the result says Blocked" : "the result says Allowed (monitor mode: would be blocked)", blockedLogins.every((r) => (enforcing ? r.after.result === "Blocked" && r.status === 403 : /monitor mode/.test(r.after.result))), blockedLogins.map((r) => r.after.result));
-    ok("the row is linked to the account when the name matches", !!one && one.targetUserId === ids.HR);
-    if (MODE !== "enforce-empty") ok("a successful sign-in from the authorised address is logged as Allowed", rows.some((r) => r.ip === OFFICE && r.after.result === "Allowed" && r.after.username === "IPA-ADM"));
-    else ok("with no allowed address every address is only flagged 'would be blocked', nobody is refused", rows.length > 0 && rows.every((r) => /monitor mode/.test(r.after.result)));
+    const otherEv = ev.filter((r) => r.ip === OTHER);
+    ok("every sign-in from another address is recorded in Login Activity with its username", ["IPA-ADM", "IPA-HR", "IPA-MGR", "IPA-EMP", "IPA-SUP"].every((u) => otherEv.some((r) => r.username === u)), otherEv.map((r) => r.username));
+    const one = otherEv.find((r) => r.username === "IPA-HR");
+    ok("the record has the username, the detected address, the time, the result, the reason, the mode and the browser text", !!one && one.ip === OTHER && !!one.createdAt && !!one.mode && !!one.userAgent && (enforcing ? one.result === "BLOCKED" && one.reason === "IP_NOT_ALLOWED" : one.result === "SUCCESS" && one.wouldBlock === true), one);
+    ok(enforcing ? "every such record says BLOCKED" : "every such record says signed in but would be blocked (monitor)", otherEv.length > 0 && otherEv.every((r) => (enforcing ? r.result === "BLOCKED" : r.wouldBlock === true)), otherEv.map((r) => r.result));
+    ok("the record is linked to the account when the name matches", !!one && one.userId === ids.HR, one);
+    ok("a successful sign-in from the authorised address is recorded as SUCCESS, not flagged", ev.some((r) => r.ip === OFFICE && r.result === "SUCCESS" && r.username === "IPA-ADM" && !r.wouldBlock));
     ok("the log holds no password and no token", !rows.some((r) => JSON.stringify(r).includes(PW) || /eyJ[A-Za-z0-9_-]{10,}/.test(JSON.stringify(r)) || /passwordHash|\$2[aby]\$/.test(JSON.stringify(r))));
     if (enforcing) {
-      const ghostRow = rows.find((r) => r.after?.username === "ghost.person");
-      ok("an unknown name is logged too, as typed, with no account attached", !!ghostRow && ghostRow.targetUserId === null && ghostRow.after.credentialsOk === null, ghostRow);
-      ok("the password check was never reached for a blocked address", blockedLogins.every((r) => r.after.credentialsOk === null));
+      const ghostRow = ev.find((r) => r.username === "ghost.person");
+      ok("an unknown name is recorded too, as typed, with no account attached", !!ghostRow && ghostRow.userId === null && ghostRow.result === "BLOCKED", ghostRow);
+      ok("a blocked attempt never reached the password check (no wrong-password record from the other address)", !otherEv.some((r) => r.reason === "INVALID_CREDENTIALS"));
     }
     const sess = rows.filter((r) => r.path !== "/api/auth/login");
     const perAddress = MODE === "enforce-empty" ? 10 : 5; // enforce-empty flags the office address too (nothing is allowed)
@@ -137,7 +169,6 @@ const MIGRATION = fs.readFileSync(path.join(__dirname, "..", "prisma", "migratio
     ok("HR cannot read it", (await call("GET", "/audit-logs?module=Security", tokens.HR, undefined, OFFICE)).s === 403);
     ok("an employee cannot read it", (await call("GET", "/audit-logs?module=Security", tokens.EMPLOYEE, undefined, OFFICE)).s === 403);
   }
-  if (MODE === "enforce-empty") ok("enforce with an empty allowed list never locks anyone out (it monitors)", true);
 
   // ---- nothing about the accounts changed ----
   const after = await q(`select "employeeCode", "passwordHash", role::text r, status::text s from users where "employeeCode" like 'IPA-%' order by 1`);

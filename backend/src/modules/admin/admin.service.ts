@@ -15,8 +15,11 @@ import { linkedEmployeesOfManagers } from "../../lib/reportingLinks.js";
 // TypeScript still rejects a value that isn't in the schema.
 // ===========================================================================
 
+import { leftStatuses } from "../../lib/userStatus.js";
+import { NOT_ADMIN } from "../../lib/tracked.js";
 import bcrypt from "bcryptjs";
 import { reportingError } from "./hierarchy.logic.js";
+import type { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay } from "../../lib/dates.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
@@ -37,8 +40,9 @@ function designationOrNull(v: string | undefined): string | null {
   return hit;
 }
 
+import { ASSIGNABLE_STATUSES, ALL_STATUSES, statusReady } from "../../lib/userStatus.js";
 export const USER_ROLES = ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] as const;
-export const USER_STATUSES = ["CANDIDATE", "INVITED", "ACTIVE", "SUSPENDED", "EXITED"] as const;
+export const USER_STATUSES = ALL_STATUSES; // every value that may still be STORED (legacy ones included); what can be ASSIGNED is ASSIGNABLE_STATUSES
 export const ONBOARDING_STATUSES = [
   "OFFER_SENT",
   "OFFER_ACCEPTED",
@@ -121,12 +125,12 @@ function assertTime(value: string, field: string) {
 // ===========================================================================
 
 /** Everyone this person may see in the Employees list (all statuses): the "organization total" the filtered count is shown against. */
-export async function peopleScopeCount(viewerId: string) {
+export async function peopleScopeCount(viewerId: string, employeesOnly = false) {
   const access = await accessFor(viewerId);
-  return prisma.user.count({ where: { ...scopeWhere(access) } });
+  return prisma.user.count({ where: { ...scopeWhere(access), ...(employeesOnly ? NOT_ADMIN : {}) } });
 }
 
-export type UserListFilters = { search?: string; role?: string; status?: string; companyId?: string; projectIds?: string[]; managerIds?: string[]; designation?: string };
+export type UserListFilters = { employeesOnly?: boolean; search?: string; role?: string; status?: string; companyId?: string; projectIds?: string[]; managerIds?: string[]; designation?: string };
 
 // A status filter is one status ("ACTIVE") or several joined by commas ("SUSPENDED,EXITED": the Inactive group). Unknown words are ignored.
 function parseStatuses(v: unknown): (typeof USER_STATUSES)[number][] {
@@ -142,7 +146,9 @@ async function peopleWhere(viewerId: string, filters: UserListFilters, withStatu
   const access = await accessFor(viewerId);
   const search = filters.search?.trim();
   const role = USER_ROLES.find((r) => r === filters.role);
-  const statuses = withStatus ? parseStatuses(filters.status) : [];
+  const ready = await statusReady();
+  // Before the database knows TERMINATED / ABSCONDED those words must never reach a query (Postgres would refuse them).
+  const statuses = (withStatus ? parseStatuses(filters.status) : []).filter((s) => ready || (s !== "TERMINATED" && s !== "ABSCONDED"));
 
   // The list covers every company this person may act on (own, assigned, or all), or just the one picked.
   let companyScope: { platformId?: string | { in: string[] } } = scopeWhere(access);
@@ -154,6 +160,8 @@ async function peopleWhere(viewerId: string, filters: UserListFilters, withStatu
   const linkedIds = filters.managerIds?.length ? await linkedEmployeesOfManagers(filters.managerIds) : [];
   return {
     ...companyScope,
+    // employeesOnly: headcount screens (Employee Overview, HR / Admin dashboards) leave Admin accounts out; User Management still lists them.
+    ...(filters.employeesOnly ? NOT_ADMIN : {}),
     ...(role ? { role } : {}),
     ...(statuses.length === 1 ? { status: statuses[0] } : statuses.length > 1 ? { status: { in: statuses } } : {}),
     // Project: anyone ACTIVELY on one of the chosen projects (a person on several is still one row). Reporting manager: who reports to them.
@@ -180,6 +188,100 @@ export async function userStatusCounts(viewerId: string, filters: UserListFilter
   const byStatus = Object.fromEntries(USER_STATUSES.map((s) => [s, 0])) as Record<string, number>;
   for (const r of rows) byStatus[String(r.status)] = r._count._all;
   return { total: Object.values(byStatus).reduce((n, x) => n + x, 0), byStatus };
+}
+
+// ---------------------------------------------------------------------------
+// ONE PAGE of people for a summary card (Employee Overview > Total / Active / Inactive / Not started yet). The card numbers and the list come from
+// the SAME people filter (peopleWhere), so a count and the list behind it cannot differ. Legacy statuses are never rewritten: Suspended counts as
+// Inactive, Invited and Candidate count as Not started yet, exactly as the cards already did.
+// ---------------------------------------------------------------------------
+const VIEW_STATUSES: Record<string, string[]> = {
+  ALL: [],
+  ACTIVE: ["ACTIVE"],
+  INACTIVE: ["EXITED", "TERMINATED", "ABSCONDED", "SUSPENDED"],
+  NOT_STARTED: ["INVITED", "CANDIDATE"],
+};
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NOBODY = { id: "00000000-0000-0000-0000-000000000000" };
+
+export async function userPage(
+  viewerId: string,
+  filters: UserListFilters,
+  q: { view?: unknown; status?: unknown; departmentId?: unknown; search?: unknown; sort?: unknown; dir?: unknown; page?: unknown; pageSize?: unknown },
+) {
+  const ready = await statusReady();
+  const known = (s: string) => ready || (s !== "TERMINATED" && s !== "ABSCONDED");
+  // the dashboard's own filters (company, project, manager, designation, employees only), without status or search
+  const { search: _search, status: _status, ...scope } = filters;
+  void _search; void _status;
+  const base = await peopleWhere(viewerId, scope, false);
+
+  const grouped = await prisma.user.groupBy({ by: ["status"], where: base, _count: { _all: true } });
+  const by: Record<string, number> = Object.fromEntries(ALL_STATUSES.map((s) => [s, 0]));
+  for (const g of grouped) by[String(g.status)] = g._count._all;
+  const sum = (list: string[]) => list.reduce((n, s) => n + (by[s] ?? 0), 0);
+  const counts = {
+    all: Object.values(by).reduce((n, x) => n + x, 0),
+    active: by.ACTIVE ?? 0,
+    inactive: sum(VIEW_STATUSES.INACTIVE),
+    notStarted: sum(VIEW_STATUSES.NOT_STARTED),
+    byStatus: by,
+  };
+
+  const view = String(q.view ?? "ALL").toUpperCase() in VIEW_STATUSES ? String(q.view ?? "ALL").toUpperCase() : "ALL";
+  let statuses = VIEW_STATUSES[view].filter(known);
+  let none = false;
+  const asked = String(q.status ?? "").toUpperCase();
+  if (asked) {
+    if (!(ALL_STATUSES as readonly string[]).includes(asked) || (VIEW_STATUSES[view].length && !VIEW_STATUSES[view].includes(asked)) || !known(asked)) none = true;
+    else statuses = [asked];
+  }
+  const dept = String(q.departmentId ?? "");
+  const text = String(q.search ?? "").trim().slice(0, 80);
+  const tokens = text.split(/\s+/).filter(Boolean).slice(0, 4);
+  const where = {
+    AND: [
+      base,
+      none ? NOBODY : statuses.length ? { status: { in: statuses as never } } : {},
+      UUID.test(dept) ? { teamMemberships: { some: { teamId: dept, isActive: true } } } : {},
+      ...tokens.map((t) => ({ OR: [{ firstName: { contains: t, mode: "insensitive" as const } }, { lastName: { contains: t, mode: "insensitive" as const } }, { employeeCode: { contains: t, mode: "insensitive" as const } }] })),
+    ],
+  };
+
+  const dir = String(q.dir) === "desc" ? "desc" : "asc";
+  const orderBy: Prisma.UserOrderByWithRelationInput[] = String(q.sort) === "joined"
+    ? [{ dateOfJoining: { sort: dir as Prisma.SortOrder, nulls: "last" } }, { firstName: "asc" }]
+    : [{ firstName: dir as Prisma.SortOrder }, { lastName: dir as Prisma.SortOrder }];
+  const pageSize = Math.min(Math.max(Number(q.pageSize) || 20, 5), 100);
+  const total = await prisma.user.count({ where });
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(Number(q.page) || 1, 1), pages);
+  const rows = await prisma.user.findMany({
+    where,
+    orderBy,
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+    select: {
+      id: true, firstName: true, lastName: true, employeeCode: true, designation: true, status: true, dateOfJoining: true, onboardingStatus: true,
+      platform: { select: { name: true } },
+      teamMemberships: { where: { isActive: true }, select: { team: { select: { id: true, name: true } } } },
+    },
+  });
+  return {
+    view, counts, total, page, pages, pageSize,
+    viewTotal: view === "ALL" ? counts.all : view === "ACTIVE" ? counts.active : view === "INACTIVE" ? counts.inactive : counts.notStarted,
+    rows: rows.map((u) => ({
+      id: u.id,
+      name: `${u.firstName} ${u.lastName}`.trim(),
+      employeeCode: u.employeeCode,
+      designation: u.designation,
+      status: u.status,
+      onboardingStatus: u.onboardingStatus,
+      dateOfJoining: u.dateOfJoining,
+      company: u.platform?.name ?? null,
+      departments: u.teamMemberships.map((m) => m.team),
+    })),
+  };
 }
 
 export async function listUsers(viewerId: string, filters: UserListFilters = {}) {
@@ -313,7 +415,7 @@ export async function createUser(
   const sameName = await prisma.user.findFirst({
     where: {
       platformId: targetPlatformId,
-      status: { not: "EXITED" },
+      status: { notIn: await leftStatuses() },
       firstName: { equals: data.firstName.trim(), mode: "insensitive" },
       lastName: { equals: data.lastName.trim(), mode: "insensitive" },
     },
@@ -349,7 +451,7 @@ export async function createUser(
         phone: data.phone?.trim() || null,
         employeeCode,
         role,
-        status: "INVITED",
+        status: "ACTIVE", // owner decision 2026-11-21: new accounts start Active (Invited is a legacy value)
         designation: designationOrNull(data.designation),
         dateOfJoining: data.dateOfJoining ? parseDay(data.dateOfJoining) : null,
         shiftId: data.shiftId || null,
@@ -926,7 +1028,7 @@ export async function getAdminOptions(viewerId: string) {
     prisma.user.findMany({
       where: {
         role: { in: ["MANAGER", "ADMIN"] },
-        status: { not: "EXITED" },
+        status: { notIn: await leftStatuses() },
         // Only managers of companies this person may act on (a deployment pinned to one company offers only that company's).
         ...(pinned ? { platformId: pinned.id } : scopeWhere(access)),
       },
@@ -974,7 +1076,7 @@ export async function getAdminOptions(viewerId: string) {
     people: leads.map(asOption),
     isOwner: owner,
     roles: String(viewer.role) === "ADMIN" ? USER_ROLES : USER_ROLES.filter((r) => !PRIVILEGED.includes(r)),
-    statuses: USER_STATUSES,
+    statuses: ASSIGNABLE_STATUSES,
     onboardingStatuses: ONBOARDING_STATUSES,
     teamTypes: TEAM_TYPES,
     leaveTypes: LEAVE_TYPES,

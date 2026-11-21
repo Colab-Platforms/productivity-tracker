@@ -16,6 +16,7 @@ router.use(requireAuth);
 // The service throws codes; only this layer decides wording and status.
 const MESSAGES: Record<string, { status: number; message: string }> = {
   USER_NOT_FOUND: { status: 404, message: "User not found" },
+  ADMIN_NOT_TRACKED: { status: 403, message: "Admin accounts are not tracked: no attendance or productivity is recorded for Admins." },
   BREAK_TYPE_RETIRED: { status: 400, message: "Tea and Washroom are no longer available. Pick Lunch, Personal or Meeting / Team Huddle." },
   TRACKER_LOCKED: {
     status: 403,

@@ -17,7 +17,9 @@ import { saveUpload, readStored, deleteStored, contentTypeFor } from "../../lib/
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { canAccess } from "../../lib/companyAccess.logic.js";
 
-const PAYROLL_ROLES = new Set(["HR", "ADMIN"]);
+// Payroll management (month list, upload, generate, approve, release, delete) is HR only (owner decision 2026-11-22: Payroll Oversight left the Admin
+// menu). An Admin keeps their OWN payslip like anyone else; that goes through the owner path (isOwner), not through staff rights.
+const PAYROLL_ROLES = new Set(["HR"]);
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",

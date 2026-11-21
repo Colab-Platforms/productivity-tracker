@@ -11,6 +11,7 @@
 //
 // Who is on screen is the same list as everywhere else in the manager views (visibleUserIds).
 
+import { inactiveStatuses } from "../../lib/userStatus.js";
 import { weightedPerformance } from "../tasks/tasks.weighted.js";
 import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
 import { prisma } from "../../lib/prisma.js";
@@ -20,12 +21,14 @@ import { isCompleteRating } from "../tasks/tasks.rating.logic.js";
 import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { selfManagedTaskIdsOf } from "../tasks/tasks.self.js";
 import { auditNote } from "../../lib/auditContext.js";
+import { accessFor, assertCompany } from "../../lib/companyAccess.js";
 import { localDayOf, parseIsoDay, platformToday, zonedToUtc } from "../../lib/dates.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { projectsAndManagers } from "./peopleDetails.js";
 import { entryDetailsFor } from "../tasks/tasks.entry.js";
 import { progressOf, pendingTaskVisibleTo } from "../tasks/tasks.entry.logic.js";
-import { activeTasks } from "../tasks/tasks.deleted.js";
+import { activeAssigned, activeTasks } from "../tasks/tasks.deleted.js";
+import { assignedTasksForReport } from "../tasks/tasks.assigned.js";
 import { lateDetailsFor } from "../tasks/tasks.late.js";
 
 const MAX_RANGE_DAYS = 93;
@@ -105,7 +108,7 @@ async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { 
   const scope = narrowed.scope;
   if (allowed.length === 0) return { people: [], scope };
   const people = await prisma.user.findMany({
-    where: { id: { in: allowed }, status: { notIn: ["SUSPENDED", "EXITED"] } },
+    where: { id: { in: allowed }, status: { notIn: await inactiveStatuses() } },
     select: {
       id: true, firstName: true, lastName: true, employeeCode: true, platformId: true,
       teamMemberships: { where: { isActive: true }, select: { team: { select: { id: true, name: true } } }, take: 1 },
@@ -117,6 +120,75 @@ async function scopedPeople(viewer: Awaited<ReturnType<typeof getViewer>>, q: { 
     .map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}`.trim(), code: p.employeeCode, platformId: p.platformId, teamId: p.teamMemberships[0]?.team.id ?? null, teamName: p.teamMemberships[0]?.team.name ?? null }))
     .filter((p) => (!q.userId || p.id === q.userId) && (!q.teamId || p.teamId === q.teamId));
   return { people: list, scope };
+}
+
+// ---------------------------------------------------------------------------------------------
+// WHAT TASKS EXIST FOR EACH PERSON IN THE PERIOD (explains the numbers; never changes them)
+// The report's own figures (completed, days with data, %, weighted score) are unchanged. This adds the task counts behind them and the reason a
+// figure is missing, so "No task data available" is no longer used for different situations:
+//   NO_TASKS             nothing was submitted or assigned in the period
+//   AWAITING_APPROVAL    tasks exist but wait for their manager (a task counts only once approved)
+//   NO_COMPLETION_TIME   approved tasks marked completed before completion times were recorded (they cannot be placed in a day)
+//   NONE_COMPLETED       approved tasks exist, none finished (a real zero, shown as 0)
+//   HAS_DATA             at least one counted completion
+// Sources: employee-submitted tasks (the ones the report counts) and, separately, tasks a manager assigned (never mixed into the figures, never
+// counted twice: they are different rows, kept out of every submitted-task query by activeTasks()). A manager's own self-managed tasks are excluded
+// as everywhere. Waiting-for-approval counts obey the same visibility rule as the approval queue.
+// ---------------------------------------------------------------------------------------------
+export type TaskReason = "HAS_DATA" | "NO_TASKS" | "AWAITING_APPROVAL" | "NO_COMPLETION_TIME" | "NONE_COMPLETED";
+export type TaskSummary = {
+  inPeriod: number; approved: number; awaitingApproval: number; rejected: number;
+  completedAwaitingApproval: number; completedWithoutTime: number; open: number; overdue: number;
+  assigned: { total: number; open: number; awaitingConfirmation: number; confirmed: number };
+};
+export function taskReason(s: TaskSummary, completedTotal: number | null): TaskReason {
+  if (completedTotal !== null && completedTotal > 0) return "HAS_DATA";
+  if (completedTotal === 0) return "NONE_COMPLETED";
+  if (s.awaitingApproval > 0) return "AWAITING_APPROVAL";
+  if (s.completedWithoutTime > 0) return "NO_COMPLETION_TIME";
+  return s.inPeriod === 0 && s.assigned.total === 0 ? "NO_TASKS" : "NO_TASKS";
+}
+const emptySummary = (): TaskSummary => ({ inPeriod: 0, approved: 0, awaitingApproval: 0, rejected: 0, completedAwaitingApproval: 0, completedWithoutTime: 0, open: 0, overdue: 0, assigned: { total: 0, open: 0, awaitingConfirmation: 0, confirmed: 0 } });
+
+async function summariesFor(viewer: { id: string; role: unknown }, ids: string[], selfIds: string[], fromIso: string, toIso: string, today: string, startUtc: Date, endUtc: Date): Promise<Map<string, TaskSummary>> {
+  const out = new Map<string, TaskSummary>(ids.map((i) => [i, emptySummary()]));
+  const [rows, assigned] = await Promise.all([
+    prisma.dailyTask.findMany({
+      where: { userId: { in: ids }, id: { notIn: selfIds }, ...(await activeTasks()), status: { not: "CANCELLED" }, date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } },
+      select: { id: true, userId: true, date: true, status: true, approvalStatus: true, completedAt: true },
+    }),
+    prisma.dailyTask.findMany({
+      where: { userId: { in: ids }, ...(await activeAssigned()), assignedById: { not: null }, status: { not: "CANCELLED" }, date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } },
+      select: { userId: true, status: true, reviewedAt: true },
+    }).catch(() => [] as { userId: string; status: unknown; reviewedAt: Date | null }[]),
+  ]);
+  // who the waiting tasks were sent to (same rule as the approval queue: HR sees none, a manager only his own)
+  const waitingIds = rows.filter((r) => String(r.approvalStatus) === "PENDING").map((r) => r.id);
+  const tags = waitingIds.length ? await entryDetailsFor(waitingIds) : new Map();
+  for (const r of rows) {
+    const s = out.get(r.userId)!;
+    const approval = String(r.approvalStatus), status = String(r.status);
+    if (approval === "REJECTED") { s.rejected += 1; continue; }
+    if (approval === "PENDING") {
+      const tag = tags.get(r.id);
+      const mine = !(tag?.taggedManagerId && tag.taggedManagerActive) || tag.taggedManagerId === viewer.id;
+      if (!pendingTaskVisibleTo(String(viewer.role), mine)) continue;
+      s.awaitingApproval += 1; s.inPeriod += 1;
+      if (status === "COMPLETED") s.completedAwaitingApproval += 1;
+      continue;
+    }
+    s.approved += 1; s.inPeriod += 1;
+    if (status === "COMPLETED") { if (!r.completedAt) s.completedWithoutTime += 1; }
+    else { s.open += 1; if (r.date.toISOString().slice(0, 10) < today) s.overdue += 1; }
+  }
+  void startUtc; void endUtc;
+  for (const a of assigned) {
+    const s = out.get(a.userId); if (!s) continue;
+    s.assigned.total += 1;
+    if (String(a.status) === "COMPLETED") { if (a.reviewedAt) s.assigned.confirmed += 1; else s.assigned.awaitingConfirmation += 1; }
+    else s.assigned.open += 1;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -171,6 +243,7 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   const weightedBy = new Map<string, typeof weightedRows>();
   for (const r of weightedRows) { const l = weightedBy.get(r.userId) ?? []; l.push(r); weightedBy.set(r.userId, l); }
   const details = await projectsAndManagers(ids);
+  const summaries = await summariesFor(viewer, ids, selfIds, fromIso, toIso, today, startUtc, endUtc);
   const out = people.map((p) => {
     const t = resolveTarget(targets.rows, p.platformId, p.id, p.teamId);
     const days: { date: string; completed: number | null; percent: number | null; state: "DATA" | "NO_TASK_DATA" }[] = [];
@@ -200,11 +273,16 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
       userId: p.id, name: p.name, employeeCode: p.code, teamName: p.teamName,
       projects: details.get(p.id)?.projects ?? [], reportingManager: details.get(p.id)?.reportingManager ?? null,
       targetPerDay: t.perDay, targetSource: t.source,
+      // setup state, kept apart from task data: a person with no team can still get a company default; only a person target needs nothing
+      targetState: t.perDay === null ? "NOT_CONFIGURED" : t.perDay > 0 ? "CONFIGURED" : "ZERO",
+      mappedToTeam: p.teamId !== null,
       daysWithData: dataDays,
       completedTotal: dataDays > 0 ? completedTotal : null,
       targetTotal,
       overallPercent: targetTotal && dataDays > 0 ? Math.round((completedTotal / targetTotal) * 1000) / 10 : null,
       weighted: weightedPerformance(weightedBy.get(p.id) ?? []),
+      tasks: summaries.get(p.id) ?? emptySummary(),
+      reason: taskReason(summaries.get(p.id) ?? emptySummary(), dataDays > 0 ? completedTotal : null),
       days,
     };
   });
@@ -300,6 +378,29 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
 }
 
 // ---------------------------------------------------------------------------------------------
+// ONE PERSON'S TASKS FOR THE DRILL-DOWN (click an employee in the report)
+// The same authorised list as the report (scopedPeople; a person outside it answers NOT_FOUND). "submitted" = the tasks the report counts from
+// (getProductivityTasks, same visibility rule for waiting tasks); "assigned" = tasks a manager assigned, shown apart and never added to the
+// figures. Assigned tasks are visible to an Admin and to the manager who assigned them, nobody else (the assigned-task rule).
+// ---------------------------------------------------------------------------------------------
+export async function getPersonTasks(viewerId: string, q: { userId: string; from?: string; to?: string; filters?: HrFilters }) {
+  const viewer = await getViewer(viewerId, false);
+  const { people } = await scopedPeople(viewer, { userId: q.userId, filters: q.filters });
+  const person = people.find((p) => p.id === q.userId);
+  if (!person) throw new Error("NOT_FOUND");
+  const submitted = await getProductivityTasks(viewerId, { from: q.from, to: q.to, userId: q.userId, filters: q.filters });
+  const tz = viewer.platform.timezone;
+  const from = parseIsoDay(submitted.from), to = parseIsoDay(submitted.to);
+  const assigned = (await assignedTasksForReport(q.userId, from, to).catch(() => [])).filter((a) => String(viewer.role) === "ADMIN" || a.assignedById === viewer.id);
+  return {
+    from: submitted.from, to: submitted.to, timezone: tz, today: submitted.today,
+    person: { id: person.id, name: person.name, employeeCode: person.code, teamName: person.teamName },
+    submitted: (submitted.tasks as Record<string, unknown>[]),
+    assigned,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
 // HOURLY TASKS FOR ONE DAY
 // Counts only: how many tasks each person finished in each clock hour. There is no hourly target.
 // ---------------------------------------------------------------------------------------------
@@ -348,15 +449,29 @@ async function getAdmin(viewerId: string) {
   return viewer;
 }
 
-export async function listTargets(viewerId: string) {
+// The company a target screen works on: the one asked for, else the viewer's own. HR / Admin may use every company they act on (company access: own,
+// assigned, or all), exactly like the report that lists those companies' people; anything else answers NOT_FOUND.
+async function targetCompany(viewerId: string, companyId?: unknown) {
   const viewer = await getAdmin(viewerId);
+  const access = await accessFor(viewerId);
+  const id = typeof companyId === "string" && companyId ? companyId : viewer.platformId;
+  assertCompany(access, id);
+  const companies = await prisma.platform.findMany({ where: access.all ? {} : { id: { in: access.ids } }, select: { id: true, name: true }, orderBy: { name: "asc" } });
+  return { viewer, platformId: id, companies };
+}
+
+export async function listTargets(viewerId: string, companyId?: unknown) {
+  const { platformId, companies } = await targetCompany(viewerId, companyId);
+  const viewer = { platformId };
   const [teams, people, t] = await Promise.all([
     prisma.team.findMany({ where: { platformId: viewer.platformId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
-    prisma.user.findMany({ where: { platformId: viewer.platformId, status: { notIn: ["SUSPENDED", "EXITED"] } }, select: { id: true, firstName: true, lastName: true, employeeCode: true }, orderBy: [{ firstName: "asc" }, { lastName: "asc" }] }),
+    prisma.user.findMany({ where: { platformId: viewer.platformId, status: { notIn: await inactiveStatuses() } }, select: { id: true, firstName: true, lastName: true, employeeCode: true }, orderBy: [{ firstName: "asc" }, { lastName: "asc" }] }),
     loadTargets([viewer.platformId]),
   ]);
   return {
     ready: t.ready,
+    companyId: platformId,
+    companies,
     company: t.rows.find((r) => !r.teamId && !r.userId)?.tasksPerDay ?? null,
     teams: teams.map((x) => ({ teamId: x.id, name: x.name, tasksPerDay: t.rows.find((r) => r.teamId === x.id)?.tasksPerDay ?? null })),
     people: people.map((x) => ({ userId: x.id, name: `${x.firstName} ${x.lastName}`.trim(), employeeCode: x.employeeCode, tasksPerDay: t.rows.find((r) => r.userId === x.id)?.tasksPerDay ?? null })),
@@ -364,8 +479,9 @@ export async function listTargets(viewerId: string) {
 }
 
 // scope "company" | "team" | "user". tasksPerDay null removes that target.
-export async function setTarget(viewerId: string, body: { scope?: unknown; id?: unknown; tasksPerDay?: unknown }) {
-  const viewer = await getAdmin(viewerId);
+export async function setTarget(viewerId: string, body: { scope?: unknown; id?: unknown; tasksPerDay?: unknown; companyId?: unknown }) {
+  const target = await targetCompany(viewerId, body.companyId);
+  const viewer = { id: target.viewer.id, platformId: target.platformId };
   const scope = String(body.scope ?? "");
   if (!["company", "team", "user"].includes(scope)) throw new Error("BAD_SCOPE");
   let tasksPerDay: number | null = null;
@@ -407,7 +523,7 @@ export async function setTarget(viewerId: string, body: { scope?: unknown; id?: 
       before: { tasksPerDay: before }, after: { tasksPerDay },
       summary: tasksPerDay === null ? `Removed the daily task target for ${label}` : `Set the daily task target for ${label} to ${tasksPerDay}`,
     });
-    return listTargets(viewerId);
+    return listTargets(viewerId, viewer.platformId);
   } catch (e) {
     if (isMissingTable(e)) throw new Error("TARGETS_NOT_READY");
     throw e;

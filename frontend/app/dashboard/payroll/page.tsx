@@ -217,13 +217,13 @@ export default function PayrollPage() {
     }
   }
 
-  const allowed = ["HR", "ADMIN"].includes(me?.role ?? "");
+  const allowed = me?.role === "HR"; // payroll management is HR only
 
   if (me && !allowed) {
     return (
       <div>
         <div className="rounded-2xl bg-white shadow-[var(--shadow-card)] p-8 text-center text-sm text-slate-600">
-          Payroll is limited to HR and administrators.
+          Payroll is limited to HR.
         </div>
       </div>
     );

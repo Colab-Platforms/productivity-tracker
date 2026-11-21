@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { NOT_ADMIN } from "../../lib/tracked.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { parseIsoDay, platformToday } from "../../lib/dates.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
@@ -26,12 +27,12 @@ async function peopleFor(viewerId: string) {
   const role = String(access.role);
   let where: Record<string, unknown>;
   if (role === "HR" || role === "ADMIN") {
-    where = { ...scopeWhere(access), status: { in: ["ACTIVE", "INVITED"] } };
+    where = { ...scopeWhere(access), status: { in: ["ACTIVE", "INVITED"] }, ...NOT_ADMIN };
   } else if (role === "MANAGER") {
     const ids = await visibleUserIds({ id: viewerId, role, platformId: access.ownPlatformId });
     // The manager's own list (people who report to them, teams they run, additional links) is already the whole scope, whatever company they are in:
     // the live board and Reports behave the same way.
-    where = { id: { in: [...new Set([...ids, viewerId])] }, status: { in: ["ACTIVE", "INVITED"] } };
+    where = { id: { in: [...new Set([...ids, viewerId])] }, status: { in: ["ACTIVE", "INVITED"] }, ...NOT_ADMIN };
   } else {
     where = { id: viewerId };
   }

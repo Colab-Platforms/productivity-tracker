@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { isLeftStatus, leftStatuses } from "../../lib/userStatus.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { accessFor, assertCompany, companyAccessReady, scopeWhere } from "../../lib/companyAccess.js";
 import { designationNames } from "../../lib/designations.js";
@@ -45,7 +46,7 @@ export async function listDesignations(viewerId: string, _companyId?: string) {
   // Who holds each title, by company, in ONE query (never one per row). Only people in companies this person can act on, never someone who left.
   // A person is listed under the company they actually belong to (users.platformId).
   const holders = await prisma.user.findMany({
-    where: { ...scopeWhere(a), designation: { not: null }, status: { not: "EXITED" } },
+    where: { ...scopeWhere(a), designation: { not: null }, status: { notIn: await leftStatuses() } },
     select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true, platformId: true, platform: { select: { name: true } } },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
@@ -122,7 +123,7 @@ async function grantor(viewerId: string) {
 export async function listAccess(viewerId: string) {
   const { top } = await grantor(viewerId);
   const [people, companies] = await Promise.all([
-    prisma.user.findMany({ where: { role: { in: top ? ["HR", "ADMIN"] : ["HR"] }, status: { not: "EXITED" } }, select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, platformId: true, platform: { select: { name: true } } }, orderBy: [{ firstName: "asc" }] }),
+    prisma.user.findMany({ where: { role: { in: top ? ["HR", "ADMIN"] : ["HR"] }, status: { notIn: await leftStatuses() } }, select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, platformId: true, platform: { select: { name: true } } }, orderBy: [{ firstName: "asc" }] }),
     prisma.platform.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
   let grants: { userId: string; platformId: string | null }[] = [];
@@ -150,7 +151,7 @@ export async function setAccess(viewerId: string, userId: string, body: Partial<
   if (!(await companyAccessReady())) throw new Error("FEATURES_NOT_READY");
   if (userId === viewerId) throw new Error("ACCESS_NOT_ALLOWED"); // nobody widens their own access
   const target = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, status: true, firstName: true, lastName: true, platformId: true } });
-  if (!target || target.status === "EXITED") throw new Error("NOT_FOUND");
+  if (!target || isLeftStatus(target.status)) throw new Error("NOT_FOUND");
   if (target.role !== "HR" && target.role !== "ADMIN") throw new Error("ACCESS_ONLY_HR_ADMIN");
   // An Admin who is not top management hands out specific companies to HR users only: no "All companies", no changing
   // other Admins, and never overwriting an "All companies" grant someone else made.

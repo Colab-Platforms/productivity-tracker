@@ -97,6 +97,11 @@ async function shape(rows: Row[]) {
 
 export type AssignedView = Awaited<ReturnType<typeof shape>>[number];
 
+/** One person's manager-assigned tasks dated in a period (read-only, for the Task Productivity drill-down). The caller decides who may see them. */
+export async function assignedTasksForReport(userId: string, from: Date, to: Date): Promise<AssignedView[]> {
+  return shape(await loadRows({ userId, date: { gte: from, lte: to } }));
+}
+
 function tell(taskId: string, ownerId: string, managerId: string, action: "assigned" | "updated" | "status") {
   emitTaskChange({ taskId, ownerId, action });
   if (managerId !== ownerId) emitTaskChange({ taskId, ownerId: managerId, action });

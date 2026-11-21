@@ -23,7 +23,7 @@ const c = statusCounts(people);
 ok("total counts every record", c.total === 7);
 ok("active / inactive / not started add up to the total", c.active + c.inactive + c.notStarted === c.total && c.active === 3 && c.inactive === 2 && c.notStarted === 2);
 ok("inactive splits into suspended and exited; not started into invited and candidate", c.suspended === 1 && c.exited === 1 && c.invited === 1 && c.candidate === 1);
-ok("empty list is all zeros", JSON.stringify(statusCounts([])) === JSON.stringify({ total: 0, active: 0, inactive: 0, notStarted: 0, suspended: 0, exited: 0, invited: 0, candidate: 0 }));
+ok("empty list is all zeros", JSON.stringify(statusCounts([])) === JSON.stringify({ total: 0, active: 0, inactive: 0, notStarted: 0, suspended: 0, exited: 0, terminated: 0, absconded: 0, invited: 0, candidate: 0 }));
 ok("view ACTIVE keeps only active people", inView(people, "ACTIVE").length === 3);
 ok("view INACTIVE keeps suspended and exited", inView(people, "INACTIVE").map((p) => p.id).join() === "3,4");
 ok("view ALL keeps everyone", inView(people, "ALL").length === 7);

@@ -7,6 +7,7 @@ import { CARRIED } from "./_filters/useHrFilters";
 import { usePathname, useRouter } from "next/navigation";
 import Bell from "./_notifications/Bell";
 import TopBar from "./_shell/TopBar";
+import ChatDrawer, { ChatDrawerContext } from "./_chat/ChatDrawer";
 import { pageTitle } from "./_shell/pageTitle";
 import { isNavActive } from "./_shell/navActive";
 import SearchBridge from "./_shell/SearchBridge";
@@ -254,16 +255,15 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       // ---- ADMIN: the owner control panel (owner-level modules first; the pages are the existing ones, nothing is duplicated) ----
       { href: "/dashboard/admin", label: "Owner Dashboard", ready: true, roles: ["ADMIN"], icon: I.grid },
       { href: "/dashboard/employees", label: "User Management", ready: true, roles: ["ADMIN"], icon: I.team },
-      { href: "/dashboard/organization-hierarchy", label: "Organization Hierarchy", ready: true, roles: ["ADMIN"], icon: I.team },
-      { href: "/dashboard/companies", label: "Company Management", ready: true, roles: ["ADMIN"], icon: I.building },
-      { href: "/dashboard/projects", label: "Project Management", ready: true, roles: ["ADMIN"], icon: I.tasks },
+      // One section for Company Management, Organization Hierarchy and Project Management (three tabs, three addresses under /dashboard/organization).
+      { href: "/dashboard/organization/company", label: "Organization Management", ready: true, roles: ["ADMIN"], icon: I.building },
       { href: "/dashboard/employee-overview", label: "Employee Overview", ready: true, roles: ["ADMIN"], icon: I.list },
       { href: "/dashboard/team-attendance", label: "Attendance", ready: true, roles: ["ADMIN"], icon: I.pulse },
+      { href: "/dashboard/break-management", label: "Break Management", ready: true, roles: ["ADMIN"], icon: I.pulse },
       { href: "/dashboard/leave", label: "Leave Oversight", ready: true, roles: ["ADMIN"], icon: I.holidays },
       { href: "/dashboard/approvals", label: "Task Monitoring", ready: true, roles: ["ADMIN"], icon: I.approvals },
-      { href: "/dashboard/meetings", label: "Team Huddle", ready: true, roles: ["ADMIN"], icon: I.huddle },
+      { href: "/dashboard/meetings", label: "Team Meet", ready: true, roles: ["ADMIN"], icon: I.huddle },
       { href: "/dashboard/reports?tab=productivity", label: "Productivity", ready: true, roles: ["ADMIN"], icon: I.trend },
-      { href: "/dashboard/payroll", label: "Payroll Oversight", ready: true, roles: ["ADMIN"], icon: I.payroll },
       { href: "/dashboard/documents", label: "Employee Documents", ready: true, roles: ["ADMIN"], icon: I.folder },
       { href: "/dashboard/reports", label: "Reports & Analytics", ready: true, roles: ["ADMIN"], icon: I.reports },
       { href: "/dashboard/approval-centre", label: "Approval Centre", ready: true, roles: ["ADMIN"], icon: I.approvals },
@@ -301,6 +301,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },
       { href: "/dashboard/my-login-activity", label: "My Login Activity", ready: true, icon: I.shield },
       { href: "/dashboard/leave", label: "Leave", ready: true, notRoles: ["HR", "ADMIN"], icon: I.holidays },
+      { href: "/dashboard/holidays", label: "Holidays", ready: true, notRoles: ["HR", "ADMIN"], icon: I.holidays },
       { href: "/dashboard/meetings", label: "Team Huddle", ready: true, notRoles: ["ADMIN"], icon: I.huddle },
       { href: "/dashboard/policies", label: "Policies", ready: true, notRoles: ["ADMIN"], icon: I.shield },
       { href: "/dashboard/payslips", label: "My Payslips", ready: true, notRoles: ["ADMIN"], icon: I.receipt },
@@ -324,7 +325,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       // Admin only: organisation-wide controls. HR has none of these.
       { href: "/dashboard/audit-logs", label: "Audit Logs", ready: true, roles: ["ADMIN"], icon: I.list },
       { href: "/dashboard/login-activity", label: "Login Activity", ready: true, roles: ["ADMIN", "HR"], icon: I.shield },
-      { href: "/dashboard/system-settings", label: "System Settings", ready: true, roles: ["ADMIN"], icon: I.admin },
       { href: "/dashboard/holidays", label: "Holidays", ready: true, roles: ["HR", "ADMIN"], icon: I.holidays },
     ],
   },
@@ -398,6 +398,11 @@ export default function DashboardLayout({
     });
   const [pendingQueries, setPendingQueries] = useState(0);
   const [chatUnread, setChatUnread] = useState(0);
+  // The chat drawer (opened from the header icon, the sidebar item, a desktop alert or the old /dashboard/chat address).
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatActive, setChatActive] = useState<string | null>(null);
+  const openChat = useCallback((id?: string | null) => { if (id !== undefined) setChatActive(id); setChatOpen(true); }, []);
+  const closeChat = useCallback(() => setChatOpen(false), []);
   const lastChatUnread = useRef<number | null>(null); // null until the first count, so opening the app never pings
 
   useEffect(() => {
@@ -476,7 +481,7 @@ export default function DashboardLayout({
         // More unread than a moment ago = a message just arrived: ping (and a desktop popup if this tab is in the background).
         if (lastChatUnread.current !== null && r.unread > lastChatUnread.current) {
           ping();
-          desktopAlert(() => router.push("/dashboard/chat"));
+          desktopAlert(() => openChat());
         }
         lastChatUnread.current = r.unread;
         setChatUnread(r.unread);
@@ -651,6 +656,8 @@ export default function DashboardLayout({
                     key={item.label}
                     href={item.href}
                     onClick={(e) => {
+                      // the Chat entry opens the drawer instead of a page
+                      if (item.badge === "chat" && !(e.metaKey || e.ctrlKey || e.shiftKey)) { e.preventDefault(); openChat(); setOpen(false); return; }
                       // company, project and manager chosen on one filtered HR page follow you to the next one
                       if (e.metaKey || e.ctrlKey || e.shiftKey || !CARRY_PAGES.has(item.href.split("?")[0]) || !CARRY_PAGES.has(pathname)) return;
                       const here = new URLSearchParams(window.location.search);
@@ -714,6 +721,7 @@ export default function DashboardLayout({
 
   return (
     <MeContext.Provider value={me}>
+      <ChatDrawerContext.Provider value={{ open: chatOpen, openChat, closeChat }}>
       <ThemeProvider>
       <NotificationsProvider>
       <Suspense fallback={null}><SearchBridge onChange={onNavSearch} /></Suspense>
@@ -752,17 +760,26 @@ export default function DashboardLayout({
               </svg>
             </button>
             <h1 className="min-w-0 truncate text-[16px] font-semibold tracking-tight text-slate-900">{headerTitle}</h1>
-            <div className="ml-auto flex shrink-0 items-center gap-0.5"><ThemeIconButton /><Bell /></div>
+            <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              <ThemeIconButton />
+              <button type="button" onClick={() => openChat()} aria-label={chatUnread > 0 ? `Open chat, ${chatUnread} unread` : "Open chat"} aria-controls="chat-drawer" data-testid="chat-open-mobile" className="relative flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-[var(--nav-hover)]">
+                <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3.5 5.5A2 2 0 0 1 5.5 3.5h9a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3h0a2 2 0 0 1-2-2z" /></svg>
+                {chatUnread > 0 && <span className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-rose-500 px-1 text-center text-[10px] font-bold leading-4 text-white">{Math.min(99, chatUnread)}</span>}
+              </button>
+              <Bell />
+            </div>
             </div>
           </header>
 
-          <TopBar me={me} title={headerTitle} onSignOut={signOut} collapsed={collapsed} onToggleSidebar={toggleSidebar} />
+          <TopBar me={me} title={headerTitle} onSignOut={signOut} collapsed={collapsed} onToggleSidebar={toggleSidebar} chatUnread={chatUnread} onOpenChat={() => openChat()} />
 
           <main className="app-container app-main animate-in">{children}</main>
         </div>
       </div>
+      <ChatDrawer open={chatOpen} activeId={chatActive} onSelect={setChatActive} onClose={closeChat} />
       </NotificationsProvider>
       </ThemeProvider>
+      </ChatDrawerContext.Provider>
     </MeContext.Provider>
   );
 }

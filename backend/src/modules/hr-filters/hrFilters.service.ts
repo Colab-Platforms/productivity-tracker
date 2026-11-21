@@ -1,4 +1,6 @@
 import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
+import { inactiveStatuses, statusReady, statusKnownSync } from "../../lib/userStatus.js";
+import { NOT_ADMIN } from "../../lib/tracked.js";
 import { linkedEmployeesOfManagers } from "../../lib/reportingLinks.js";
 import { prisma } from "../../lib/prisma.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
@@ -20,7 +22,7 @@ export async function authorizedPeople(viewerId: string): Promise<{ role: string
   const role = String(viewer.role);
   if (role === "HR" || role === "ADMIN") {
     const access = await accessFor(viewerId);
-    const rows = await prisma.user.findMany({ where: { ...scopeWhere(access), status: { in: [...LIVE] } }, select: { id: true } });
+    const rows = await prisma.user.findMany({ where: { ...scopeWhere(access), status: { in: [...LIVE] }, ...NOT_ADMIN }, select: { id: true } });
     return { role, platformId: viewer.platformId, ids: rows.map((r) => r.id) };
   }
   if (role === "MANAGER") return { role, platformId: viewer.platformId, ids: await visibleUserIds({ id: viewer.id, role, platformId: viewer.platformId }) };
@@ -38,7 +40,8 @@ export function personWhere(f: HrFilters, linkedIds: string[] = []) {
     // A person on several of the chosen projects is still one row: this is a condition on the person, not a join.
     ...(f.projectIds.length ? { teamMemberships: { some: { teamId: { in: f.projectIds }, isActive: true } } } : {}),
     ...(f.designation ? { designation: { equals: f.designation, mode: "insensitive" as const } } : {}),
-    ...(f.status ? { status: f.status as never } : {}),
+    // TERMINATED / ABSCONDED reach the database only once it knows them (see lib/userStatus.ts); before that nobody can hold them, so the filter matches nobody.
+    ...(f.status ? (f.status === "TERMINATED" || f.status === "ABSCONDED") && !statusKnownSync() ? { id: "00000000-0000-0000-0000-000000000000" } : { status: f.status as never } : {}),
     ...(f.q
       ? { OR: [{ firstName: { contains: f.q, mode: "insensitive" as const } }, { lastName: { contains: f.q, mode: "insensitive" as const } }, { employeeCode: { contains: f.q, mode: "insensitive" as const } }] }
       : {}),
@@ -58,6 +61,7 @@ async function departmentMembers(f: HrFilters): Promise<Set<string> | null> {
 }
 
 export async function resolvePeople(viewerId: string, f: HrFilters) {
+  await statusReady();
   const scope = await authorizedPeople(viewerId);
   const inDept = await departmentMembers(f);
   const linked = f.managerIds.length ? await linkedEmployeesOfManagers(f.managerIds) : [];
@@ -72,10 +76,11 @@ export async function resolvePeople(viewerId: string, f: HrFilters) {
  * many the viewer may see (organization) and how many are left. Used by every report so tables, cards, charts and exports share one list.
  */
 export async function narrowIds(ids: string[], f: HrFilters | undefined, opts?: { activeOnly?: boolean }): Promise<{ ids: string[]; scope: { orgTotal: number; filteredTotal: number } }> {
+  await statusReady();
   const out = await narrowAll(ids, f);
   if (!opts?.activeOnly) return out;
   // For screens that list only people who are not suspended or exited, the "x of y" counts must describe that same list.
-  const live = { status: { notIn: ["SUSPENDED", "EXITED"] as ("SUSPENDED" | "EXITED")[] } };
+  const live = { status: { notIn: await inactiveStatuses() } };
   const [orgTotal, filteredTotal] = await Promise.all([
     ids.length ? prisma.user.count({ where: { id: { in: ids }, ...live } }) : 0,
     out.ids.length ? prisma.user.count({ where: { id: { in: out.ids }, ...live } }) : 0,
@@ -84,6 +89,7 @@ export async function narrowIds(ids: string[], f: HrFilters | undefined, opts?: 
 }
 
 async function narrowAll(ids: string[], f: HrFilters | undefined): Promise<{ ids: string[]; scope: { orgTotal: number; filteredTotal: number } }> {
+  await statusReady();
   if (!f || !isFiltering(f) || ids.length === 0) return { ids, scope: { orgTotal: ids.length, filteredTotal: ids.length } };
   const linked = f.managerIds.length ? await linkedEmployeesOfManagers(f.managerIds) : [];
   const inDept = await departmentMembers(f);

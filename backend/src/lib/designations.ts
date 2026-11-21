@@ -19,6 +19,7 @@ export const DESIGNATIONS = [
   "AI/ML Developer",
   "Associate",
   "BDE",
+  "Business Advisor",
   "Business Head",
   "Business Operations & Legal",
   "Content Creator",

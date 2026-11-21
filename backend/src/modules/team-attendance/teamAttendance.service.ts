@@ -7,6 +7,8 @@
 // company) — the same function Live Team and Reports use, so the three can never disagree.
 // "Today" and every calendar day are the VIEWER'S company day (platform timezone).
 
+import { inactiveStatuses } from "../../lib/userStatus.js";
+import { NOT_ADMIN } from "../../lib/tracked.js";
 import { isSupervisor, monitoringIds } from "../../lib/supervisor.js";
 import { prisma } from "../../lib/prisma.js";
 import { narrowIds, resolvePeople } from "../hr-filters/hrFilters.service.js";
@@ -116,7 +118,7 @@ function statusStartedAt(s: SessionWithParts, openBreak: { startedAt: Date } | n
 
 async function loadPeople(userIds: string[]) {
   return prisma.user.findMany({
-    where: { id: { in: userIds }, status: { notIn: ["SUSPENDED", "EXITED"] } },
+    where: { id: { in: userIds }, status: { notIn: await inactiveStatuses() } },
     select: {
       id: true,
       firstName: true,
@@ -273,7 +275,7 @@ export async function getShiftBreakdown(viewerId: string, dateStr?: string, filt
   const narrowed = await narrowIds(allVisible, filters);
   const userIds = narrowed.ids;
   // The counts must describe the same people the table shows: a manager's reporting line can still list exited or suspended people.
-  const liveWhere = { status: { notIn: ["SUSPENDED", "EXITED"] as ("SUSPENDED" | "EXITED")[] } };
+  const liveWhere = { status: { notIn: await inactiveStatuses() } };
   const [orgTotal, filteredTotal] = await Promise.all([
     prisma.user.count({ where: { id: { in: allVisible }, ...liveWhere } }),
     userIds.length ? prisma.user.count({ where: { id: { in: userIds }, ...liveWhere } }) : Promise.resolve(0),
@@ -381,14 +383,14 @@ export async function getAttendanceReport(
   const allowed = q.self
     ? [viewer.id]
     : role === "HR" || role === "ADMIN"
-      ? (await prisma.user.findMany({ where: { ...scopeWhere(await accessFor(viewerId)), status: { in: ["ACTIVE", "INVITED"] } }, select: { id: true } })).map((u) => u.id)
+      ? (await prisma.user.findMany({ where: { ...scopeWhere(await accessFor(viewerId)), status: { in: ["ACTIVE", "INVITED"] }, ...NOT_ADMIN }, select: { id: true } })).map((u) => u.id)
       : await visibleUserIds({ id: viewer.id, role, platformId: viewer.platformId });
   // The HR filters (company, project, reporting manager, name/ID search) narrow what the viewer may already see; the KPIs, the table and the exports are
   // all built from this one list.
   const narrowed = await narrowIds(allowed, q.filters, { activeOnly: true });
   const people = narrowed.ids.length
     ? await prisma.user.findMany({
-        where: { id: { in: narrowed.ids }, status: { notIn: ["SUSPENDED", "EXITED"] } },
+        where: { id: { in: narrowed.ids }, status: { notIn: await inactiveStatuses() } },
         select: {
           id: true,
           firstName: true,

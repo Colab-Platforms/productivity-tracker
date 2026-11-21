@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { inactiveStatuses } from "../../lib/userStatus.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { parseIsoDay, zonedToUtc, localDayOf } from "../../lib/dates.js";
 import { notifyUsers } from "../../lib/notify.js";
@@ -102,7 +103,7 @@ async function checkAttendees(raw: unknown, organizerId: string, organizer: { id
   if (ids.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) throw new Error("ATTENDEE_NOT_FOUND");
   // Only active people the organizer may invite (see invitableWhere).
   const found = await prisma.user.findMany({
-    where: { AND: [{ id: { in: ids }, status: { notIn: ["EXITED", "SUSPENDED"] } }, await invitableWhere(organizer)] },
+    where: { AND: [{ id: { in: ids }, status: { notIn: await inactiveStatuses() } }, await invitableWhere(organizer)] },
     select: { id: true, firstName: true, lastName: true, email: true },
   });
   if (found.length !== ids.length) throw new Error("ATTENDEE_NOT_FOUND");
@@ -274,7 +275,7 @@ export async function people(userId: string) {
   const v = await who(userId);
   if (!CREATORS.includes(v.role)) throw new Error("NOT_ALLOWED");
   const rows = await prisma.user.findMany({
-    where: { AND: [{ status: { notIn: ["EXITED", "SUSPENDED"] }, id: { not: userId } }, await invitableWhere({ id: userId, role: v.role, platformId: v.platformId })] },
+    where: { AND: [{ status: { notIn: await inactiveStatuses() }, id: { not: userId } }, await invitableWhere({ id: userId, role: v.role, platformId: v.platformId })] },
     select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
     take: 1000,

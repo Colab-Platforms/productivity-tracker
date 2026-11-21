@@ -1,4 +1,5 @@
-import { notWarningLetter } from "../warning-letters/warnings.logic.js";
+import { isLetterRow, notWarningLetter } from "../warning-letters/warnings.logic.js";
+import { inactiveStatuses } from "../../lib/userStatus.js";
 import { prisma } from "../../lib/prisma.js";
 import { isOwnerAdmin, ownerAdminIds } from "../../lib/owner.js";
 import { auditNote } from "../../lib/auditContext.js";
@@ -125,6 +126,29 @@ export async function listMine(userId: string) {
 
 // --- HR / Admin --------------------------------------------------------------------------------
 
+/** Every upload, re-upload, verification and rejection of ONE document, oldest first, read from the immutable audit log. Names, dates, statuses
+ *  and reasons only (never a file reference). HR / Admin of the person's company (or an owner). */
+export async function documentHistory(viewerId: string, documentId: string) {
+  const v = await staff(viewerId);
+  const doc = await prisma.employeeDocument.findUnique({ where: { id: documentId }, select: { id: true, platformId: true, userId: true, rejectionReason: true, uploadedAt: true, reviewedAt: true } });
+  if (!doc || isLetterRow(doc.rejectionReason)) throw new Error("NOT_FOUND");
+  if (doc.platformId !== v.platformId && !(await ownerAdminIds()).includes(viewerId)) throw new Error("NOT_FOUND");
+  const rows = await prisma.auditLog.findMany({
+    where: { recordType: "EmployeeDocument", recordId: documentId },
+    orderBy: { createdAt: "asc" },
+    take: 100,
+    select: { createdAt: true, summary: true, before: true, after: true, actor: { select: { firstName: true, lastName: true } } },
+  });
+  const pick = (j: unknown) => {
+    const o = (j && typeof j === "object" ? j : {}) as Record<string, unknown>;
+    return { status: (o.status as string) ?? null, fileName: (o.fileName as string) ?? null, rejectionReason: (o.rejectionReason as string) ?? null };
+  };
+  return {
+    documentId,
+    events: rows.map((r) => ({ at: r.createdAt, by: r.actor ? name(r.actor) : "System", summary: r.summary ?? "", before: pick(r.before), after: pick(r.after) })),
+  };
+}
+
 export async function tracking(
   viewerId: string,
   f: { q?: unknown; status?: unknown; employmentType?: unknown; teamId?: unknown }
@@ -140,7 +164,7 @@ export async function tracking(
   const users = await prisma.user.findMany({
     where: {
       platformId: v.platformId,
-      status: { notIn: ["EXITED", "SUSPENDED"] },
+      status: { notIn: await inactiveStatuses() },
       ...(owners.length ? { id: { notIn: owners } } : {}),
       ...(q ? { OR: [{ firstName: { contains: q, mode: "insensitive" as const } }, { lastName: { contains: q, mode: "insensitive" as const } }, { employeeCode: { contains: q, mode: "insensitive" as const } }] } : {}),
       ...(teamId ? { teamMemberships: { some: { teamId, isActive: true } } } : {}),

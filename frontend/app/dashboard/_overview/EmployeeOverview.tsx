@@ -11,6 +11,7 @@ import Avatar from "../_photos/Avatar";
 import FilterBar from "../_filters/FilterBar";
 import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 import { KpiCard, Panel } from "../_dashboard/widgets";
+import EmployeeListDrawer, { type DrawerView } from "./EmployeeListDrawer";
 import { STATUS_VIEW_LABEL, byCompany, byDepartment, byDesignation, byManager, directReports, inView, matchesSearch, parseStatusView, sortPeople, statusCounts, tenure, viewCount, type Bucket, type OverviewPerson, type SortKey, type StatusView } from "./stats";
 
 // ---------------------------------------------------------------------------
@@ -28,8 +29,10 @@ const STATUS_CHIP: Record<string, string> = {
   CANDIDATE: "bg-sky-50 text-sky-700",
   SUSPENDED: "bg-amber-50 text-amber-700",
   EXITED: "bg-slate-100 text-slate-600",
+  TERMINATED: "bg-rose-50 text-rose-700",
+  ABSCONDED: "bg-orange-50 text-orange-700",
 };
-const STATUS_LABEL: Record<string, string> = { ACTIVE: "Active", INVITED: "Invited", CANDIDATE: "Candidate", SUSPENDED: "Suspended", EXITED: "Exited" };
+const STATUS_LABEL: Record<string, string> = { ACTIVE: "Active", INVITED: "Invited", CANDIDATE: "Candidate", SUSPENDED: "Suspended", EXITED: "Exited", TERMINATED: "Terminated", ABSCONDED: "Absconded" };
 const PAGE_SIZE = 20;
 
 const icon = (d: string) => (
@@ -173,8 +176,10 @@ const CHIP_ORDER: { key: StatusView; label: string; sub?: boolean }[] = [
   { key: "ALL", label: "All" },
   { key: "ACTIVE", label: "Active" },
   { key: "INACTIVE", label: "Inactive" },
-  { key: "SUSPENDED", label: "Suspended", sub: true },
   { key: "EXITED", label: "Exited", sub: true },
+  { key: "TERMINATED", label: "Terminated", sub: true },
+  { key: "ABSCONDED", label: "Absconded", sub: true },
+  { key: "SUSPENDED", label: "Suspended (older)", sub: true },
   { key: "NOT_STARTED", label: "Not started yet" },
   { key: "INVITED", label: "Invited", sub: true },
   { key: "CANDIDATE", label: "Candidates", sub: true },
@@ -207,6 +212,8 @@ export default function EmployeeOverview() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState<string | null>(null);
+  // The card whose employee list is open in the side drawer (null = closed).
+  const [drawer, setDrawer] = useState<DrawerView | null>(null);
 
   // Same list and same filter names as User Management. The status view is applied here, not on the server, so the four tiles always show the
   // whole split for the chosen company / project / manager.
@@ -214,7 +221,7 @@ export default function EmployeeOverview() {
   useEffect(() => {
     if (!ready) return;
     let live = true;
-    apiGet<Res>(`/admin/users${qs ? `?${qs}` : ""}`)
+    apiGet<Res>(`/admin/users?employeesOnly=1${qs ? `&${qs}` : ""}`)
       .then((r) => {
         if (!live) return;
         setRes(r);
@@ -239,6 +246,8 @@ export default function EmployeeOverview() {
   const current = Math.min(page, pages);
   const rows = directory.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
   const opened = openId ? everyone.find((p) => p.id === openId) ?? null : null;
+  // departments = the teams the signed-in person may see (the system has no separate department field)
+  const departmentOptions = useMemo(() => (options?.projects ?? []).map((p) => ({ id: p.id, name: p.name })), [options]);
   const loading = res === null && !error;
   const viewWord = view === "ALL" ? "" : STATUS_VIEW_LABEL[view].replace(/ \(.*\)$/, "").toLowerCase();
 
@@ -261,10 +270,10 @@ export default function EmployeeOverview() {
       />
 
       <section aria-label="Headcount" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div data-testid="kpi-total"><KpiCard label="Total employees" value={String(counts.total)} sub="all records in view" tone="green" icon={ICONS.all} loading={loading} onClick={() => choose("ALL")} selected={view === "ALL"} hint="Show all employees" /></div>
-        <div data-testid="kpi-active"><KpiCard label="Active" value={String(counts.active)} sub={counts.total ? `${Math.round((counts.active / counts.total) * 100)}% of total` : "working now"} tone="sky" icon={ICONS.active} loading={loading} onClick={() => choose("ACTIVE")} selected={view === "ACTIVE"} hint="Show the active employees" /></div>
-        <div data-testid="kpi-inactive"><KpiCard label="Inactive" value={String(counts.inactive)} sub={`${counts.suspended} suspended · ${counts.exited} exited`} tone="rose" icon={ICONS.inactive} loading={loading} onClick={() => choose("INACTIVE")} selected={view === "INACTIVE" || view === "SUSPENDED" || view === "EXITED"} hint="Show the suspended and exited employees" /></div>
-        <div data-testid="kpi-not-started"><KpiCard label="Not started yet" value={String(counts.notStarted)} sub={`${counts.invited} invited · ${counts.candidate} candidates`} tone="amber" icon={ICONS.pending} loading={loading} onClick={() => choose("NOT_STARTED")} selected={view === "NOT_STARTED" || view === "INVITED" || view === "CANDIDATE"} hint="Show the invited employees and candidates" /></div>
+        <div data-testid="kpi-total"><KpiCard label="Total employees" value={String(counts.total)} sub="all records in view" tone="green" icon={ICONS.all} loading={loading} onClick={() => setDrawer("ALL")} selected={drawer === "ALL"} hint="Open the list of all employees" /></div>
+        <div data-testid="kpi-active"><KpiCard label="Active" value={String(counts.active)} sub={counts.total ? `${Math.round((counts.active / counts.total) * 100)}% of total` : "working now"} tone="sky" icon={ICONS.active} loading={loading} onClick={() => setDrawer("ACTIVE")} selected={drawer === "ACTIVE"} hint="Open the list of active employees" /></div>
+        <div data-testid="kpi-inactive"><KpiCard label="Inactive" value={String(counts.inactive)} sub={`${counts.exited} exited · ${counts.terminated} terminated · ${counts.absconded} absconded`} tone="rose" icon={ICONS.inactive} loading={loading} onClick={() => setDrawer("INACTIVE")} selected={drawer === "INACTIVE"} hint="Open the list of exited, terminated and absconded employees" /></div>
+        <div data-testid="kpi-not-started"><KpiCard label="Not started yet" value={String(counts.notStarted)} sub={`${counts.invited} invited · ${counts.candidate} candidates`} tone="amber" icon={ICONS.pending} loading={loading} onClick={() => setDrawer("NOT_STARTED")} selected={drawer === "NOT_STARTED"} hint="Open the list of employees who have not started yet" /></div>
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -385,6 +394,9 @@ export default function EmployeeOverview() {
         )}
       </Panel>
 
+      {drawer && (
+        <EmployeeListDrawer view={drawer} qs={qs} departments={departmentOptions} onClose={() => setDrawer(null)} onProfile={setOpenId} suspended={!!opened} />
+      )}
       {opened && <Profile p={opened} everyone={everyone} onClose={() => setOpenId(null)} onOpen={setOpenId} />}
     </div>
   );

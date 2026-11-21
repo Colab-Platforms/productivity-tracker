@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { inactiveStatuses } from "../../lib/userStatus.js";
 import { saveUpload, readStored, contentTypeFor } from "../../lib/storage.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { emitPolicyChange } from "../../lib/realtime.js";
@@ -147,7 +148,7 @@ function appliesTo(p: { role: string; teamIds: string[]; employmentType: string 
 
 async function people(platformId: string): Promise<Person[]> {
   const rows = await prisma.user.findMany({
-    where: { platformId, status: { notIn: ["EXITED", "SUSPENDED"] } },
+    where: { platformId, status: { notIn: await inactiveStatuses() } },
     select: { id: true, firstName: true, lastName: true, employeeCode: true, designation: true, role: true, teamMemberships: { where: { isActive: true }, select: { team: { select: { id: true, name: true } } } } },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });

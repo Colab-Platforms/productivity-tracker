@@ -274,11 +274,11 @@ export default function PayrollApprovePage() {
     }
   }
 
-  if (me && !["HR", "ADMIN"].includes(me.role)) {
+  if (me && me.role !== "HR") {
     return (
       <div>
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">
-          Payroll is limited to HR and administrators.
+          Payroll is limited to HR.
         </div>
       </div>
     );

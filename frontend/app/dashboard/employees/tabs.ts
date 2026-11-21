@@ -20,12 +20,3 @@ export function tabFor(role: string | null | undefined, wanted: string | null | 
   return allowed.find((t) => t === wanted) ?? allowed[0] ?? null;
 }
 
-// System Settings (its own page, Admin only): the configuration tabs of the same components. User Management still has them too.
-export const SETTINGS_TABS = ["Shifts", "Thresholds"] as const;
-export function settingsTabsFor(role: string | null | undefined): Tab[] {
-  return role === "ADMIN" ? [...SETTINGS_TABS] : [];
-}
-export function settingsTabFor(role: string | null | undefined, wanted: string | null | undefined): Tab | null {
-  const allowed = settingsTabsFor(role);
-  return allowed.find((x) => x === wanted) ?? allowed[0] ?? null;
-}

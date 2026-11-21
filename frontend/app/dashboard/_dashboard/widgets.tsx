@@ -27,27 +27,27 @@ const KPI_TONE: Record<string, string> = {
 // A selector is a real button: the whole card is the target, it shows a pointer and a lift on hover, and a ring while it is the selected one.
 export function KpiCard({ label, value, sub, tone = "green", icon, href, loading, onClick, selected, hint }: { label: string; value: string; sub?: string; tone?: keyof typeof KPI_TONE; icon: ReactNode; href?: string; loading?: boolean; onClick?: () => void; selected?: boolean; hint?: string }) {
   const body = (
-    <div className={`${PANEL} flex items-center gap-3 p-3.5 ${href || onClick ? "transition hover:shadow-[var(--shadow-lift)]" : ""} ${onClick && selected ? "ring-2 ring-indigo-500" : onClick ? "ring-1 ring-transparent hover:ring-indigo-200" : ""}`}>
+    <div className={`${PANEL} flex h-full items-center gap-3 p-3.5 ${href || onClick ? "transition hover:shadow-[var(--shadow-lift)]" : ""} ${onClick && selected ? "ring-2 ring-indigo-500" : onClick ? "ring-1 ring-transparent hover:ring-indigo-200" : ""}`}>
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${KPI_TONE[tone]}`}>{icon}</span>
       <div className="min-w-0">
-        <p className="truncate text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
+        <p className="line-clamp-2 text-[11px] font-medium leading-snug text-[var(--text-secondary)]" title={label}>{label}</p>
         {loading ? (
           <div className="skeleton mt-1 h-6 w-14" />
         ) : (
           <p className="text-[22px] font-bold leading-tight tracking-tight text-slate-900 tabular-nums">{value}</p>
         )}
-        {sub && !loading && <p className="truncate text-[11px] text-[var(--text-secondary)]">{sub}</p>}
+        {sub && !loading && <p className="line-clamp-2 text-[11px] leading-snug text-[var(--text-secondary)]" title={sub}>{sub}</p>}
       </div>
     </div>
   );
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} aria-pressed={!!selected} title={hint ?? `Show the people behind ${label.toLowerCase()}`} className="block w-full cursor-pointer rounded-2xl text-left focus-visible:outline-2 focus-visible:outline-indigo-500">
+      <button type="button" onClick={onClick} aria-pressed={!!selected} title={hint ?? `Show the people behind ${label.toLowerCase()}`} className="block h-full w-full cursor-pointer rounded-2xl text-left focus-visible:outline-2 focus-visible:outline-indigo-500">
         {body}
       </button>
     );
   }
-  return href ? <Link href={href} className="block focus-visible:outline-2">{body}</Link> : body;
+  return href ? <Link href={href} className="block h-full focus-visible:outline-2">{body}</Link> : body;
 }
 
 // ---- Panel (titled card) -------------------------------------------------------------------------------------------------------------
@@ -76,7 +76,7 @@ export type StatusRow = {
   photoAt?: string | null;
   designation: string | null;
   department: string;
-  status: string; // employment status as stored: ACTIVE, INVITED, SUSPENDED, EXITED
+  status: string; // employment status as stored: ACTIVE, EXITED, TERMINATED, ABSCONDED (older: INVITED, SUSPENDED)
   attendance: string; // today's attendance, worked out from the report
 };
 
@@ -85,6 +85,8 @@ const STATUS_CHIP: Record<string, string> = {
   INVITED: "bg-amber-50 text-amber-700",
   SUSPENDED: "bg-rose-50 text-rose-700",
   EXITED: "bg-slate-100 text-slate-600",
+  TERMINATED: "bg-rose-50 text-rose-700",
+  ABSCONDED: "bg-orange-50 text-orange-700",
 };
 const ATT_CHIP: Record<string, string> = {
   Present: "bg-emerald-50 text-emerald-700",

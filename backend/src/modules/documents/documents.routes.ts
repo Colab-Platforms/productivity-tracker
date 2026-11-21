@@ -43,6 +43,7 @@ router.get("/mine", run((req) => documents.listMine(uid(req))));
 
 // HR / Admin (the service checks the role and the company).
 router.get("/tracking", run((req) => documents.tracking(uid(req), { q: req.query.q, status: req.query.status, employmentType: req.query.employmentType, teamId: req.query.teamId })));
+router.get("/history/:id", run((req) => documents.documentHistory(uid(req), String(req.params.id))));
 router.get("/employees/:userId", run((req) => documents.employeeChecklist(uid(req), String(req.params.userId))));
 router.post("/employees/:userId/employment-type", run((req) => documents.setEmploymentType(uid(req), String(req.params.userId), req.body?.employmentType)));
 

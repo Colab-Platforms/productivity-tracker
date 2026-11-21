@@ -1,4 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
+import { leftStatuses } from "../../lib/userStatus.js";
+import { NOT_ADMIN } from "../../lib/tracked.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { platformToday } from "../../lib/dates.js";
 import { getAttendanceCalendar } from "../team-attendance/attendanceCalendar.service.js";
@@ -29,14 +31,14 @@ export async function overview(adminId: string) {
 
   const [people, teamCount, companies, calendar, leave, awayRows, sessions, tasks, activity] = await Promise.all([
     prisma.user.findMany({
-      where: { ...scope, status: { in: ["ACTIVE", "INVITED"] } },
+      where: { ...scope, status: { in: ["ACTIVE", "INVITED"] }, ...NOT_ADMIN },
       select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, status: true, platformId: true, platform: { select: { name: true } }, reportsTo: { select: { id: true, role: true, status: true } } },
     }),
     prisma.team.count({ where: { ...scope, isActive: true } }),
     prisma.platform.findMany({ where: access.all ? {} : { id: { in: access.ids } }, select: { id: true, name: true } }),
     getAttendanceCalendar(adminId, { from: iso(from), to: iso(today) }),
     leaveOverview(adminId),
-    prisma.leaveDay.groupBy({ by: ["date"], where: { ...scope, date: { gte: today, lte: soon }, user: { status: { not: "EXITED" } } }, _count: { _all: true } }),
+    prisma.leaveDay.groupBy({ by: ["date"], where: { ...scope, date: { gte: today, lte: soon }, user: { status: { notIn: await leftStatuses() } } }, _count: { _all: true } }),
     prisma.workSession.findMany({ where: { ...scope, date: { gte: from, lte: today } }, select: { userId: true, date: true, productiveSeconds: true } }),
     activeTasks().then((live) => prisma.dailyTask.findMany({ where: { ...scope, date: { gte: from, lte: today }, status: { not: "CANCELLED" }, ...live }, select: { id: true, date: true, status: true, approvalStatus: true, outcome: true } })),
     listLogs(adminId, { pageSize: 25 }).then((r) => r.items.slice(0, 8)).catch(() => []),

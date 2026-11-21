@@ -47,11 +47,19 @@ const adminPage = readFileSync(join(FE, "dashboard", "admin", "page.tsx"), "utf8
 ok("the Owner Dashboard decides its old-link redirect from useSearchParams, not window.location", /useSearchParams\(\)/.test(adminPage));
 
 // 4. owner-only pages are guarded for Admin, and the guard does not name any person
-const GUARDED = ["admin", "companies", "projects", "audit-logs", "employee-overview", "organization-hierarchy", "approval-centre"];
+const GUARDED = ["admin", "audit-logs", "employee-overview", "approval-centre"];
 for (const g of GUARDED) {
   const src = readFileSync(join(FE, "dashboard", g, "page.tsx"), "utf8");
   ok(`/dashboard/${g} is guarded with useRoleGate(["ADMIN"])`, /useRoleGate\(\["ADMIN"\]/.test(src));
 }
+// Organization Management (Company Management, Organization Hierarchy, Project Management): the shell and each module view guard for Admin, and each tab page uses the shell
+const shell = readFileSync(join(FE, "dashboard", "organization", "OrganizationShell.tsx"), "utf8");
+const GATE = /useRoleGate\(\["ADMIN"\]/;
+ok("the Organization Management shell is guarded for Admin only", GATE.test(shell));
+for (const [tab, view] of [["company", "CompaniesView"], ["hierarchy", "HierarchyView"], ["projects", "ProjectsView"]]) {
+  ok(`/dashboard/organization/${tab} renders its module inside the shell`, /OrganizationShell/.test(readFileSync(join(FE, "dashboard", "organization", tab, "page.tsx"), "utf8")) && GATE.test(readFileSync(join(FE, "dashboard", "organization", "_views", view + ".tsx"), "utf8")));
+}
+for (const [old, to] of [["companies", "/dashboard/organization/company"], ["projects", "/dashboard/organization/projects"], ["organization-hierarchy", "/dashboard/organization/hierarchy"]]) ok(`the old /dashboard/${old} address redirects to ${to}`, readFileSync(join(FE, "dashboard", old, "page.tsx"), "utf8").includes(`redirect("${to}")`));
 const gate = readFileSync(join(FE, "dashboard", "_routing", "useRoleGate.ts"), "utf8");
 ok("the route guard decides by role only (no employee code, name or id check)", !/employeeCode|firstName|lastName|OWNER_CODES|=== "AI-|=== "SSB|=== "JAY/.test(gate));
 
@@ -63,10 +71,13 @@ ok("Reports with no tab lights only Reports & Analytics", lit("/dashboard/report
 ok("Reports on the productivity tab lights only the Productivity shortcut", lit("/dashboard/reports", "tab=productivity").join() === "/dashboard/reports?tab=productivity");
 ok("Reports on another tab (shift) lights the plain entry", lit("/dashboard/reports", "tab=shift").join() === "/dashboard/reports");
 ok("User Management with no tab lights only User Management", lit("/dashboard/employees", "").join() === "/dashboard/employees");
-ok("User Management on its Teams tab still lights only User Management (System Settings has its own page)", lit("/dashboard/employees", "tab=Teams").join() === "/dashboard/employees");
-ok("System Settings is its own page and lights only itself, on either tab", lit("/dashboard/system-settings", "").join() === "/dashboard/system-settings" && lit("/dashboard/system-settings", "tab=Thresholds").join() === "/dashboard/system-settings");
+ok("User Management on its Teams tab still lights only User Management", lit("/dashboard/employees", "tab=Teams").join() === "/dashboard/employees");
+ok("System Settings is gone from the Admin menu; its old address redirects to User Management's Shifts tab", !hrefs.some((h) => h.includes("system-settings")) && !labels.includes("System Settings") && readFileSync(join(FE, "dashboard", "system-settings", "page.tsx"), "utf8").includes('redirect("/dashboard/employees?tab=Shifts")'));
 ok("the People tab lights only User Management", lit("/dashboard/employees", "tab=People").join() === "/dashboard/employees");
 ok("filters in the address do not stop the plain entry being lit", lit("/dashboard/reports", "company=x&project=y").join() === "/dashboard/reports");
+const orgHref = "/dashboard/organization/company";
+ok("Organization Management stays lit on all three of its tabs, and only it", ["/dashboard/organization/company", "/dashboard/organization/hierarchy", "/dashboard/organization/projects"].every((p) => lit(p, "").join() === orgHref));
+ok("the three old separate entries no longer exist", !hrefs.some((h) => ["/dashboard/companies", "/dashboard/projects", "/dashboard/organization-hierarchy"].includes(h)) && hrefs.includes(orgHref));
 ok("every other page lights exactly its own item", admin.every((i) => { const p = i.href.split("?")[0]; if (p === "/dashboard/reports" || p === "/dashboard/employees" || p === "/change-password") return true; return lit(p, "").join() === i.href; }));
 ok("a page outside the menu lights nothing", lit("/dashboard/profile", "").length === 0);
 

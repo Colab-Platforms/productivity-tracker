@@ -54,7 +54,7 @@ const items = layout.split("\n").filter((l) => /href: "\/dashboard\/(huddles|mee
 const adminItem = items.filter((l) => l.includes(' roles: ["ADMIN"]') && !l.includes("notRoles"));
 const sharedItem = items.filter((l) => l.includes('notRoles: ["ADMIN"]'));
 ok("every role gets exactly one Team Huddle item: one for Admin, one shared by Employee, Manager and HR", items.length === 2 && adminItem.length === 1 && sharedItem.length === 1, items);
-ok("both are named Team Huddle", items.every((l) => /label: "Team Huddle"/.test(l)));
+ok("the shared item is named Team Huddle and the Admin item Team Meet (display name for Admin accounts only, 2026-11-22)", /label: "Team Huddle"/.test(sharedItem[0]) && /label: "Team Meet"/.test(adminItem[0]));
 ok("the shared one has no role list, so Employee, Manager and HR all get it", sharedItem.length === 1 && !/ roles:/.test(sharedItem[0]));
 ok("there is no separate Meetings item and no old huddles link", !/label: "Meetings"/.test(layout) && !layout.includes('"/dashboard/huddles"'));
 

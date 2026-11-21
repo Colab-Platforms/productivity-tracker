@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { leftStatuses } from "../../lib/userStatus.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
 import { auditNote, changedFields } from "../../lib/auditContext.js";
 import { accessFor } from "../../lib/companyAccess.js";
@@ -55,7 +56,7 @@ export async function listCompanies(viewerId: string) {
   const [rows, pinned, counts] = await Promise.all([
     prisma.platform.findMany({ orderBy: { name: "asc" } }),
     getPinnedCompany(),
-    prisma.user.groupBy({ by: ["platformId"], where: { status: { not: "EXITED" } }, _count: true }),
+    prisma.user.groupBy({ by: ["platformId"], where: { status: { notIn: await leftStatuses() } }, _count: true }),
   ]);
   const headcount = new Map(counts.map((c) => [c.platformId, c._count]));
   return {

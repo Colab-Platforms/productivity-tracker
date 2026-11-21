@@ -25,7 +25,7 @@ type AdminDetails = {
 const TABS = ["Personal", "Contact", "Account details", "Role & access", "Security"] as const;
 type Tab = (typeof TABS)[number];
 
-const STATUS_LABEL: Record<string, string> = { ACTIVE: "Active", INVITED: "Invited", SUSPENDED: "Suspended", EXITED: "Exited", CANDIDATE: "Candidate" };
+const STATUS_LABEL: Record<string, string> = { ACTIVE: "Active", INVITED: "Invited", SUSPENDED: "Suspended", EXITED: "Exited", TERMINATED: "Terminated", ABSCONDED: "Absconded", CANDIDATE: "Candidate" };
 const stamp = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : null;
 const dayOnly = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : null);

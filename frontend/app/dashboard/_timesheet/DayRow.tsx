@@ -14,7 +14,7 @@ function QuietRow({ m, onCorrect }: { m: DayModel; onCorrect?: (date: string) =>
   const d = m.day;
   const note = d.onLeave
     ? "On leave"
-    : d.holiday
+    : d.holiday && d.holiday.dayType !== "OPTIONAL_HOLIDAY"
       ? `${d.holiday.dayType === "WEEKLY_OFF" ? "Weekly off" : "Holiday"} · ${d.holiday.name}`
       : !d.expected
         ? "Day off"
