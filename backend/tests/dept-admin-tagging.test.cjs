@@ -83,9 +83,9 @@ const PW = "Tat@12345678";
   const sList = (await call("GET", "/queries/dept?view=TAGGED", tok.SAN)).b;
   ok("it shows in Sanjay's Assigned to me", sList.items.length === 1 && sList.items[0].id === id1 && sList.items[0].taggedToMe === true, sList.items?.length);
   ok("the Assigned to me count is 1 for Sanjay and 0 for Jayesh", sList.counts.TAGGED === 1 && (await call("GET", "/queries/dept?view=TAGGED", tok.JAY)).b.items.length === 0);
-  ok("the row names the assigned Admin, company, project, department and priority", sList.items[0].admins[0].name === "Sanjay Tat" && sList.items[0].company !== "" && sList.items[0].department === "TAT Facilities" && sList.items[0].priority === "HIGH" && (!team || sList.items[0].project === "TAT Alpha"), sList.items[0]);
+  ok("the row names the assigned Admin, company, project, department and priority", sList.items[0].taggedAdmin.name === "Sanjay Tat" && sList.items[0].company !== "" && sList.items[0].department === "TAT Facilities" && sList.items[0].priority === "HIGH" && (!team || sList.items[0].project === "TAT Alpha"), sList.items[0]);
   const det = (await call("GET", "/queries/dept/" + id1, tok.SAN)).b;
-  ok("Sanjay can open it and sees the assigned Admin", det.id === id1 && det.admins.includes("Sanjay Tat"), det.admins);
+  ok("Sanjay can open it and sees the assigned Admin", det.id === id1 && det.taggedAdmin?.name === "Sanjay Tat", det.taggedAdmin);
   ok("the other Admins keep organisation-wide visibility (list and detail)", (await call("GET", "/queries/dept", tok.JAY)).b.items.some((i) => i.id === id1) && (await call("GET", "/queries/dept/" + id1, tok.DEV)).s === 200);
   ok("but another Admin cannot give the final approval", det && (await call("GET", "/queries/dept/" + id1, tok.JAY)).b.permissions.canAdminDecide === false);
   ok("HR still sees it (monitoring) and cannot decide", (await call("GET", "/queries/dept/" + id1, tok.HR)).b.permissions.canAdminDecide === false);
@@ -116,6 +116,20 @@ const PW = "Tat@12345678";
   ok("with no tag the usual routing applies (the mapped Admin above the manager)", d3.adminApproverIds.join() === S, d3);
   ok("tagging is optional: the old request shape still works", r3.s === 200 || r3.s === 201);
 
+  console.log("\n## routing is NOT a tag: untagged requests never appear in anyone's Tagged to me");
+  const r4 = await call("POST", "/queries/dept", tok.E2, { title: "Untagged, no mapped admin", description: "Goes to every admin of the company", departmentId: dept, priority: "LOW" });
+  const d4 = await row(r4.b.id);
+  ok("an untagged request from someone with no mapped Admin has ALL Admins as approvers (the fallback)", d4.adminApproverIds.length >= 4, d4.adminApproverIds.length);
+  for (const [n, k] of [["Sanjay", "SAN"], ["Jayesh", "JAY"], ["Ayush", "AYU"], ["Devang", "DEV"]]) {
+    const tg = (await call("GET", "/queries/dept?view=TAGGED", tok[k])).b;
+    ok(n + "'s Tagged to me does not contain the untagged request or the mapped-Admin one", !tg.items.some((i) => i.id === r4.b.id || i.id === r3.b.id), tg.items.map((i) => i.title));
+  }
+  ok("but the untagged request is still in every Admin's All queries and Waiting for my decision", (await call("GET", "/queries/dept", tok.AYU)).b.items.some((i) => i.id === r4.b.id) && (await call("GET", "/queries/dept?view=APPROVE", tok.DEV)).b.items.some((i) => i.id === r4.b.id));
+  ok("Sanjay's Tagged to me holds only requests tagged to him", (await call("GET", "/queries/dept?view=TAGGED", tok.SAN)).b.items.every((i) => i.taggedAdmin?.id === S));
+  ok("Jayesh's Tagged to me holds only requests tagged to him", (await call("GET", "/queries/dept?view=TAGGED", tok.JAY)).b.items.every((i) => i.taggedAdmin?.id === J));
+  ok("the detail of an untagged request shows no tagged Admin", (await call("GET", "/queries/dept/" + r4.b.id, tok.SAN)).b.taggedAdmin === null);
+  ok("the tag is stored as one history entry per request (no duplicate)", Number((await q(`select count(*)::int c from dept_request_events where kind='ADMIN_TAGGED' and "requestId"=$1`, [id1]))[0].c) === 1);
+
   console.log("\n## Admin overview: counts, search, filters");
   const ov = (await call("GET", "/queries/dept", tok.DEV)).b;
   const total = ov.items.length;
@@ -128,7 +142,7 @@ const PW = "Tat@12345678";
   // reject one to see REJECTED; put one on hold to see ON_HOLD / RESOLVED
   ok("Jayesh rejects his query", (await call("POST", `/queries/dept/${id2}/admin-decision`, tok.JAY, { approve: false, note: "Not needed now" })).s === 200);
   ok("Rejected count is now 1", (await call("GET", "/queries/dept", tok.SAN)).b.summary.REJECTED === 1);
-  ok("search by employee, by department and by company finds it", (await call("GET", "/queries/dept?q=Emptwo", tok.SAN)).b.items.length === 1 && (await call("GET", "/queries/dept?q=Facilities", tok.SAN)).b.items.length >= 3 && (await call("GET", "/queries/dept?q=zzzz-none", tok.SAN)).b.items.length === 0);
+  ok("search by employee, by department and by company finds it", (await call("GET", "/queries/dept?q=Emptwo", tok.SAN)).b.items.length === 2 && (await call("GET", "/queries/dept?q=Facilities", tok.SAN)).b.items.length >= 3 && (await call("GET", "/queries/dept?q=zzzz-none", tok.SAN)).b.items.length === 0);
   ok("priority and department filters narrow it", (await call("GET", "/queries/dept?priority=HIGH", tok.SAN)).b.items.every((i) => i.priority === "HIGH"));
   ok("an Admin sees employees of every company they act on (other company's request too)", await (async () => {
     const r = await call("POST", "/queries/dept/admin/departments", tok.SAN, { name: "TAT Foreign Dept", platformId: B });
@@ -142,7 +156,7 @@ const PW = "Tat@12345678";
   ok("the Admin-only view is an empty list for an employee", (await call("GET", "/queries/dept?view=TAGGED", tok.E1)).b.items.length === 0);
   ok("a manager still only sees his reporting team's requests", (await call("GET", "/queries/dept", tok.MG)).b.items.every((i) => i.raisedBy.id === E1 || i.raisedBy.id === E3 || i.raisedBy.id === MG));
   ok("creating with the same tag twice makes two separate records, never a duplicate of one", Number((await q(`select count(distinct id)::int c from dept_requests where "raisedById"=$1`, [E1]))[0].c) === before);
-  ok("history shows the tag", (await q(`select count(*)::int c from dept_request_events where "requestId"=$1 and note like '%Tagged to a specific Admin%'`, [id1]))[0].c === 1);
+  ok("history shows the tag", (await q(`select count(*)::int c from dept_request_events where "requestId"=$1 and kind='CREATED' and note like '%Tagged to a specific Admin%'`, [id1]))[0].c === 1);
 
   await wipe(); await db.end();
   console.log(`\n${pass} passed, ${fail} failed`);

@@ -16,7 +16,7 @@ type Item = {
   id: string; reference: string; title: string; priority: string; priorityLabel: string; approvalStatus: string; approvalLabel: string;
   workStatus: string | null; workLabel: string | null; stage: string; department: string; departmentId: string;
   raisedBy: { id: string; name: string; employeeCode: string | null }; assignedTo: string | null; createdAt: string; isMine: boolean; needsYou: boolean;
-  company?: string; project?: string | null; admins?: { id: string; name: string }[]; taggedToMe?: boolean; statusBucket?: string;
+  company?: string; project?: string | null; taggedAdmin?: { id: string; name: string } | null; taggedToMe?: boolean; statusBucket?: string;
 };
 type List = { ready: boolean; view?: string; total: number; counts: Record<string, number>; summary?: Record<string, number>; items: Item[]; isDeptMember?: boolean };
 const SUMMARY_CARDS: { key: string; label: string; cls: string }[] = [
@@ -28,7 +28,7 @@ type Ev = { id: string; kind: string; by: string | null; byRole: string | null; 
 type Detail = {
   id: string; reference: string; title: string; description: string; priority: string; priorityLabel: string; approvalStatus: string; approvalLabel: string;
   workStatus: string | null; workLabel: string | null; stage: string; department: string; raisedBy: { id: string; name: string; employeeCode: string | null };
-  responsible: string[]; manager: string | null; admins: string[]; assignedTo: { id: string; name: string } | null; createdAt: string;
+  responsible: string[]; manager: string | null; admins: string[]; taggedAdmin?: { id: string; name: string } | null; assignedTo: { id: string; name: string } | null; createdAt: string;
   managerDecidedAt: string | null; adminDecidedAt: string | null; startedAt: string | null; completedAt: string | null; confirmedAt: string | null; reopenCount: number;
   timeline: Ev[]; commentModes: string[]; reassignOptions: { id: string; name: string }[];
   permissions: { canManagerDecide: boolean; canAdminDecide: boolean; canAccept: boolean; canUpdateProgress: boolean; canReassign: boolean; canConfirm: boolean; canReopen: boolean; canComment: boolean; isOversight: boolean; allowedProgress: string[] };
@@ -43,7 +43,7 @@ const VIEW_LABEL: Record<string, string> = {
   DEPT_PROGRESS: "In progress", DEPT_HOLD: "On hold", DEPT_DONE: "Completed",
 };
 const EVENT_TEXT: Record<string, string> = {
-  CREATED: "Raised", MANAGER_APPROVED: "Reporting manager approved", MANAGER_REJECTED: "Reporting manager rejected", ADMIN_APPROVED: "Admin approved (final)", ADMIN_REJECTED: "Admin rejected",
+  CREATED: "Raised", ADMIN_TAGGED: "Tagged to an Admin", MANAGER_APPROVED: "Reporting manager approved", MANAGER_REJECTED: "Reporting manager rejected", ADMIN_APPROVED: "Admin approved (final)", ADMIN_REJECTED: "Admin rejected",
   ACCEPTED: "Department accepted the request", PROGRESS: "Progress updated", COMMENT: "Comment", ASSIGNED: "Reassigned", CONFIRMED: "Employee confirmed it is resolved", REOPENED: "Employee reopened it",
 };
 
@@ -195,7 +195,7 @@ export default function DeptRequests({ openId: linkedId, initialView, tabs }: { 
                   </p>
                   <p className="mt-1 truncate text-sm font-medium text-slate-900">{i.title}</p>
                   <p className="mt-0.5 text-xs text-slate-500">{i.isMine ? "" : `${i.raisedBy.name}${i.raisedBy.employeeCode ? ` (${i.raisedBy.employeeCode})` : ""} · `}{dayOnly(i.createdAt)}{i.assignedTo ? ` · handled by ${i.assignedTo}` : ""} · {i.stage}</p>
-                  {(i.company || i.project || (i.admins && i.admins.length > 0)) && <p className="mt-0.5 text-xs text-slate-500" data-testid="row-meta">{[i.company, i.project ? `Project: ${i.project}` : null, i.admins && i.admins.length > 0 ? `Admin: ${i.admins.map((a) => a.name).join(", ")}` : null].filter(Boolean).join(" · ")}</p>}
+                  {(i.company || i.project || i.taggedAdmin) && <p className="mt-0.5 text-xs text-slate-500" data-testid="row-meta">{[i.company, i.project ? `Project: ${i.project}` : null, i.taggedAdmin ? `Tagged Admin: ${i.taggedAdmin.name}` : null].filter(Boolean).join(" · ")}</p>}
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <Pill cls={APPROVAL_CHIP[i.approvalStatus] ?? ""}>{i.approvalLabel}</Pill>
@@ -294,7 +294,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
             <Pill cls={APPROVAL_CHIP[d.approvalStatus] ?? ""}>{d.approvalLabel}</Pill>
             {d.workLabel && <Pill cls={WORK_CHIP[d.workStatus ?? ""] ?? ""}>{d.workLabel}</Pill>}
             <Pill cls={PRIORITY_CHIP[d.priority] ?? ""}>{d.priorityLabel} priority</Pill>
-            {d.admins.length > 0 && <span className="rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700" data-testid="detail-admin">Assigned Admin: {d.admins.join(", ")}</span>}
+            {d.taggedAdmin && <span className="rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700" data-testid="detail-admin">Tagged Admin: {d.taggedAdmin.name}</span>}
             <span className="text-xs text-slate-500">Raised by {d.raisedBy.name}{d.raisedBy.employeeCode ? ` (${d.raisedBy.employeeCode})` : ""} · {when(d.createdAt)}</span>
           </div>
           <p className="rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900" data-testid="stage-line"><b>{d.stage}</b>{d.responsible.length > 0 ? ` · responsible: ${d.responsible.join(", ")}` : ""}{d.reopenCount > 0 ? ` · reopened ${d.reopenCount}×` : ""}</p>

@@ -62,7 +62,7 @@ export default function MyQueryDesk({ reload }: { reload: number }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-slate-900">My Query Desk</h2>
-          <p className="mt-0.5 text-xs text-slate-500">Department requests tagged to you. Everything else in the organization is under Query Desk &gt; All queries.</p>
+          <p className="mt-0.5 text-xs text-slate-500">Only queries an employee individually tagged to you (not department or routing). Everything else is under Query Desk &gt; All queries.</p>
         </div>
         <Link href="/dashboard/queries?tab=dept&view=TAGGED" data-testid="mqd-view-all" className="shrink-0 text-xs font-medium text-indigo-600 hover:underline">View all my queries</Link>
       </div>
@@ -84,7 +84,7 @@ export default function MyQueryDesk({ reload }: { reload: number }) {
           </div>
 
           {items.length === 0 ? (
-            <p className="mt-4 rounded-xl bg-[#F3F7F6] px-4 py-6 text-center text-sm text-slate-500" data-testid="mqd-empty">No query is tagged to you.</p>
+            <p className="mt-4 rounded-xl bg-[#F3F7F6] px-4 py-6 text-center text-sm text-slate-500" data-testid="mqd-empty">No queries tagged to you.</p>
           ) : (
             <ul className="mt-4 divide-y divide-indigo-50" data-testid="mqd-list">
               {shown.map((i) => (

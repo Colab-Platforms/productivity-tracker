@@ -44,6 +44,8 @@ export type Facts = {
   adminApproverIds: readonly string[];
   assigneeId: string | null;
   confirmedAt: Date | string | null;
+  /** The Admin the EMPLOYEE individually tagged when raising it (null = nobody; routing alone is not a tag). */
+  taggedAdminId?: string | null;
 };
 
 const inScope = (v: Viewer, platformId: string) => v.access.all || v.access.ids.includes(platformId);
@@ -149,7 +151,9 @@ export function inView(view: View, v: Viewer, t: Facts): boolean {
   switch (view) {
     case "ALL": return true;
     case "MINE": return t.raisedById === v.id;
-    case "TAGGED": return v.role === "ADMIN" && t.adminApproverIds.includes(v.id);
+    // Tagged = the employee picked THIS Admin. Being on the approver list through routing (the Admin above the manager, or every Admin of a
+    // company with no mapped Admin) is NOT a tag, and neither is a department.
+    case "TAGGED": return v.role === "ADMIN" && !!t.taggedAdminId && t.taggedAdminId === v.id;
     case "APPROVE": return canManagerDecide(v, t) || canAdminDecide(v, t);
     case "DEPT_AWAITING": return deptSide && (t.workStatus === "AWAITING_ACTION" || t.workStatus === "REOPENED") && t.assigneeId === null;
     case "DEPT_ASSIGNED": return approved(t) && t.assigneeId === v.id && t.workStatus !== "COMPLETED";

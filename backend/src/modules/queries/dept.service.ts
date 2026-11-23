@@ -53,10 +53,36 @@ async function who(userId: string) {
 }
 type Who = Awaited<ReturnType<typeof who>>;
 
-const asFacts = (r: { raisedById: string; platformId: string; departmentId: string; approvalStatus: string; workStatus: string | null; managerId: string | null; adminApproverIds: string[]; assigneeId: string | null; confirmedAt: Date | null }): L.Facts => ({
+const asFacts = (r: { raisedById: string; platformId: string; departmentId: string; approvalStatus: string; workStatus: string | null; managerId: string | null; adminApproverIds: string[]; assigneeId: string | null; confirmedAt: Date | null }, taggedAdminId: string | null = null): L.Facts => ({
   raisedById: r.raisedById, platformId: r.platformId, departmentId: r.departmentId, approvalStatus: r.approvalStatus as L.Approval, workStatus: r.workStatus as L.Work | null,
-  managerId: r.managerId, adminApproverIds: r.adminApproverIds, assigneeId: r.assigneeId, confirmedAt: r.confirmedAt,
+  managerId: r.managerId, adminApproverIds: r.adminApproverIds, assigneeId: r.assigneeId, confirmedAt: r.confirmedAt, taggedAdminId,
 });
+
+/**
+ * The Admin an employee individually tagged, per request. Stored as a history entry (kind ADMIN_TAGGED, the Admin's id in toValue) written in
+ * the same transaction as the request, so no column was added. Requests tagged before that entry existed carry the sentence in their CREATED
+ * entry and have exactly one approver, which is the tagged Admin.
+ */
+const TAG_SENTENCE = "Tagged to a specific Admin by the employee.";
+async function taggedAdmins(rows: { id: string; adminApproverIds: string[] }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (rows.length === 0) return out;
+  const ids = rows.map((r) => r.id);
+  const events = await prisma.deptRequestEvent.findMany({
+    where: { requestId: { in: ids }, OR: [{ kind: "ADMIN_TAGGED" }, { kind: "CREATED", note: { contains: TAG_SENTENCE } }] },
+    select: { requestId: true, kind: true, toValue: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const approvers = new Map(rows.map((r) => [r.id, r.adminApproverIds]));
+  for (const e of events) {
+    if (e.kind === "ADMIN_TAGGED" && e.toValue) out.set(e.requestId, e.toValue);
+    else if (e.kind === "CREATED" && !out.has(e.requestId)) {
+      const a = approvers.get(e.requestId) ?? [];
+      if (a.length === 1) out.set(e.requestId, a[0]);
+    }
+  }
+  return out;
+}
 
 type Upload = { fileName?: unknown; data?: unknown; mimeType?: unknown };
 async function store(platformId: string, f: Upload | null | undefined) {
@@ -314,6 +340,7 @@ export async function createRequest(userId: string, body: { title?: unknown; des
       usedFallback ? "No Admin is mapped above this person, so every Admin of the company can give the final approval." : null,
     ].filter(Boolean).join(" ");
     const ev = await addEvent(tx, { requestId: r.id, actorId: userId, kind: "CREATED", toValue: dept.name, note: note || null, file });
+    if (tagged && taggedAdminId) await addEvent(tx, { requestId: r.id, actorId: userId, kind: "ADMIN_TAGGED", toValue: taggedAdminId, note: "Tagged to a specific Admin." });
     return { r, ev };
   });
   const firstWho = managerId ? [managerId] : adminApproverIds;
@@ -341,9 +368,10 @@ export async function listRequests(userId: string, f: ListFilters = {}) {
   const staffAll = (v.role === "ADMIN" || v.role === "HR") && v.access.all;
   if ((v.role === "ADMIN" || v.role === "HR") && !v.access.all) or.push({ platformId: { in: v.access.ids } });
   const rows = await prisma.deptRequest.findMany({ where: staffAll ? {} : ({ OR: or } as never), orderBy: { createdAt: "desc" }, take: 800 });
-  const visible = rows.filter((r) => L.canView(v, asFacts(r)));
+  const tagOf = await taggedAdmins(rows);
+  const visible = rows.filter((r) => L.canView(v, asFacts(r, tagOf.get(r.id) ?? null)));
 
-  const userIds = [...new Set(visible.flatMap((r) => [r.raisedById, r.assigneeId, r.managerId, ...r.adminApproverIds].filter((x): x is string => !!x)))];
+  const userIds = [...new Set(visible.flatMap((r) => [r.raisedById, r.assigneeId, r.managerId, tagOf.get(r.id) ?? null].filter((x): x is string => !!x)))];
   const users = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, firstName: true, lastName: true, employeeCode: true } }) : [];
   const uName = new Map(users.map((u) => [u.id, u]));
   const depts = await prisma.department.findMany({ where: { id: { in: [...new Set(visible.map((r) => r.departmentId))] } }, select: { id: true, name: true } });
@@ -358,7 +386,8 @@ export async function listRequests(userId: string, f: ListFilters = {}) {
   // a primary team wins; otherwise the first by name
   for (const m of [...memberships].sort((a, b) => Number(a.isPrimary) - Number(b.isPrimary) || b.team.name.localeCompare(a.team.name))) projectOf.set(m.userId, m.team.name);
   const counts: Record<string, number> = {};
-  for (const view of L.VIEWS) counts[view] = visible.filter((r) => L.inView(view, v, asFacts(r))).length;
+  const factsOf = (r: (typeof visible)[number]) => asFacts(r, tagOf.get(r.id) ?? null);
+  for (const view of L.VIEWS) counts[view] = visible.filter((r) => L.inView(view, v, factsOf(r))).length;
 
   const summary: Record<string, number> = { PENDING: 0, APPROVED: 0, REJECTED: 0, ON_HOLD: 0, RESOLVED: 0 };
   for (const r of visible) summary[L.statusBucket(asFacts(r))]++;
@@ -370,7 +399,7 @@ export async function listRequests(userId: string, f: ListFilters = {}) {
   const priority = String(f.priority ?? "");
   const q = String(f.q ?? "").trim().toLowerCase().slice(0, 100);
   const items = visible
-    .filter((r) => L.inView(view, v, asFacts(r)))
+    .filter((r) => L.inView(view, v, factsOf(r)))
     .filter((r) => !status || L.statusBucket(asFacts(r)) === status)
     .filter((r) => !approval || r.approvalStatus === approval)
     .filter((r) => !work || r.workStatus === work)
@@ -393,8 +422,8 @@ export async function listRequests(userId: string, f: ListFilters = {}) {
         raisedBy: { id: r.raisedById, name: nameOf(p) ?? "", employeeCode: p?.employeeCode ?? null },
         assignedTo: nameOf(r.assigneeId ? uName.get(r.assigneeId) : null),
         company: cName.get(r.platformId) ?? "", project: projectOf.get(r.raisedById) ?? null,
-        admins: r.adminApproverIds.map((a) => ({ id: a, name: nameOf(uName.get(a)) ?? "" })).filter((a) => a.name),
-        taggedToMe: v.role === "ADMIN" && r.adminApproverIds.includes(userId), statusBucket: L.statusBucket(asFacts(r)),
+        taggedAdmin: tagOf.get(r.id) ? { id: tagOf.get(r.id)!, name: nameOf(uName.get(tagOf.get(r.id)!)) ?? "" } : null,
+        taggedToMe: v.role === "ADMIN" && tagOf.get(r.id) === userId, statusBucket: L.statusBucket(asFacts(r)),
         createdAt: r.createdAt, isMine: r.raisedById === userId,
         needsYou: L.canManagerDecide(v, asFacts(r)) || L.canAdminDecide(v, asFacts(r)) || L.canConfirm(v, asFacts(r)) || (L.canAccept(v, asFacts(r))) || (r.assigneeId === userId && r.workStatus === "REOPENED"),
       };
@@ -428,7 +457,8 @@ export async function getRequest(userId: string, id: string) {
   const { r, facts } = await load(me, id);
   const events = await prisma.deptRequestEvent.findMany({ where: { requestId: id }, orderBy: { createdAt: "asc" } });
   const shown = events.filter((e) => L.canSeeNote(v, facts, e.visibility as L.NoteVisibility));
-  const ids = [...new Set([r.raisedById, r.assigneeId, r.managerId, ...r.adminApproverIds, ...shown.map((e) => e.actorId)].filter((x): x is string => !!x))];
+  const taggedId = (await taggedAdmins([r])).get(r.id) ?? null;
+  const ids = [...new Set([r.raisedById, r.assigneeId, r.managerId, ...r.adminApproverIds, taggedId, ...shown.map((e) => e.actorId)].filter((x): x is string => !!x))];
   const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true } });
   const uName = new Map(users.map((u) => [u.id, u]));
   const dept = await prisma.department.findUnique({ where: { id: r.departmentId }, select: { name: true } });
@@ -452,6 +482,8 @@ export async function getRequest(userId: string, id: string) {
           : r.assigneeId ? [nameOf(uName.get(r.assigneeId))].filter(Boolean) : [],
     manager: r.managerId ? nameOf(uName.get(r.managerId)) : null,
     admins: r.adminApproverIds.map((a) => nameOf(uName.get(a))).filter(Boolean),
+    // the Admin the employee individually tagged (null when nobody was); routing alone is not a tag
+    taggedAdmin: taggedId ? { id: taggedId, name: nameOf(uName.get(taggedId)) ?? "" } : null,
     assignedTo: r.assigneeId ? { id: r.assigneeId, name: nameOf(uName.get(r.assigneeId)) ?? "" } : null,
     createdAt: r.createdAt, managerDecidedAt: r.managerDecidedAt, adminDecidedAt: r.adminDecidedAt, startedAt: r.startedAt, completedAt: r.completedAt, confirmedAt: r.confirmedAt, reopenCount: r.reopenCount,
     timeline: shown.map((e) => {
