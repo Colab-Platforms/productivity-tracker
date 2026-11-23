@@ -7,6 +7,7 @@ import { useMe } from "../layout";
 import { roleLabel } from "@/lib/roles";
 import EmployeeActions from "../_employees/EmployeeActions";
 import MyQueryDesk from "./MyQueryDesk";
+import { holidayEvents, upcomingEvents, type HolidayRow } from "../_dashboard/events";
 import { useRealtime } from "@/lib/realtime";
 import { AnniversaryList, EmployeeStatusTable, EventsList, KpiCard, Muted, Panel, panelLink, upcomingAnniversaries, type EventItem, type StatusRow } from "../_dashboard/widgets";
 
@@ -163,18 +164,18 @@ export default function AdminDashboard() {
   // Employee status, events and anniversaries use the same endpoints the Employees, Calendar and Team Huddle pages read.
   const users = useGet<{ users: { id: string; name: string; employeeCode: string | null; status: string; designation: string | null; teams?: { id: string; name: string }[]; dateOfJoining?: string | null; photoAt?: string | null }[] }>("/admin/users?employeesOnly=1", reload);
   const calToday = useGet<{ rows: { userId: string; status: string }[] }>(d ? `/attendance-calendar?from=${d.today}&to=${d.today}` : null, reload);
-  const holidays = useGet<{ today: string; holidays: { id: string; date: string; name: string }[] }>("/holidays", reload);
+  const holidays = useGet<{ today: string; holidays: HolidayRow[] }>("/holidays", reload);
   const meetings = useGet<{ timezone: string; meetings: { id: string; title: string; startsAt: string; state: string }[] }>("/meetings?scope=upcoming", reload);
   const todayIso0 = d?.today ?? holidays.data?.today ?? "";
+  // /holidays answers for ONE calendar year, so from December the January holidays (New Year's Day) are in next year's answer: read both.
+  const nextHolidays = useGet<{ today: string; holidays: HolidayRow[] }>(todayIso0 ? `/holidays?year=${Number(todayIso0.slice(0, 4)) + 1}` : null, reload);
   const tz = meetings.data?.timezone ?? d?.timezone ?? "Asia/Kolkata";
   const dayIn = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
   const timeIn = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
-  const events: EventItem[] = todayIso0
-    ? [
-        ...(holidays.data?.holidays ?? []).filter((h) => h.date >= todayIso0).map((h): EventItem => ({ id: `h-${h.id}`, date: h.date, title: h.name, kind: "Holiday", href: "/dashboard/holidays", today: h.date === todayIso0 })),
-        ...(meetings.data?.meetings ?? []).filter((m) => m.state === "upcoming" || m.state === "ongoing").map((m): EventItem => ({ id: `m-${m.id}`, date: dayIn(m.startsAt), time: timeIn(m.startsAt), title: m.title, kind: "Meeting", href: `/dashboard/meetings?id=${m.id}`, today: dayIn(m.startsAt) === todayIso0 })).filter((e) => e.date >= todayIso0),
-      ].sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "")).slice(0, 6)
-    : [];
+  // Holidays are stored once per company, so the same holiday arrives once per company; holidayEvents() folds those into ONE event.
+  // Meetings keep their own identity. Everything is shown in date order, each distinct event on its own row.
+  const meetingEvents: EventItem[] = (meetings.data?.meetings ?? []).filter((m) => m.state === "upcoming" || m.state === "ongoing").map((m): EventItem => ({ id: `m-${m.id}`, date: dayIn(m.startsAt), time: timeIn(m.startsAt), title: m.title, kind: "Meeting", href: `/dashboard/meetings?id=${m.id}`, today: dayIn(m.startsAt) === todayIso0 })).filter((e) => e.date >= todayIso0);
+  const events: EventItem[] = todayIso0 ? upcomingEvents(holidayEvents([...(holidays.data?.holidays ?? []), ...(nextHolidays.data?.holidays ?? [])], todayIso0), meetingEvents) : [];
   const attOf = new Map((calToday.data?.rows ?? []).map((r) => [r.userId, r.status]));
   const attLabel = (id: string) => { const st = attOf.get(id); return st === "PRESENT" || st === "LATE" || st === "HALF_DAY" ? "Present" : st === "LEAVE" || st === "HALF_DAY_LEAVE" ? "On leave" : st === "ABSENT" ? "Absent" : "—"; };
   const statusRows: StatusRow[] = (users.data?.users ?? []).filter((u) => !["EXITED", "TERMINATED", "ABSCONDED"].includes(u.status)).sort((a, b) => a.name.localeCompare(b.name))
@@ -346,7 +347,7 @@ export default function AdminDashboard() {
               {!users.data ? <div className="space-y-2">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-10" />)}</div> : statusRows.length === 0 ? <Muted>No employees yet.</Muted> : <EmployeeStatusTable rows={statusRows.slice(0, 8)} />}
             </Panel>
             <div className="min-w-0 space-y-5">
-              <Panel title="Events and Meetings" sub="Holidays and your upcoming meetings" action={<Link href="/dashboard/attendance-calendar" className={panelLink}>Calendar</Link>}>
+              <Panel title="Events and Meetings" sub="Holidays and your upcoming meetings" action={<Link href="/dashboard/holidays" className={panelLink}>Calendar</Link>}>
                 {!holidays.data && !meetings.data ? <div className="skeleton h-14" /> : events.length === 0 ? <Muted>No upcoming holidays or meetings.</Muted> : <EventsList items={events} />}
               </Panel>
               <Panel title="Work Anniversaries" sub="Next 30 days, from each person's date of joining">

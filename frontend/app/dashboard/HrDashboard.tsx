@@ -22,6 +22,7 @@
 
 "use client";
 
+import { holidayEvents, upcomingEvents } from "./_dashboard/events";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
@@ -196,6 +197,9 @@ export default function HrDashboard() {
   // browser's date is used so the page still works.
   const holidaysRes = useApi<HolidayResponse>("/holidays", reload);
   const today = holidaysRes.data?.today ?? (holidaysRes.error ? ymd(new Date()) : null);
+  // /holidays answers for ONE calendar year, so from December the January holidays (New Year's Day) live in next year's answer: read both.
+  const nextHolidaysRes = useApi<HolidayResponse>(today ? `/holidays?year=${Number(today.slice(0, 4)) + 1}` : null, reload);
+  const allHolidays = [...(holidaysRes.data?.holidays ?? []), ...(nextHolidaysRes.data?.holidays ?? [])];
 
   const from = range?.from ?? (today ? monthStart(today) : null);
   const to = range?.to ?? today;
@@ -375,19 +379,13 @@ export default function HrDashboard() {
   const tz = meetingsRes.data?.timezone ?? me?.platform.timezone ?? "Asia/Kolkata";
   const dayIn = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
   const timeIn = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
-  const events: EventItem[] = today
-    ? [
-        ...(holidaysRes.data?.holidays ?? [])
-          .filter((h) => h.date >= today)
-          .map((h): EventItem => ({ id: `h-${h.id}`, date: h.date, title: h.name, kind: "Holiday", href: "/dashboard/holidays", today: h.date === today })),
-        ...(meetingsRes.data?.meetings ?? [])
-          .filter((m) => m.state === "upcoming" || m.state === "ongoing")
-          .map((m): EventItem => ({ id: `m-${m.id}`, date: dayIn(m.startsAt), time: timeIn(m.startsAt), title: m.title, kind: "Meeting", href: `/dashboard/meetings?id=${m.id}`, today: dayIn(m.startsAt) === today }))
-          .filter((e) => e.date >= today),
-      ]
-        .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? ""))
-        .slice(0, 6)
-    : [];
+  // Holidays are stored once per company, so the same holiday arrives once per company; holidayEvents() folds those into ONE event.
+  // Meetings keep their own identity. Everything is shown in date order, each distinct event on its own row.
+  const meetingEvents: EventItem[] = (meetingsRes.data?.meetings ?? [])
+    .filter((m) => m.state === "upcoming" || m.state === "ongoing")
+    .map((m): EventItem => ({ id: `m-${m.id}`, date: dayIn(m.startsAt), time: timeIn(m.startsAt), title: m.title, kind: "Meeting", href: `/dashboard/meetings?id=${m.id}`, today: dayIn(m.startsAt) === today }))
+    .filter((e) => today !== null && e.date >= today);
+  const events: EventItem[] = today ? upcomingEvents(holidayEvents(allHolidays, today), meetingEvents) : [];
   const todayById = new Map((todayReport.data?.people ?? []).map((p) => [p.userId, p]));
   const attendanceOf = (id: string) => {
     const p = todayById.get(id);
@@ -678,12 +676,12 @@ export default function HrDashboard() {
           <Panel
             title="Events and Meetings"
             sub={today ? "Tap a day to view just that day" : undefined}
-            action={<Link href="/dashboard/attendance-calendar" className={panelLink}>Calendar</Link>}
+            action={<Link href="/dashboard/holidays" className={panelLink}>Calendar</Link>}
           >
             {!today ? (
               <Skeleton className="h-20" />
             ) : (
-              <WeekStrip today={today} selected={from === to ? from : null} holidays={holidaysRes.data?.holidays ?? []} onPick={(d) => setRange({ from: d, to: d })} />
+              <WeekStrip today={today} selected={from === to ? from : null} holidays={allHolidays} onPick={(d) => setRange({ from: d, to: d })} />
             )}
             <p className="mb-1 mt-4 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Upcoming</p>
             {!holidaysRes.data && !meetingsRes.data ? (

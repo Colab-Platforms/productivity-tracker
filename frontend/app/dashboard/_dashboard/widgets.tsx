@@ -138,7 +138,7 @@ export function EmployeeStatusTable({ rows }: { rows: StatusRow[] }) {
 }
 
 // ---- Events and meetings -------------------------------------------------------------------------------------------------------------
-export type EventItem = { id: string; date: string; time?: string; title: string; kind: "Holiday" | "Meeting"; href: string; today: boolean };
+export type EventItem = { id: string; date: string; time?: string; title: string; kind: "Holiday" | "Meeting"; href: string; today: boolean; detail?: string };
 
 const monthShort = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
 const dayNum = (iso: string) => String(Number(iso.slice(8, 10)));
@@ -155,7 +155,7 @@ export function EventsList({ items }: { items: EventItem[] }) {
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-medium text-slate-900">{e.title}</span>
-              <span className="block truncate text-[11px] text-[var(--text-secondary)]">{e.kind}{e.time ? ` · ${e.time}` : ""}{e.today ? " · today" : ""}</span>
+              <span className="block truncate text-[11px] text-[var(--text-secondary)]">{e.kind}{e.detail ? ` · ${e.detail}` : ""}{e.time ? ` · ${e.time}` : ""}{e.today ? " · today" : ""}</span>
             </span>
           </Link>
         </li>

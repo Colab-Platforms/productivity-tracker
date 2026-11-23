@@ -100,6 +100,7 @@ export type Holiday = {
   name: string;
   dayType: string;
   company: string | null;
+  platformId?: string;
 };
 
 export type HolidayResponse = { year: number; today: string; holidays: Holiday[] };
