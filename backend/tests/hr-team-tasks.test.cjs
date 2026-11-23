@@ -78,7 +78,7 @@ const qs = (o) => "?" + new URLSearchParams(o).toString();
   const queue = (u, o = {}) => call("GET", "/tasks/review/queue" + qs({ from: today, to: today, ...o }), u.tok);
   const mine = (r) => (r.b.members ?? []).map((m) => m.employeeCode).filter((c) => c.startsWith("HTT-E")).sort();
   const taskTitles = (r) => (r.b.all ?? []).map((t) => t.title).filter((t) => t.startsWith("HTT task")).sort();
-  const rawActive = async (platformId) => (await q(`select count(*)::int n from users where status in ('ACTIVE','INVITED')${platformId ? ` and "platformId"='${platformId}'` : ""}`))[0].n;
+  const rawActive = async (platformId) => (await q(`select count(*)::int n from users where status in ('ACTIVE','INVITED') and role <> 'ADMIN'${platformId ? ` and "platformId"='${platformId}'` : ""}`))[0].n;
 
   console.log("\n## HR sees every company she acts on");
   const hr = await queue(HRALL);

@@ -1,3 +1,4 @@
+import { NOT_ADMIN } from "../../lib/tracked.js";
 import { isLinkedManager, linkedReportIds } from "../../lib/reportingLinks.js";
 import { PRIORITY_WEIGHT, weightOf, weightedPerformance } from "./tasks.weighted.js";
 import { emitTaskChange } from "../../lib/realtime.js";
@@ -197,6 +198,7 @@ export async function manageableUserIds(actor: {
       where: {
         ...scopeWhere(await accessFor(actor.id)),
         status: { in: ["ACTIVE", "INVITED"] },
+        ...NOT_ADMIN, // Admin accounts are not tracked employees: they are not part of the people counted or listed here
       },
       select: { id: true },
     });

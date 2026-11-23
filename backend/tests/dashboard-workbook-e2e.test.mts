@@ -84,11 +84,11 @@ for (const [name, id] of Object.entries(people)) {
   const leaveSet = new Set(lv.map((x) => x.d));
   const worked = ss.filter((x) => !leaveSet.has(x.d)); // a full-day leave on a day always shows as Leave
   const slist = new Set(ss.map((x) => x.d));
-  // absent: a working day (Mon-Fri, not a holiday) before today, no session, no leave, and the company was tracking that day
+  // absent: a working day (the engine default for people with no shift is Mon-Sat; not a holiday) before today, no session, no leave, and the company was tracking that day
   let absent = 0;
   for (let d = from; d < to; d = addDays(d, 1)) {
     const dow = new Date(d + "T00:00:00Z").getUTCDay();
-    if (dow === 0 || dow === 6 || holidays.has(d) || leaveSet.has(d) || slist.has(d)) continue;
+    if (dow === 0 || holidays.has(d) || leaveSet.has(d) || slist.has(d)) continue;
     if (companyTracked.has(d)) absent++;
   }
   const lates = ss.filter((x) => istMinutes(x.loginAt) > 9 * 60 + 45).length;
