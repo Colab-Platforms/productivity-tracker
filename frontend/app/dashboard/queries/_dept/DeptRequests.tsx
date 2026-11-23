@@ -39,7 +39,7 @@ const WORK_CHIP: Record<string, string> = { AWAITING_ACTION: "bg-amber-50 text-a
 const PRIORITY_CHIP: Record<string, string> = { LOW: "bg-slate-100 text-slate-600", MEDIUM: "bg-sky-50 text-sky-700", HIGH: "bg-orange-50 text-orange-700", URGENT: "bg-red-50 text-red-600" };
 const WORK_LABEL: Record<string, string> = { NOT_STARTED: "Not Started", IN_PROGRESS: "In Progress", ON_HOLD: "On Hold", COMPLETED: "Completed" };
 const VIEW_LABEL: Record<string, string> = {
-  ALL: "All", MINE: "Raised by me", TAGGED: "Assigned to me", APPROVE: "Waiting for my decision", DEPT_AWAITING: "Awaiting department action", DEPT_ASSIGNED: "Assigned to me",
+  ALL: "All", MINE: "Raised by me", TAGGED: "Tagged to me", APPROVE: "Waiting for my decision", DEPT_AWAITING: "Awaiting department action", DEPT_ASSIGNED: "Assigned to me",
   DEPT_PROGRESS: "In progress", DEPT_HOLD: "On hold", DEPT_DONE: "Completed",
 };
 const EVENT_TEXT: Record<string, string> = {
@@ -71,11 +71,12 @@ function useApi<T>(path: string | null, reload: number) {
   return { data: res?.data ?? null, error: res && res.path === path ? (res.error ?? "") : "" };
 }
 
-export default function DeptRequests({ openId: linkedId, tabs }: { openId: string | null; tabs: React.ReactNode }) {
+export default function DeptRequests({ openId: linkedId, initialView, tabs }: { openId: string | null; initialView?: string | null; tabs: React.ReactNode }) {
   const me = useMe();
   const isAdmin = me?.role === "ADMIN";
   const [reload, setReload] = useState(0);
-  const [view, setView] = useState("ALL");
+  // ?view=TAGGED (the dashboard link) opens on Assigned to me; anything else opens on All. Read once on arrival.
+  const [view, setView] = useState(initialView === "TAGGED" ? "TAGGED" : "ALL");
   const [approval, setApproval] = useState("");
   const [status, setStatus] = useState("");
   const [departmentId, setDepartmentId] = useState("");

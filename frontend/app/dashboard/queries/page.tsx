@@ -541,7 +541,7 @@ function QueriesShell() {
       ))}
     </div>
   );
-  return tab === "dept" ? <DeptRequests openId={params.get("tab") === "dept" ? params.get("id") : null} tabs={tabs} /> : <ClassicQueries tabs={tabs} />;
+  return tab === "dept" ? <DeptRequests openId={params.get("tab") === "dept" ? params.get("id") : null} initialView={params.get("view")} tabs={tabs} /> : <ClassicQueries tabs={tabs} />;
 }
 
 export default function QueriesPage() {

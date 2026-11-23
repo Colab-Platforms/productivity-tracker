@@ -6,6 +6,7 @@ import { apiGet } from "@/lib/api";
 import { useMe } from "../layout";
 import { roleLabel } from "@/lib/roles";
 import EmployeeActions from "../_employees/EmployeeActions";
+import MyQueryDesk from "./MyQueryDesk";
 import { useRealtime } from "@/lib/realtime";
 import { AnniversaryList, EmployeeStatusTable, EventsList, KpiCard, Muted, Panel, panelLink, upcomingAnniversaries, type EventItem, type StatusRow } from "../_dashboard/widgets";
 
@@ -222,6 +223,9 @@ export default function AdminDashboard() {
             <Stat label="Needs your attention" value={pendingTotal} href="#approvals" tone={pendingTotal > 0 ? "text-amber-700" : "text-slate-900"} />
           </div>
 
+          {/* 1b. My Query Desk: the department requests tagged to THIS Admin (same call as Query Desk > Assigned to me) */}
+          <MyQueryDesk reload={reload} />
+
           <div className="grid items-start gap-5 xl:grid-cols-2">
             {/* 2. distribution */}
             <Section title="Who reports to whom" hint="Employees under each manager" href="/dashboard/employees">
@@ -305,7 +309,7 @@ export default function AdminDashboard() {
             </Section>
           </div>
 
-          <div className="grid items-start gap-5 lg:grid-cols-2" id="approvals">
+          <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2 [&>*]:min-w-0" id="approvals">
             {/* 5. pending approvals */}
             <Section title="Pending approvals" hint="What is waiting, and for whom">
               <div className="space-y-0.5">
