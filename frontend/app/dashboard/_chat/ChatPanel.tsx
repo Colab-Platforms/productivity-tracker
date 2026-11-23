@@ -356,6 +356,14 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
   const { typing, notifyTyping } = useChatTyping(conv.id);
   const typers = typing.map((id) => members.find((m) => m.id === id)?.name.split(" ")[0]).filter((n): n is string => !!n);
   const lastId = messages[messages.length - 1]?.id;
+  // The composer grows with what is typed (up to its maximum height) and shrinks back when it is cleared or sent.
+  useEffect(() => {
+    const el = composer.current;
+    if (!el) return;
+    el.style.height = "auto";
+    // scrollHeight leaves out the border; add it back or the box is 2px short and shows a scrollbar for nothing
+    el.style.height = `${Math.min(el.scrollHeight + (el.offsetHeight - el.clientHeight), 160)}px`;
+  }, [text]);
 
   // Stay at the bottom when new messages arrive, unless the person has scrolled up to read.
   useEffect(() => {
@@ -471,16 +479,20 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
 
   return (
     <>
-      <header className="flex items-center gap-3 border-b border-slate-200 px-4 py-3">
-        <button onClick={onBack} data-testid="chat-back" className="shrink-0 rounded-md px-2 py-1 text-sm font-medium text-indigo-700 hover:bg-[var(--nav-hover)]" aria-label="Back to Chats" title="Back to Chats">← Chats</button>
+      <header className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-3 py-2.5">
+        <button onClick={onBack} data-testid="chat-back" className="flex h-9 shrink-0 items-center gap-1 rounded-lg pl-1 pr-2.5 text-sm font-medium text-indigo-700 hover:bg-[var(--nav-hover)]" aria-label="Back to Chats" title="Back to Chats">
+          <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 4-6 6 6 6" /></svg>
+          <span className="hidden sm:inline">Chats</span>
+        </button>
         <Badge name={conv.title} kind={conv.kind} size={36} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-slate-900">{conv.title}</p>
-          <p className="truncate text-xs text-slate-500">{conv.subtitle}</p>
+          <p className="truncate text-sm font-semibold leading-tight text-slate-900">{conv.title}</p>
+          <p className="truncate text-xs leading-tight text-slate-500">{conv.subtitle}</p>
         </div>
         {conv.kind === "GROUP" && (
-          <button onClick={onManage} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-            Group
+          <button onClick={onManage} data-testid="chat-group-info" aria-label="Group details" title="Group details" className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><path d="M10 9v4.5M10 6.6h.01" /></svg>
+            <span className="hidden sm:inline">Details</span>
           </button>
         )}
       </header>
@@ -491,7 +503,8 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
           const el = e.currentTarget;
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
-        className="flex-1 space-y-1 overflow-y-auto bg-slate-50 px-4 py-3"
+        className="min-h-0 min-w-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-slate-50 px-3 py-3 sm:px-4"
+        data-testid="chat-messages"
       >
         {thread.hasMore && (
           <div className="pb-2 text-center">
@@ -509,12 +522,12 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
           return (
             <div key={m.id} id={`msg-${m.id}`}>
               {showDay && (
-                <div className="my-3 text-center">
-                  <span className="rounded-full bg-slate-200 px-3 py-0.5 text-[11px] text-slate-600">{day}</span>
+                <div className="my-2 text-center">
+                  <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-[10px] font-medium text-slate-600">{day}</span>
                 </div>
               )}
               <div className={`group flex ${mine ? "justify-end" : "justify-start"} ${sameSender ? "" : "pt-1.5"}`}>
-                <div className={`max-w-[80%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
+                <div className={`min-w-0 max-w-[85%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
                   {!mine && conv.kind === "GROUP" && !sameSender && <span className="px-1 text-[11px] font-medium text-slate-500">{m.senderName}</span>}
                   {editing?.id === m.id ? (
                     <div className="w-[min(32rem,80vw)] rounded-2xl border border-indigo-300 bg-white p-2 shadow-sm">
@@ -543,9 +556,9 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
                     </div>
                   ) : (
                     <>
-                      <div className={`flex items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
+                      <div className={`flex min-w-0 max-w-full items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
                         <div
-                          className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm transition ${flash === m.id ? "ring-2 ring-amber-300" : ""} ${
+                          className={`min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl px-3.5 py-2 text-sm leading-snug transition ${flash === m.id ? "ring-2 ring-amber-300" : ""} ${
                             m.deleted ? "border border-dashed border-slate-300 bg-transparent italic text-slate-400" : mine ? "bg-indigo-600 text-white" : "border border-slate-200 bg-white text-slate-800"
                           }`}
                         >
@@ -562,7 +575,7 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
                           {m.deleted ? "Message deleted" : m.body}
                         </div>
                         {!m.deleted && (
-                          <div className={`relative flex items-center focus-within:opacity-100 md:group-hover:opacity-100 ${popup?.id === m.id ? "md:opacity-100" : "md:opacity-0"}`}>
+                          <div className={`relative flex shrink-0 items-center focus-within:opacity-100 md:group-hover:opacity-100 ${popup?.id === m.id ? "md:opacity-100" : "md:opacity-0"}`}>
                             <button
                               onClick={() => setPopup(popup?.id === m.id && popup.kind === "react" ? null : { id: m.id, kind: "react", canEdit: false })}
                               aria-label="React"
@@ -720,7 +733,7 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
         </Modal>
       )}
 
-      <div className="border-t border-slate-200 p-3">
+      <div className="shrink-0 border-t border-slate-200 bg-[var(--card)] px-3 pb-3 pt-2">
         <p className="mb-1 h-4 text-xs italic text-slate-500" aria-live="polite" data-testid="typing">
           {typers.length === 0 ? "" : typers.length === 1 ? `${typers[0]} is typing…` : typers.length === 2 ? `${typers[0]} and ${typers[1]} are typing…` : "Several people are typing…"}
         </p>
@@ -751,13 +764,16 @@ function ThreadView({ thread, meId, onBack, onManage, refresh, onLoadedEarlier }
             }}
             rows={1}
             maxLength={4000}
-            placeholder="Type a message (Enter to send, Shift+Enter for a new line)"
-            className="max-h-32 min-h-[40px] flex-1 resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+            placeholder="Type a message…"
+            aria-label="Message"
+            data-testid="chat-composer"
+            className="max-h-40 min-h-[44px] min-w-0 flex-1 resize-none overflow-y-auto rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm leading-snug outline-none focus:border-indigo-500"
           />
-          <button onClick={() => void send()} disabled={sending || !text.trim()} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+          <button onClick={() => void send()} disabled={sending || !text.trim()} data-testid="chat-send" className="h-11 shrink-0 rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
             Send
           </button>
         </div>
+        <p className="mt-1.5 hidden px-1 text-[10px] text-slate-400 sm:block">Enter to send · Shift+Enter for a new line</p>
       </div>
     </>
   );

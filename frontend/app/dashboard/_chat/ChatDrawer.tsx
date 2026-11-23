@@ -16,6 +16,15 @@ export default function ChatDrawer({ open, activeId, onSelect, onClose }: { open
   if (open && !everOpened) setEverOpened(true);
   const ref = useRef<HTMLElement>(null);
 
+  // While the drawer is open the page behind must not scroll (the messages have their own scroll area); the previous value is restored on close.
+  useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    const before = html.style.overflow;
+    html.style.overflow = "hidden";
+    return () => { html.style.overflow = before; };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const key = (e: KeyboardEvent) => {
@@ -33,6 +42,14 @@ export default function ChatDrawer({ open, activeId, onSelect, onClose }: { open
   }, [open, onClose]);
 
   return (
+    <>
+    {/* A light backdrop over the page (below the header, so the header icons stay usable). Clicking it closes the chat. Phones show the chat full screen, so no backdrop there. */}
+    <div
+      data-testid="chat-backdrop"
+      aria-hidden="true"
+      onClick={onClose}
+      className={`fixed inset-x-0 bottom-0 top-16 z-[44] hidden bg-slate-900/25 transition-opacity duration-300 lg:block ${open ? "opacity-100" : "pointer-events-none opacity-0"}`}
+    />
     <aside
       id="chat-drawer"
       ref={ref}
@@ -49,5 +66,6 @@ export default function ChatDrawer({ open, activeId, onSelect, onClose }: { open
     >
       {everOpened && <ChatPanel activeId={activeId} onSelect={onSelect} onClose={onClose} />}
     </aside>
+    </>
   );
 }
