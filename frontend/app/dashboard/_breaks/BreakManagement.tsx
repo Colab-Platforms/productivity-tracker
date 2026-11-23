@@ -6,10 +6,8 @@
 // Monitoring only: nothing here changes a break, attendance, productive time or pay. Cards are whole-card buttons whose number is the length of
 // the list they show. Exports are built from the same answer, so a download holds exactly what the filters show.
 // ---------------------------------------------------------------------------
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet } from "@/lib/api";
-import FilterBar from "../_filters/FilterBar";
-import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 import { KpiCard, Panel } from "../_dashboard/widgets";
 import { Modal } from "../_employees/Modal";
 import { addDays, rangeFor, type Preset } from "../reports/_team/ranges";
@@ -38,6 +36,16 @@ export function dur(s: number | null | undefined): string {
   const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
   return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(sec).padStart(2, "0")}s`;
 }
+/** Total break time as hours, minutes and seconds: "2h 10m 05s", "35m 12s", "45s". Never negative. */
+export function hms(s: number | null | undefined): string {
+  if (s === null || s === undefined) return "—";
+  const t = Math.max(0, Math.round(s));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+  return h ? `${h}h ${String(m).padStart(2, "0")}m ${String(sec).padStart(2, "0")}s` : m ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
+}
+type Order = "high" | "low" | "latest";
+const ORDER_LABEL: Record<Order, string> = { high: "Highest Break Time First", low: "Lowest Break Time First", latest: "Latest Break First" };
+type Group = { userId: string; breaks: Brk[]; total: number; latestStart: string; open: boolean; status: "ACTIVE" | "COMPLETED" | "EXCEEDED" };
 const clock = (isoTs: string | null, tz: string) => (isoTs ? new Intl.DateTimeFormat("en-IN", { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(isoTs)) : "");
 const dayLabel = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
@@ -45,44 +53,39 @@ type CardKey = "people" | "onbreak" | "today" | "avg" | "exceeding" | "weekly" |
 type Tab = "activity" | "weekly" | "monthly";
 
 export default function BreakManagement() {
-  const { filters, update, clear, ready } = useHrFilters();
-  const { options } = useFilterOptions(filters, update, ready, true);
   const [preset, setPreset] = useState<Preset>("today");
   const [cFrom, setCFrom] = useState("");
   const [cTo, setCTo] = useState("");
-  const [breakType, setBreakType] = useState("");
-  const [status, setStatus] = useState("");
-  const [defaulter, setDefaulter] = useState("");
   const [tab, setTab] = useState<Tab>("activity");
   const [card, setCard] = useState<CardKey | null>(null);
   const [page, setPage] = useState(1);
   const [res, setRes] = useState<Res | null>(null);
   const [error, setError] = useState("");
   const [openUser, setOpenUser] = useState<string | null>(null);
+  // The activity table ranks EMPLOYEES by their combined break time (default: most first); a row opens to show that person's individual breaks.
+  const [order, setOrder] = useState<Order>("high");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
 
   const today = res?.today ?? new Date().toISOString().slice(0, 10);
   const range = preset === "custom" ? (cFrom && cTo && cFrom <= cTo ? { from: cFrom, to: cTo } : null) : rangeFor(preset, today);
   const qs = useMemo(() => {
     if (!range) return null;
-    const p = new URLSearchParams(filterQuery(filters));
+    const p = new URLSearchParams();
     p.set("from", range.from);
     p.set("to", range.to);
-    if (breakType) p.set("breakType", breakType);
-    if (status) p.set("status", status);
-    if (defaulter) p.set("defaulter", defaulter);
     return p.toString();
-  }, [filters, range?.from, range?.to, breakType, status, defaulter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [range?.from, range?.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
-    if (!ready || !qs) return;
+    if (!qs) return;
     try {
       setRes(await apiGet<Res>(`/break-monitor?${qs}`));
       setError("");
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [qs, ready]);
+  }, [qs]);
   useEffect(() => { void load(); setPage(1); }, [load]);
   // While today is in view, refresh every 30 s and tick the running breaks every second (no end time is invented: the elapsed time grows).
   const live = !!range && range.to >= today;
@@ -109,8 +112,33 @@ export default function BreakManagement() {
     const map: Partial<Record<CardKey, string[]>> = { people: res.summary.employeesWithBreaks, onbreak: res.summary.currentlyOnBreak, exceeding: res.summary.exceeding };
     return map[card] ?? null;
   }, [res, card]);
-  const pages = Math.max(1, Math.ceil(cardRows.length / PAGE));
-  const shown = cardRows.slice((Math.min(page, pages) - 1) * PAGE, Math.min(page, pages) * PAGE);
+  // One entry per employee: every break of the period (after the date, company, department, employee, type, status and card filters, which the server and
+  // cardRows already applied) added together. A running break counts up to now, so the totals, and with them the order, move while it runs.
+  const groups = useMemo<Group[]>(() => {
+    const by = new Map<string, Brk[]>();
+    for (const b of cardRows) { const l = by.get(b.userId) ?? []; l.push(b); by.set(b.userId, l); }
+    const list: Group[] = [...by.entries()].map(([userId, breaks]) => {
+      const newestFirst = [...breaks].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+      return {
+        userId,
+        breaks: newestFirst,
+        total: breaks.reduce((n, b) => n + secsOf(b), 0),
+        latestStart: newestFirst[0].startedAt,
+        open: breaks.some((b) => b.open),
+        // the employee's status is only a summary of the breaks' own existing statuses
+        status: breaks.some((b) => b.status === "ACTIVE") ? "ACTIVE" : breaks.some((b) => b.status === "EXCEEDED") ? "EXCEEDED" : "COMPLETED",
+      };
+    });
+    const name = (g: Group) => res?.people[g.userId]?.name ?? "";
+    list.sort((a, b) =>
+      order === "low" ? a.total - b.total || name(a).localeCompare(name(b))
+      : order === "latest" ? b.latestStart.localeCompare(a.latestStart) || name(a).localeCompare(name(b))
+      : b.total - a.total || name(a).localeCompare(name(b)));
+    return list;
+  }, [cardRows, order, res, drift]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pages = Math.max(1, Math.ceil(groups.length / PAGE));
+  const shown = groups.slice((Math.min(page, pages) - 1) * PAGE, Math.min(page, pages) * PAGE);
+  const toggle = (id: string) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const pick = (k: CardKey) => {
     if (card === k) { setCard(null); return; }
@@ -118,7 +146,6 @@ export default function BreakManagement() {
     setPage(1);
     setTab(k === "weekly" ? "weekly" : k === "monthly" ? "monthly" : "activity");
   };
-  const clearAll = () => { clear(); setBreakType(""); setStatus(""); setDefaulter(""); setCard(null); setPage(1); };
 
   // ---- exports (same data as the screen) ----
   const periodText = res ? (res.from === res.to ? dayLabel(res.from) : `${dayLabel(res.from)} to ${dayLabel(res.to)}`) : "";
@@ -145,14 +172,14 @@ export default function BreakManagement() {
     ], {
       report: "Break Management",
       period: periodText,
-      filters: [["Break type", breakType ? TYPE_LABEL[breakType] : "All"], ["Status", status ? STATUS_LABEL[status] : "All"], ["Defaulters", defaulter === "yes" ? "Defaulters only" : defaulter === "no" ? "Non-defaulters only" : "All"], ["Card", card ?? "None"]],
+      filters: [["Card", card ?? "None"]],
       exportedAt: new Date(), exportedBy: null, timezone: tz,
       totals: [["Breaks", rows.length], ["Employees with breaks", s?.employeesWithBreaks.length ?? 0], ["Weekly defaulters", s?.weeklyDefaulters.length ?? 0], ["Monthly defaulters", s?.monthlyDefaulters.length ?? 0]],
     });
   }
 
   const tabAgg = tab === "weekly" ? res?.weekly ?? [] : tab === "monthly" ? res?.monthly ?? [] : [];
-  const tabRows = (card === "weekly" || card === "monthly" || defaulter === "yes" ? tabAgg.filter((a) => a.defaulter) : tabAgg).sort((a, b) => (b.excessSeconds ?? -1) - (a.excessSeconds ?? -1) || b.seconds - a.seconds);
+  const tabRows = (card === "weekly" || card === "monthly" ? tabAgg.filter((a) => a.defaulter) : tabAgg).sort((a, b) => (b.excessSeconds ?? -1) - (a.excessSeconds ?? -1) || b.seconds - a.seconds);
   const moveWeek = (n: number) => { if (!res) return; const f = addDays(res.week.from, 7 * n); setPreset("custom"); setCFrom(f); setCTo(addDays(f, 6)); };
   const moveMonth = (n: number) => { if (!res) return; const [y, m] = res.month.from.split("-").map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); const f = d.toISOString().slice(0, 10); const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10); setPreset("custom"); setCFrom(f); setCTo(t); };
 
@@ -179,26 +206,6 @@ export default function BreakManagement() {
           <button type="button" disabled={!res} data-testid="export-xlsx" onClick={() => void exportXlsx()} className="h-9 rounded-xl bg-indigo-600 px-3 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40">Export Excel</button>
         </div>
       </div>
-
-      <FilterBar
-        filters={filters}
-        update={update}
-        clear={clearAll}
-        options={options}
-        show={{ search: true, company: true, project: true, manager: true, department: true }}
-        counts={res?.scope ? { filtered: res.scope.filteredTotal, total: res.scope.orgTotal } : null}
-        extraActive={(breakType ? 1 : 0) + (status ? 1 : 0) + (defaulter ? 1 : 0)}
-        extra={
-          <>
-            <div className="w-40"><label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400" htmlFor="bm-type">Break type</label>
-              <select id="bm-type" value={breakType} onChange={(e) => setBreakType(e.target.value)} className={`${control} w-full`}><option value="">All</option>{Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
-            <div className="w-44"><label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400" htmlFor="bm-status">Break status</label>
-              <select id="bm-status" value={status} onChange={(e) => setStatus(e.target.value)} className={`${control} w-full`}><option value="">All</option>{Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
-            <div className="w-44"><label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400" htmlFor="bm-dflt">Defaulter status</label>
-              <select id="bm-dflt" value={defaulter} onChange={(e) => setDefaulter(e.target.value)} className={`${control} w-full`}><option value="">All</option><option value="yes">Defaulters</option><option value="no">Within Break Time</option></select></div>
-          </>
-        }
-      />
 
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div>}
       {!range && <p className="text-sm text-amber-700">Choose both dates (the end not before the start).</p>}
@@ -234,7 +241,7 @@ export default function BreakManagement() {
 
       {tab === "activity" && peopleOfCard && res && (
         <Panel title={`${peopleOfCard.length} ${peopleOfCard.length === 1 ? "employee" : "employees"}`} sub="Click a name for the full break history">
-          {peopleOfCard.length === 0 ? <p className="py-4 text-center text-sm text-slate-400">Nobody in this card for the period and filters.</p> : (
+          {peopleOfCard.length === 0 ? <p className="py-4 text-center text-sm text-slate-400">Nobody in this card for this period.</p> : (
             <ul data-testid="card-people" className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {peopleOfCard.map((id) => { const p = P(id); const agg = res.range.find((a) => a.userId === id); return (
                 <li key={id}><button type="button" onClick={() => setOpenUser(id)} className="w-full rounded-xl border border-indigo-100 px-3 py-2 text-left hover:bg-[var(--brand-50)]">
@@ -249,29 +256,55 @@ export default function BreakManagement() {
       )}
 
       {tab === "activity" && (
-        <Panel title="Break activity" sub={res ? `${cardRows.length} ${cardRows.length === 1 ? "break" : "breaks"} · ${periodText}${res.capped ? " · showing the newest 5,000" : ""}` : "Loading…"}>
+        <Panel title="Break activity" sub={res ? `${groups.length} ${groups.length === 1 ? "employee" : "employees"} · ${cardRows.length} ${cardRows.length === 1 ? "break" : "breaks"} · ${periodText}${res.capped ? " · showing the newest 5,000" : ""}` : "Loading…"}
+          action={<label className="flex items-center gap-2 text-xs text-slate-500">Sort by<select aria-label="Sort employees" data-testid="break-order" value={order} onChange={(e) => { setOrder(e.target.value as Order); setPage(1); }} className="h-9 rounded-xl border border-indigo-100 bg-white px-3 text-sm text-slate-700">{(Object.keys(ORDER_LABEL) as Order[]).map((k) => <option key={k} value={k}>{ORDER_LABEL[k]}</option>)}</select></label>}>
           <div className="overflow-x-auto">
             <table data-testid="break-table" className="w-full min-w-[1100px] text-left text-sm">
               <thead className="text-[11px] uppercase tracking-wide text-slate-400">
                 <tr className="border-b border-indigo-50">{["Employee", "Company", "Department", "Reporting manager", "Date", "Type", "Start", "End", "Duration", "Break Time", "Excess", "Status"].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-indigo-50">
-                {res && shown.length === 0 && <tr><td colSpan={12} className="px-2 py-8 text-center text-slate-400">No breaks for this period and these filters.</td></tr>}
-                {shown.map((b) => { const p = P(b.userId); return (
-                  <tr key={b.id}>
-                    <td className="px-2 py-2"><button type="button" onClick={() => setOpenUser(b.userId)} className="text-left font-medium text-indigo-700 hover:underline">{p?.name}</button><span className="block text-xs text-slate-400">{p?.employeeCode ?? "No ID"}</span></td>
-                    <td className="px-2 py-2 text-slate-600">{p?.company}</td>
-                    <td className="px-2 py-2 text-slate-600">{p?.department ?? "—"}</td>
-                    <td className="px-2 py-2 text-slate-600">{p?.manager ?? "—"}</td>
-                    <td className="px-2 py-2 text-slate-600">{dayLabel(b.day)}</td>
-                    <td className="px-2 py-2 text-slate-600">{TYPE_LABEL[b.breakType] ?? b.breakType}</td>
-                    <td className="px-2 py-2 tabular-nums text-slate-700">{clock(b.startedAt, tz)}</td>
-                    <td className="px-2 py-2 tabular-nums text-slate-700">{b.open ? <span className="text-sky-700">running</span> : clock(b.endedAt, tz)}</td>
-                    <td className="px-2 py-2 tabular-nums font-medium text-slate-900">{dur(secsOf(b))}{b.correctedDurationSeconds != null && <span className="ml-1 text-[10px] text-slate-400" title="Duration corrected by an Admin">corrected</span>}</td>
-                    <td className="px-2 py-2 tabular-nums text-slate-600">{b.allowanceSeconds === null ? <span className="text-slate-400">Not configured</span> : `${dur(b.allowanceSeconds)} / day`}</td>
-                    <td className="px-2 py-2 tabular-nums">{b.excessSeconds === null ? <span className="text-slate-400">—</span> : b.excessSeconds > 0 ? <span className="font-medium text-rose-700">{dur(b.excessSeconds)}</span> : <span className="text-slate-400">0</span>}</td>
-                    <td className="px-2 py-2"><span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_CHIP[b.status]}`}>{STATUS_LABEL[b.status]}</span></td>
-                  </tr>
+                {res && shown.length === 0 && <tr><td colSpan={12} className="px-2 py-8 text-center text-slate-400">No breaks for this period.</td></tr>}
+                {shown.map((g) => { const p = P(g.userId); const agg = res?.range.find((x) => x.userId === g.userId); const isOpen = expanded.has(g.userId); const first = g.breaks[0]; const days = new Set(g.breaks.map((x) => x.day)).size; return (
+                  <Fragment key={g.userId}>
+                    <tr data-testid="employee-row" data-user={g.userId} className="bg-slate-50/70">
+                      <td className="px-2 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => toggle(g.userId)} aria-expanded={isOpen} aria-label={`${isOpen ? "Hide" : "Show"} ${p?.name ?? "this employee"}'s ${g.breaks.length} break${g.breaks.length === 1 ? "" : "s"}`} data-testid="expand-breaks" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-indigo-100 text-slate-500 hover:bg-white">
+                            <svg viewBox="0 0 20 20" className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 5l6 5-6 5" /></svg>
+                          </button>
+                          <span><button type="button" onClick={() => setOpenUser(g.userId)} className="text-left font-semibold text-indigo-700 hover:underline">{p?.name}</button><span className="block text-xs text-slate-400">{p?.employeeCode ?? "No ID"}</span></span>
+                        </div>
+                      </td>
+                      <td className="px-2 py-2.5 text-slate-600">{p?.company}</td>
+                      <td className="px-2 py-2.5 text-slate-600">{p?.department ?? "—"}</td>
+                      <td className="px-2 py-2.5 text-slate-600">{p?.manager ?? "—"}</td>
+                      <td className="px-2 py-2.5 text-slate-600">{days === 1 ? dayLabel(first.day) : `${days} days`}</td>
+                      <td className="px-2 py-2.5 text-slate-600">{g.breaks.length} {g.breaks.length === 1 ? "break" : "breaks"}</td>
+                      <td className="px-2 py-2.5 tabular-nums text-slate-700" title="When the most recent break started">{clock(g.latestStart, tz)}</td>
+                      <td className="px-2 py-2.5 tabular-nums">{g.open ? <span className="text-sky-700">running</span> : ""}</td>
+                      <td className="px-2 py-2.5 tabular-nums font-semibold text-slate-900" data-testid="employee-total" data-seconds={Math.round(g.total)} title="All break time in the period, added together (a running break counts up to now)">{hms(g.total)}</td>
+                      <td className="px-2 py-2.5 tabular-nums text-slate-600">{first.allowanceSeconds === null ? <span className="text-slate-400">Not configured</span> : `${dur(first.allowanceSeconds)} / day`}</td>
+                      <td className="px-2 py-2.5 tabular-nums">{agg?.excessSeconds == null ? <span className="text-slate-400">—</span> : agg.excessSeconds > 0 ? <span className="font-medium text-rose-700">{dur(agg.excessSeconds)}</span> : <span className="text-slate-400">0</span>}</td>
+                      <td className="px-2 py-2.5"><span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_CHIP[g.status]}`}>{STATUS_LABEL[g.status]}</span></td>
+                    </tr>
+                    {isOpen && g.breaks.map((b) => (
+                      <tr key={b.id} data-testid="break-row">
+                        <td className="py-2 pl-10 pr-2 text-xs text-slate-400">break</td>
+                        <td className="px-2 py-2 text-slate-600" />
+                        <td className="px-2 py-2 text-slate-600" />
+                        <td className="px-2 py-2 text-slate-600" />
+                        <td className="px-2 py-2 text-slate-600">{dayLabel(b.day)}</td>
+                        <td className="px-2 py-2 text-slate-600">{TYPE_LABEL[b.breakType] ?? b.breakType}</td>
+                        <td className="px-2 py-2 tabular-nums text-slate-700">{clock(b.startedAt, tz)}</td>
+                        <td className="px-2 py-2 tabular-nums text-slate-700">{b.open ? <span className="text-sky-700">running</span> : clock(b.endedAt, tz)}</td>
+                        <td className="px-2 py-2 tabular-nums font-medium text-slate-900">{dur(secsOf(b))}{b.correctedDurationSeconds != null && <span className="ml-1 text-[10px] text-slate-400" title="Duration corrected by an Admin">corrected</span>}</td>
+                        <td className="px-2 py-2 tabular-nums text-slate-600">{b.allowanceSeconds === null ? <span className="text-slate-400">Not configured</span> : `${dur(b.allowanceSeconds)} / day`}</td>
+                        <td className="px-2 py-2 tabular-nums">{b.excessSeconds === null ? <span className="text-slate-400">—</span> : b.excessSeconds > 0 ? <span className="font-medium text-rose-700">{dur(b.excessSeconds)}</span> : <span className="text-slate-400">0</span>}</td>
+                        <td className="px-2 py-2"><span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_CHIP[b.status]}`}>{STATUS_LABEL[b.status]}</span></td>
+                      </tr>
+                    ))}
+                  </Fragment>
                 ); })}
               </tbody>
             </table>
@@ -291,14 +324,14 @@ export default function BreakManagement() {
       {(tab === "weekly" || tab === "monthly") && res && (
         <Panel
           title={tab === "weekly" ? `Week ${dayLabel(res.week.from)} to ${dayLabel(res.week.to)}` : new Date(`${res.month.from}T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })}
-          sub={`${tabRows.length} ${card === tab || defaulter === "yes" ? "defaulters" : "employees"} · a defaulter went over their daily Break Time on at least one day (checked day by day; one day is enough)`}
+          sub={`${tabRows.length} ${card === tab ? "defaulters" : "employees"} · a defaulter went over their daily Break Time on at least one day (checked day by day; one day is enough)`}
           action={<div className="flex gap-1.5"><button type="button" onClick={() => (tab === "weekly" ? moveWeek(-1) : moveMonth(-1))} className="h-8 rounded-lg border border-indigo-100 px-2.5 text-xs">◀ Previous</button><button type="button" onClick={() => (tab === "weekly" ? moveWeek(1) : moveMonth(1))} className="h-8 rounded-lg border border-indigo-100 px-2.5 text-xs">Next ▶</button></div>}
         >
           <div className="overflow-x-auto">
             <table data-testid="defaulter-table" className="w-full min-w-[1000px] text-left text-sm">
               <thead className="text-[11px] uppercase tracking-wide text-slate-400"><tr className="border-b border-indigo-50">{["Employee", "Company", "Department", "Reporting manager", "Breaks", "Total break", "Permitted", "Excess", "Days over", "Incidents", ...(tab === "monthly" ? ["Avg / day"] : []), "Result", "Dates over Break Time"].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}</tr></thead>
               <tbody className="divide-y divide-indigo-50">
-                {tabRows.length === 0 && <tr><td colSpan={12} className="px-2 py-8 text-center text-slate-400">Nobody for this period and these filters.</td></tr>}
+                {tabRows.length === 0 && <tr><td colSpan={12} className="px-2 py-8 text-center text-slate-400">Nobody for this period.</td></tr>}
                 {tabRows.map((a) => { const p = P(a.userId); return (
                   <tr key={a.userId}>
                     <td className="px-2 py-2"><button type="button" onClick={() => setOpenUser(a.userId)} className="text-left font-medium text-indigo-700 hover:underline">{p?.name}</button><span className="block text-xs text-slate-400">{p?.employeeCode ?? "No ID"}</span></td>

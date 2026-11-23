@@ -297,7 +297,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard/today", label: "Productivity Tracker", ready: true, roles: ["HR"], icon: I.today },
       { href: "/dashboard/tasks", label: "Daily Tasks", ready: true, icon: I.tasks },
-      { href: "/dashboard/history", label: "My History", ready: true, icon: I.history },
+      { href: "/dashboard/history", label: "My History", ready: true, notRoles: ["ADMIN"], icon: I.history },
       { href: "/dashboard/my-performance", label: "My performance", ready: true, roles: ["MANAGER"], icon: I.trend },
       { href: "/dashboard/chat", label: "Chat", ready: true, badge: "chat", icon: I.chat },
       { href: "/dashboard/notifications", label: "Notifications", ready: true, icon: I.bell },

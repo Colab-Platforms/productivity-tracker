@@ -38,7 +38,7 @@ type Overview = {
 };
 type TaskCounts = { planned: number; approved: number; pendingApproval: number; completed: number };
 
-const card = "rounded-2xl bg-white p-5 shadow-[var(--shadow-card)]";
+const card = "rounded-2xl bg-white p-5 shadow-[var(--shadow-card)] sm:p-6";
 const dayLabel = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "short", day: "numeric", timeZone: "UTC" });
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
@@ -148,6 +148,9 @@ function Row({ label, value, href, tone }: { label: string; value: number; href:
 export default function AdminDashboard() {
   const me = useMe();
   const [reload, setReload] = useState(0);
+  // The manager and company lists show the first few entries; "View all" opens the complete list in a scroll area (nothing is dropped).
+  const [allMgr, setAllMgr] = useState(false);
+  const [allCo, setAllCo] = useState(false);
   // The ONE shared Socket.IO connection: a task, inbox or meeting signal re-reads the numbers (no polling, no second socket).
   useRealtime(["tasks:changed", "notifications:changed", "meetings:changed"], () => setReload((n) => n + 1));
   const ov = useGet<Overview>("/admin-console/overview", reload);
@@ -219,12 +222,12 @@ export default function AdminDashboard() {
             <Stat label="Needs your attention" value={pendingTotal} href="#approvals" tone={pendingTotal > 0 ? "text-amber-700" : "text-slate-900"} />
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-3">
+          <div className="grid items-start gap-5 xl:grid-cols-2">
             {/* 2. distribution */}
             <Section title="Who reports to whom" hint="Employees under each manager" href="/dashboard/employees">
               {d.people.managers.length === 0 && <p className="text-sm text-slate-500">No managers yet.</p>}
-              <ul className="space-y-2.5">
-                {d.people.managers.map((m) => (
+              <ul className={`space-y-2.5 ${allMgr ? "max-h-80 overflow-y-auto pr-1" : ""}`} data-testid="manager-list">
+                {(allMgr ? d.people.managers : d.people.managers.slice(0, 6)).map((m) => (
                   <li key={m.id}>
                     <Link href={`/dashboard/employees?q=${encodeURIComponent(m.employeeCode ?? m.name)}`} className="block">
                       <div className="flex items-center justify-between text-sm"><span className="text-slate-700">{m.name} <span className="text-xs text-slate-400">{m.employeeCode}</span></span><span className="tabular-nums text-slate-600">{m.employees}</span></div>
@@ -233,6 +236,9 @@ export default function AdminDashboard() {
                   </li>
                 ))}
               </ul>
+              {d.people.managers.length > 6 && (
+                <button type="button" onClick={() => setAllMgr((v) => !v)} aria-expanded={allMgr} data-testid="managers-toggle" className="mt-3 text-xs font-medium text-indigo-700 hover:underline">{allMgr ? "Show fewer" : `View all ${d.people.managers.length} managers`}</button>
+              )}
               <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
                 {(["ADMIN", "HR", "MANAGER", "EMPLOYEE"] as const).map((r) => (
                   <Link key={r} href={`/dashboard/employees?role=${r}&status=ACTIVE,INVITED`} className="rounded-xl bg-[#F3F7F6] px-2 py-2 hover:bg-indigo-50">
@@ -241,11 +247,6 @@ export default function AdminDashboard() {
                   </Link>
                 ))}
               </div>
-              {d.people.byCompany.length > 1 && (
-                <ul className="mt-4 divide-y divide-indigo-50 text-sm">
-                  {d.people.byCompany.map((c) => <li key={c.id} className="flex justify-between py-1.5"><span className="text-slate-600">{c.name}</span><span className="tabular-nums text-slate-700">{c.people}</span></li>)}
-                </ul>
-              )}
               {d.people.unmappedCount > 0 && (
                 <Link href="/dashboard/employees" className="mt-4 block rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 hover:bg-amber-100">
                   <span className="font-medium">{d.people.unmappedCount} {d.people.unmappedCount === 1 ? "person has" : "people have"} no valid reporting line yet.</span> Set it in Manage Employees.
@@ -256,17 +257,21 @@ export default function AdminDashboard() {
             {/* 3. attendance and leave */}
             <Section title="Attendance and leave" hint="Last 7 days, same rules as the Calendar" href="/dashboard/attendance-calendar">
               <AttendanceBars trend={d.attendance.trend} />
-              <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs sm:grid-cols-5" data-testid="attendance-tiles">
+                <Link href={`/dashboard/attendance-calendar?from=${todayIso}&to=${todayIso}&status=PRESENT`} className="rounded-xl bg-emerald-50 px-2 py-2 hover:bg-emerald-100"><p className="text-base font-semibold tabular-nums text-emerald-800">{present}</p><p className="text-slate-500">Present</p></Link>
                 <Link href={`/dashboard/attendance-calendar?from=${todayIso}&to=${todayIso}&status=LATE`} className="rounded-xl bg-amber-50 px-2 py-2 hover:bg-amber-100"><p className="text-base font-semibold tabular-nums text-amber-800">{att.LATE ?? 0}</p><p className="text-amber-700">Late today</p></Link>
                 <Link href={`/dashboard/attendance-calendar?from=${todayIso}&to=${todayIso}&status=HALF_DAY`} className="rounded-xl bg-orange-50 px-2 py-2 hover:bg-orange-100"><p className="text-base font-semibold tabular-nums text-orange-800">{att.HALF_DAY ?? 0}</p><p className="text-orange-700">Half day</p></Link>
                 <Link href={`/dashboard/attendance-calendar?from=${todayIso}&to=${todayIso}&status=ABSENT`} className="rounded-xl bg-red-50 px-2 py-2 hover:bg-red-100"><p className="text-base font-semibold tabular-nums text-red-700">{att.ABSENT ?? 0}</p><p className="text-red-600">Absent</p></Link>
+                <Link href={`/dashboard/attendance-calendar?from=${todayIso}&to=${todayIso}&status=LEAVE`} className="rounded-xl bg-sky-50 px-2 py-2 hover:bg-sky-100"><p className="text-base font-semibold tabular-nums text-sky-800">{onLeave}</p><p className="text-slate-500">Leave</p></Link>
               </div>
               <p className="mt-4 text-xs text-slate-500">
                 Leave: <span className="font-medium text-slate-700">{d.leave.awaitingFirstLevel}</span> with their first approver · <span className="font-medium text-slate-700">{d.leave.awaitingHr}</span> waiting for HR ·{" "}
                 <span className="font-medium text-slate-700">{d.leave.onLeaveNext14Days.reduce((n, x) => n + x.people, 0)}</span> leave days in the next 14 days
               </p>
             </Section>
+          </div>
 
+          <div className="grid items-start gap-5 xl:grid-cols-2">
             {/* 4. productivity and tasks */}
             <Section title="Productivity and tasks" hint="Average productive hours per person, last 7 days" href="/dashboard/reports">
               <HoursBars trend={d.productivity.trend} />
@@ -282,9 +287,25 @@ export default function AdminDashboard() {
               </div>
               <p className="mt-3 text-xs text-slate-500">This week: {d.tasks.week.planned} tasks planned, {d.tasks.week.completed} completed, {d.tasks.week.hoursSpent} hours recorded on them.</p>
             </Section>
+
+            {/* 4b. company distribution: the biggest companies first, the whole list in a scroll area */}
+            <Section title="Company distribution" hint="People in each company" href="/dashboard/employees">
+              {d.people.byCompany.length === 0 ? <p className="text-sm text-slate-500">No companies yet.</p> : (
+                <>
+                  <ul className={`divide-y divide-indigo-50 text-sm ${allCo ? "max-h-80 overflow-y-auto pr-1" : ""}`} data-testid="company-list">
+                    {(allCo ? d.people.byCompany : d.people.byCompany.slice(0, 6)).map((c) => (
+                      <li key={c.id}><Link href={`/dashboard/employees?company=${c.id}`} className="flex justify-between py-1.5 hover:text-indigo-700"><span className="text-slate-600">{c.name}</span><span className="tabular-nums text-slate-700">{c.people}</span></Link></li>
+                    ))}
+                  </ul>
+                  {d.people.byCompany.length > 6 && (
+                    <button type="button" onClick={() => setAllCo((v) => !v)} aria-expanded={allCo} data-testid="companies-toggle" className="mt-3 text-xs font-medium text-indigo-700 hover:underline">{allCo ? "Show fewer" : `View all ${d.people.byCompany.length} companies`}</button>
+                  )}
+                </>
+              )}
+            </Section>
           </div>
 
-          <div className="grid gap-5 lg:grid-cols-2" id="approvals">
+          <div className="grid items-start gap-5 lg:grid-cols-2" id="approvals">
             {/* 5. pending approvals */}
             <Section title="Pending approvals" hint="What is waiting, and for whom">
               <div className="space-y-0.5">

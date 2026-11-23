@@ -8,6 +8,7 @@ import { formatTime, getPlatformTimezone, isoDaysAgo } from "@/lib/time";
 import { NO_REMARK, lateRemarkText } from "../reports/_team/lateRemark";
 import { Modal } from "../_employees/Modal";
 import { Stars } from "../_ratings/Stars";
+import { useRoleGate } from "../_routing/useRoleGate";
 
 type DayTask = {
   id: string; title: string; description: string | null; weight: string; status: string; approvalStatus: string; rating: number | null; ratingComment: string | null;
@@ -179,7 +180,7 @@ function hm(total: number) {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-export default function HistoryPage() {
+function HistoryScreen() {
   const [data, setData] = useState<Data | null>(null);
   const [from, setFrom] = useState(isoDaysAgo(29));
   const [to, setTo] = useState(isoDaysAgo(0));
@@ -475,4 +476,11 @@ export default function HistoryPage() {
       {openDay && <DayTasksModal date={openDay} onClose={() => setOpenDay(null)} />}
     </div>
   );
+}
+
+// My History is for people who clock in. Admin accounts are not tracked (no attendance is recorded for them) and the menu entry was removed for Admin,
+// so an Admin who opens this old address is sent to their own home. Employee, Manager and HR (and the Productivity Supervisor) are unchanged.
+export default function HistoryPage() {
+  const { allowed } = useRoleGate(["EMPLOYEE", "MANAGER", "HR"]);
+  return allowed ? <HistoryScreen /> : null;
 }
