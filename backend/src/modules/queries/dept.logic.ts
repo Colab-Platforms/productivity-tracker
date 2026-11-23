@@ -142,13 +142,14 @@ export function commentVisibilities(v: Viewer, t: Facts): NoteVisibility[] {
 }
 
 // --- the screen's work queue views -----------------------------------------------------------------------------------------
-export type View = "ALL" | "MINE" | "APPROVE" | "DEPT_AWAITING" | "DEPT_ASSIGNED" | "DEPT_PROGRESS" | "DEPT_HOLD" | "DEPT_DONE";
-export const VIEWS: View[] = ["ALL", "MINE", "APPROVE", "DEPT_AWAITING", "DEPT_ASSIGNED", "DEPT_PROGRESS", "DEPT_HOLD", "DEPT_DONE"];
+export type View = "ALL" | "MINE" | "TAGGED" | "APPROVE" | "DEPT_AWAITING" | "DEPT_ASSIGNED" | "DEPT_PROGRESS" | "DEPT_HOLD" | "DEPT_DONE";
+export const VIEWS: View[] = ["ALL", "MINE", "TAGGED", "APPROVE", "DEPT_AWAITING", "DEPT_ASSIGNED", "DEPT_PROGRESS", "DEPT_HOLD", "DEPT_DONE"];
 export function inView(view: View, v: Viewer, t: Facts): boolean {
   const deptSide = approved(t) && (v.deptIds.includes(t.departmentId) || t.assigneeId === v.id);
   switch (view) {
     case "ALL": return true;
     case "MINE": return t.raisedById === v.id;
+    case "TAGGED": return v.role === "ADMIN" && t.adminApproverIds.includes(v.id);
     case "APPROVE": return canManagerDecide(v, t) || canAdminDecide(v, t);
     case "DEPT_AWAITING": return deptSide && (t.workStatus === "AWAITING_ACTION" || t.workStatus === "REOPENED") && t.assigneeId === null;
     case "DEPT_ASSIGNED": return approved(t) && t.assigneeId === v.id && t.workStatus !== "COMPLETED";
@@ -167,4 +168,19 @@ export function stageOf(t: Pick<Facts, "approvalStatus" | "workStatus" | "confir
   if (t.workStatus === "AWAITING_ACTION") return "Waiting for the department to take it";
   if (t.workStatus === "REOPENED") return "Reopened, with the department";
   return "With the department";
+}
+
+// --- the Admin overview's five status groups (every request is in exactly one, so they add up to the total) -----------------
+export type StatusBucket = "PENDING" | "APPROVED" | "REJECTED" | "ON_HOLD" | "RESOLVED";
+export const STATUS_BUCKETS: StatusBucket[] = ["PENDING", "APPROVED", "REJECTED", "ON_HOLD", "RESOLVED"];
+export function statusBucket(t: Pick<Facts, "approvalStatus" | "workStatus">): StatusBucket {
+  if (t.approvalStatus === "PENDING_MANAGER" || t.approvalStatus === "PENDING_ADMIN") return "PENDING";
+  if (t.approvalStatus === "REJECTED") return "REJECTED";
+  if (t.workStatus === "ON_HOLD") return "ON_HOLD";
+  if (t.workStatus === "COMPLETED") return "RESOLVED";
+  return "APPROVED"; // approved and still open (awaiting, not started, in progress, reopened)
+}
+/** An Admin can be tagged only if they are on the list of Admins offered for the employee's company. */
+export function mayTagAdmin(choiceIds: readonly string[], taggedId: string): boolean {
+  return choiceIds.includes(taggedId);
 }

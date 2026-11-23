@@ -10,13 +10,19 @@ import { DeleteButton, DeleteDialog } from "../DeleteQuery";
 import { Modal } from "../../_employees/Modal";
 import { useMe } from "../../layout";
 import { DeptRaiseModal } from "./RaiseForm";
+import { useRealtime } from "@/lib/realtime";
 
 type Item = {
   id: string; reference: string; title: string; priority: string; priorityLabel: string; approvalStatus: string; approvalLabel: string;
   workStatus: string | null; workLabel: string | null; stage: string; department: string; departmentId: string;
   raisedBy: { id: string; name: string; employeeCode: string | null }; assignedTo: string | null; createdAt: string; isMine: boolean; needsYou: boolean;
+  company?: string; project?: string | null; admins?: { id: string; name: string }[]; taggedToMe?: boolean; statusBucket?: string;
 };
-type List = { ready: boolean; view?: string; total: number; counts: Record<string, number>; items: Item[]; isDeptMember?: boolean };
+type List = { ready: boolean; view?: string; total: number; counts: Record<string, number>; summary?: Record<string, number>; items: Item[]; isDeptMember?: boolean };
+const SUMMARY_CARDS: { key: string; label: string; cls: string }[] = [
+  { key: "PENDING", label: "Pending", cls: "text-amber-700" }, { key: "APPROVED", label: "Approved", cls: "text-emerald-700" }, { key: "REJECTED", label: "Rejected", cls: "text-red-600" },
+  { key: "ON_HOLD", label: "On Hold", cls: "text-orange-700" }, { key: "RESOLVED", label: "Resolved", cls: "text-sky-700" },
+];
 type Dept = { id: string; name: string };
 type Ev = { id: string; kind: string; by: string | null; byRole: string | null; from: string | null; to: string | null; note: string | null; visibility: string; at: string; attachment: { name: string } | null };
 type Detail = {
@@ -33,7 +39,7 @@ const WORK_CHIP: Record<string, string> = { AWAITING_ACTION: "bg-amber-50 text-a
 const PRIORITY_CHIP: Record<string, string> = { LOW: "bg-slate-100 text-slate-600", MEDIUM: "bg-sky-50 text-sky-700", HIGH: "bg-orange-50 text-orange-700", URGENT: "bg-red-50 text-red-600" };
 const WORK_LABEL: Record<string, string> = { NOT_STARTED: "Not Started", IN_PROGRESS: "In Progress", ON_HOLD: "On Hold", COMPLETED: "Completed" };
 const VIEW_LABEL: Record<string, string> = {
-  ALL: "All", MINE: "Raised by me", APPROVE: "Waiting for my decision", DEPT_AWAITING: "Awaiting department action", DEPT_ASSIGNED: "Assigned to me",
+  ALL: "All", MINE: "Raised by me", TAGGED: "Assigned to me", APPROVE: "Waiting for my decision", DEPT_AWAITING: "Awaiting department action", DEPT_ASSIGNED: "Assigned to me",
   DEPT_PROGRESS: "In progress", DEPT_HOLD: "On hold", DEPT_DONE: "Completed",
 };
 const EVENT_TEXT: Record<string, string> = {
@@ -71,6 +77,7 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
   const [reload, setReload] = useState(0);
   const [view, setView] = useState("ALL");
   const [approval, setApproval] = useState("");
+  const [status, setStatus] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [priority, setPriority] = useState("");
   const [q, setQ] = useState("");
@@ -83,22 +90,26 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
   const [closedLink, setClosedLink] = useState<string | null>(null);
   const openId = chosen ?? (linkedId && linkedId !== closedLink ? linkedId : null);
 
+  // a new query tagged to you (or a decision on one) refreshes the list and the counts without a reload
+  useRealtime(["notifications:changed"], () => setReload((n) => n + 1));
+
   useEffect(() => { const t = setTimeout(() => setQApplied(q.trim()), 300); return () => clearTimeout(t); }, [q]);
 
   const qs = new URLSearchParams();
   qs.set("view", view);
   if (approval) qs.set("approval", approval);
+  if (status) qs.set("status", status);
   if (departmentId) qs.set("departmentId", departmentId);
   if (priority) qs.set("priority", priority);
   if (qApplied) qs.set("q", qApplied);
   const list = useApi<List>(`/queries/dept?${qs.toString()}`, reload);
   const depts = useApi<{ ready: boolean; departments: Dept[] }>("/queries/dept/departments", reload);
   const d = list.data;
-  const filtersOn = !!(approval || departmentId || priority || q.trim());
+  const filtersOn = !!(status || approval || departmentId || priority || q.trim());
   const views = useMemo(() => {
     const c = d?.counts ?? {};
-    const show = (v: string) => v === "ALL" || v === "MINE" || (c[v] ?? 0) > 0 || (v === "APPROVE" && (me?.role === "MANAGER" || me?.role === "ADMIN")) || (v.startsWith("DEPT_") && d?.isDeptMember);
-    return Object.keys(VIEW_LABEL).filter(show).map((v) => ({ key: v, label: VIEW_LABEL[v], n: c[v] ?? 0 }));
+    const show = (v: string) => v === "ALL" || v === "MINE" || (v === "TAGGED" && me?.role === "ADMIN") || (c[v] ?? 0) > 0 || (v === "APPROVE" && (me?.role === "MANAGER" || me?.role === "ADMIN")) || (v.startsWith("DEPT_") && d?.isDeptMember);
+    return Object.keys(VIEW_LABEL).filter(show).map((v) => ({ key: v, label: v === "ALL" && me?.role === "ADMIN" ? "All queries" : VIEW_LABEL[v], n: c[v] ?? 0 }));
   }, [d, me?.role]);
 
   return (
@@ -118,6 +129,18 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
       {notice && <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700" role="status">{notice}</p>}
       {list.error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">{list.error}</p>}
       {d && !d.ready && <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">Department requests are not switched on yet on this server. Ask an administrator to finish the database update.</p>}
+
+      {isAdmin && d?.ready && d.summary && (
+        <section aria-label="Query status summary" data-testid="dq-summary" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {SUMMARY_CARDS.map((c) => (
+            <button key={c.key} type="button" onClick={() => setStatus(status === c.key ? "" : c.key)} aria-pressed={status === c.key} data-testid={`sum-${c.key}`}
+              className={`rounded-2xl bg-white p-4 text-left shadow-[var(--shadow-card)] transition hover:ring-2 hover:ring-indigo-200 ${status === c.key ? "ring-2 ring-indigo-500" : ""}`}>
+              <p className="text-xs font-medium text-slate-500">{c.label}</p>
+              <p className={`mt-1 text-2xl font-semibold tabular-nums ${c.cls}`}>{d.summary![c.key] ?? 0}</p>
+            </button>
+          ))}
+        </section>
+      )}
 
       <section className="space-y-3 rounded-2xl bg-white p-4 shadow-[var(--shadow-card)] sm:p-5">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Work queue">
@@ -150,7 +173,7 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
               <option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="URGENT">Urgent</option>
             </select>
           </label>
-          {filtersOn && <button onClick={() => { setApproval(""); setDepartmentId(""); setPriority(""); setQ(""); setQApplied(""); }} className="rounded-xl px-3 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50">Clear filters</button>}
+          {filtersOn && <button onClick={() => { setStatus(""); setApproval(""); setDepartmentId(""); setPriority(""); setQ(""); setQApplied(""); }} className="rounded-xl px-3 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50">Clear filters</button>}
         </div>
       </section>
 
@@ -166,10 +189,12 @@ export default function DeptRequests({ openId: linkedId, tabs }: { openId: strin
                     <span className="rounded-full bg-[#F3F7F6] px-2 py-0.5 font-medium text-slate-600">{i.department}</span>
                     <span className="tabular-nums">{i.reference}</span>
                     <Pill cls={PRIORITY_CHIP[i.priority] ?? ""}>{i.priorityLabel}</Pill>
+                    {i.taggedToMe && <span className="rounded-full bg-violet-100 px-2 py-0.5 font-medium text-violet-700">Tagged to you</span>}
                     {i.needsYou && <span className="rounded-full bg-rose-500 px-2 py-0.5 font-medium text-white">Needs you</span>}
                   </p>
                   <p className="mt-1 truncate text-sm font-medium text-slate-900">{i.title}</p>
                   <p className="mt-0.5 text-xs text-slate-500">{i.isMine ? "" : `${i.raisedBy.name}${i.raisedBy.employeeCode ? ` (${i.raisedBy.employeeCode})` : ""} · `}{dayOnly(i.createdAt)}{i.assignedTo ? ` · handled by ${i.assignedTo}` : ""} · {i.stage}</p>
+                  {(i.company || i.project || (i.admins && i.admins.length > 0)) && <p className="mt-0.5 text-xs text-slate-500" data-testid="row-meta">{[i.company, i.project ? `Project: ${i.project}` : null, i.admins && i.admins.length > 0 ? `Admin: ${i.admins.map((a) => a.name).join(", ")}` : null].filter(Boolean).join(" · ")}</p>}
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <Pill cls={APPROVAL_CHIP[i.approvalStatus] ?? ""}>{i.approvalLabel}</Pill>
@@ -268,6 +293,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
             <Pill cls={APPROVAL_CHIP[d.approvalStatus] ?? ""}>{d.approvalLabel}</Pill>
             {d.workLabel && <Pill cls={WORK_CHIP[d.workStatus ?? ""] ?? ""}>{d.workLabel}</Pill>}
             <Pill cls={PRIORITY_CHIP[d.priority] ?? ""}>{d.priorityLabel} priority</Pill>
+            {d.admins.length > 0 && <span className="rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700" data-testid="detail-admin">Assigned Admin: {d.admins.join(", ")}</span>}
             <span className="text-xs text-slate-500">Raised by {d.raisedBy.name}{d.raisedBy.employeeCode ? ` (${d.raisedBy.employeeCode})` : ""} · {when(d.createdAt)}</span>
           </div>
           <p className="rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900" data-testid="stage-line"><b>{d.stage}</b>{d.responsible.length > 0 ? ` · responsible: ${d.responsible.join(", ")}` : ""}{d.reopenCount > 0 ? ` · reopened ${d.reopenCount}×` : ""}</p>
@@ -378,7 +404,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
 }
 
 // ===========================================================================
-type AdminDept = { id: string; name: string; isActive: boolean; platformId: string; company: string; members: { id: string; name: string; employeeCode: string | null }[] };
+type AdminDept = { id: string; name: string; isActive: boolean; platformId: string; company: string; members: { id: string; name: string; employeeCode: string | null }[]; outsiders?: { id: string; name: string; employeeCode: string | null; company: string }[] };
 type Person = { id: string; name: string; employeeCode: string | null; status: string; company?: string | null };
 
 function ManageDepartments({ onClose }: { onClose: () => void }) {
@@ -399,7 +425,11 @@ function ManageDepartments({ onClose }: { onClose: () => void }) {
     try { await fn(); after?.(); setReload((n) => n + 1); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
   const companyId = company || data?.companies[0]?.id || "";
-  const pool = (people.data?.users ?? []).filter((u) => u.status === "ACTIVE" && editing && u.company === editing.company && `${u.name} ${u.employeeCode ?? ""}`.toLowerCase().includes(find.trim().toLowerCase()));
+  const own = (people.data?.users ?? []).filter((u) => u.status === "ACTIVE" && editing && u.company === editing.company);
+  const ownIds = new Set(own.map((u) => u.id));
+  // HR / Admin people who handle this company from another company (the server decides who is allowed)
+  const extra = (editing?.outsiders ?? []).filter((o) => !ownIds.has(o.id)).map((o) => ({ id: o.id, name: `${o.name} (from ${o.company})`, employeeCode: o.employeeCode })) as typeof own;
+  const pool = [...own, ...extra].filter((u) => `${u.name} ${u.employeeCode ?? ""}`.toLowerCase().includes(find.trim().toLowerCase()));
 
   return (
     <Modal title="Manage departments" subtitle="The list employees pick from. Members are the people who do the work for that department." onClose={onClose} width="max-w-2xl">

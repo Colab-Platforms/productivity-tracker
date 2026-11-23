@@ -105,6 +105,40 @@ export async function departmentsForPicker(userId: string) {
   return { ready: true, departments: rows };
 }
 
+/**
+ * Who may be a MEMBER of a department of company X: an active person of company X, or an active HR/Admin who has access to company X
+ * (company access, e.g. the HR person who handles several companies). Being a member is what lets someone accept, work on and complete
+ * that department's approved requests; it never widens what they can see in other companies.
+ */
+async function eligibleMemberIds(platformId: string, ids: string[]) {
+  if (ids.length === 0) return [] as string[];
+  const rows = await prisma.user.findMany({ where: { id: { in: ids }, status: "ACTIVE" }, select: { id: true, role: true, platformId: true } });
+  const out: string[] = [];
+  for (const u of rows) {
+    if (u.platformId === platformId) { out.push(u.id); continue; }
+    if (String(u.role) !== "HR" && String(u.role) !== "ADMIN") continue;
+    const ac = await accessFor(u.id);
+    if (ac.all || ac.ids.includes(platformId)) out.push(u.id);
+  }
+  return out;
+}
+
+/** HR/Admin people from OTHER companies who could be added to each company's departments (for the member picker). */
+async function outsiderStaff(platformIds: string[]) {
+  const staff = await prisma.user.findMany({ where: { role: { in: ["HR", "ADMIN"] }, status: "ACTIVE" }, select: { id: true, firstName: true, lastName: true, employeeCode: true, platformId: true } });
+  const byCompany = new Map<string, { id: string; name: string; employeeCode: string | null; platformId: string }[]>();
+  for (const u of staff) {
+    const ac = await accessFor(u.id);
+    for (const pid of platformIds) {
+      if (pid === u.platformId || !(ac.all || ac.ids.includes(pid))) continue;
+      const list = byCompany.get(pid) ?? [];
+      list.push({ id: u.id, name: nameOf(u) ?? "", employeeCode: u.employeeCode, platformId: u.platformId });
+      byCompany.set(pid, list);
+    }
+  }
+  return byCompany;
+}
+
 async function adminScope(userId: string) {
   const me = await who(userId);
   if (me.viewer.role !== "ADMIN") throw new Error("FORBIDDEN");
@@ -121,10 +155,11 @@ export async function adminDepartments(userId: string) {
   const uName = new Map(users.map((u) => [u.id, { id: u.id, name: nameOf(u) ?? "", employeeCode: u.employeeCode }]));
   const plats = await prisma.platform.findMany({ where: platformIds ? { id: { in: platformIds } } : {}, select: { id: true, name: true }, orderBy: { name: "asc" } });
   const pName = new Map(plats.map((p) => [p.id, p.name]));
+  const outsiders = await outsiderStaff([...new Set(rows.map((r) => r.platformId))]);
   return {
     ready: true,
     companies: plats,
-    departments: rows.map((d) => ({ id: d.id, name: d.name, isActive: d.isActive, platformId: d.platformId, company: pName.get(d.platformId) ?? "", members: members.filter((m) => m.departmentId === d.id).map((m) => uName.get(m.userId)).filter(Boolean) })),
+    departments: rows.map((d) => ({ id: d.id, name: d.name, isActive: d.isActive, platformId: d.platformId, company: pName.get(d.platformId) ?? "", members: members.filter((m) => m.departmentId === d.id).map((m) => uName.get(m.userId)).filter(Boolean), outsiders: (outsiders.get(d.platformId) ?? []).map((o) => ({ id: o.id, name: o.name, employeeCode: o.employeeCode, company: pName.get(o.platformId) ?? "" })) })),
   };
 }
 
@@ -160,8 +195,8 @@ export async function updateDepartment(userId: string, deptId: string, body: { n
   if (body.memberIds !== undefined) {
     if (!Array.isArray(body.memberIds) || body.memberIds.length > 200) throw new Error("BAD_MEMBERS");
     members = [...new Set(body.memberIds.map(String))];
-    // every member must be an active person of the department's own company
-    const ok = members.length ? await prisma.user.count({ where: { id: { in: members }, platformId: d.platformId, status: "ACTIVE" } }) : 0;
+    // every member must be an active person of the department's own company, or an HR/Admin who has access to that company
+    const ok = (await eligibleMemberIds(d.platformId, members)).length;
     if (ok !== members.length) throw new Error("BAD_MEMBERS");
   }
   const before = (await prisma.departmentMember.findMany({ where: { departmentId: d.id }, select: { userId: true } })).map((m) => m.userId);
@@ -194,7 +229,18 @@ async function fallbackAdmins(platformId: string, requesterId: string) {
  * Who a request from this person goes to: the reporting manager (if there is a manager step) and the Admin(s) for the final approval.
  * ONE function used by both the real submit and the form's read-only preview, so what the form promises is what happens.
  */
-async function routeFor(userId: string, role: string, platformId: string) {
+/** The Admins an employee can tag: real ACTIVE Admin accounts that act on the employee's company (read from the database, never typed names). */
+export async function adminChoices(requesterId: string, platformId: string) {
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN", status: "ACTIVE", id: { not: requesterId } }, select: { id: true, firstName: true, lastName: true, employeeCode: true } });
+  const out: { id: string; name: string; employeeCode: string | null }[] = [];
+  for (const a of admins) {
+    const ac = await accessFor(a.id);
+    if (ac.all || ac.ids.includes(platformId)) out.push({ id: a.id, name: nameOf(a) ?? "", employeeCode: a.employeeCode });
+  }
+  return out.sort((x, y) => x.name.localeCompare(y.name));
+}
+
+async function routeFor(userId: string, role: string, platformId: string, taggedAdminId?: string | null) {
   const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, reportsToId: true } });
   const boss = u?.reportsToId ? await prisma.user.findUnique({ where: { id: u.reportsToId }, select: { id: true, role: true, status: true, reportsToId: true } }) : null;
   const bossFacts: L.Boss = boss ? { id: boss.id, role: String(boss.role), status: String(boss.status) } : null;
@@ -206,8 +252,13 @@ async function routeFor(userId: string, role: string, platformId: string) {
     above = mb ? { id: mb.id, role: String(mb.role), status: String(mb.status) } : null;
   } else if (managerId) above = null;
   const mapped = L.mappedAdmin(userId, above);
+  // An Admin tagged by the employee takes the Admin stage. This never removes the manager step (managerId is decided above).
+  if (taggedAdminId) {
+    if (!L.mayTagAdmin((await adminChoices(userId, platformId)).map((a) => a.id), taggedAdminId)) throw new Error("BAD_TAGGED_ADMIN");
+    return { managerId, adminApproverIds: [taggedAdminId], usedFallback: false, tagged: true };
+  }
   const adminApproverIds = mapped ? [mapped] : await fallbackAdmins(platformId, userId);
-  return { managerId, adminApproverIds, usedFallback: !mapped };
+  return { managerId, adminApproverIds, usedFallback: !mapped, tagged: false };
 }
 
 /** What the form shows about the signed-in person, read from their own record (never typed by them): name, ID, company and who approves. */
@@ -226,10 +277,11 @@ export async function formPreview(userId: string) {
     hasManagerStep: !!route.managerId,
     finalApprovers: route.adminApproverIds.map((a) => nm.get(a) ?? "").filter(Boolean),
     adminsMapped: !route.usedFallback,
+    adminChoices: await adminChoices(userId, me.platformId),
   };
 }
 
-export async function createRequest(userId: string, body: { title?: unknown; description?: unknown; departmentId?: unknown; priority?: unknown; attachment?: Upload | null }) {
+export async function createRequest(userId: string, body: { title?: unknown; description?: unknown; departmentId?: unknown; priority?: unknown; taggedAdminId?: unknown; attachment?: Upload | null }) {
   await needReady();
   const me = await who(userId);
   const title = String(body.title ?? "").trim().replace(/\s+/g, " ");
@@ -246,7 +298,8 @@ export async function createRequest(userId: string, body: { title?: unknown; des
   if (!dept) throw new Error("BAD_DEPARTMENT");
   const file = await store(me.platformId, body.attachment); // checked first: a bad file stops the whole thing
 
-  const { managerId, adminApproverIds, usedFallback } = await routeFor(userId, me.viewer.role, me.platformId);
+  const taggedAdminId = body.taggedAdminId ? String(body.taggedAdminId) : null;
+  const { managerId, adminApproverIds, usedFallback, tagged } = await routeFor(userId, me.viewer.role, me.platformId, taggedAdminId);
 
   const seq = await prisma.$queryRaw<{ n: bigint }[]>`select nextval('dept_request_ref_seq') as n`;
   const reference = `DQ-${String(seq[0].n).padStart(6, "0")}`;
@@ -257,6 +310,7 @@ export async function createRequest(userId: string, body: { title?: unknown; des
     });
     const note = [
       managerId ? null : "No reporting manager step (no manager is mapped for this person).",
+      tagged ? "Tagged to a specific Admin by the employee." : null,
       usedFallback ? "No Admin is mapped above this person, so every Admin of the company can give the final approval." : null,
     ].filter(Boolean).join(" ");
     const ev = await addEvent(tx, { requestId: r.id, actorId: userId, kind: "CREATED", toValue: dept.name, note: note || null, file });
@@ -264,6 +318,8 @@ export async function createRequest(userId: string, body: { title?: unknown; des
   });
   const firstWho = managerId ? [managerId] : adminApproverIds;
   await tell(me.platformId, firstWho, created.r.id, created.ev.id, managerId ? "DEPT_QUERY_MANAGER_REVIEW" : "DEPT_QUERY_ADMIN_REVIEW", `${reference}: ${managerId ? "approval needed" : "final approval needed"}`, `${me.name} raised "${title}" for ${dept.name} (${L.PRIORITY_LABEL[body.priority as string]} priority).`);
+  // A tagged Admin hears about it straight away (an FYI while the manager step is open; the final-approval notice comes after the manager approves).
+  if (tagged && managerId) await tell(me.platformId, adminApproverIds, created.r.id, created.ev.id, "DEPT_QUERY_TAGGED", `${reference}: tagged to you`, `${me.name} tagged you on "${title}" for ${dept.name}. It is with the reporting manager first; you will be asked for the final approval after.`);
   auditNote({ module: "Queries", action: "CREATE", recordType: "DeptRequest", recordId: created.r.id, summary: `Raised a department request: ${title} (${dept.name})`, after: { reference, department: dept.name, stage } });
   return { id: created.r.id, reference, stage, stageLabel: L.APPROVAL_LABEL[stage] };
 }
@@ -272,7 +328,7 @@ export async function createRequest(userId: string, body: { title?: unknown; des
 // LIST
 // ---------------------------------------------------------------------------------------------------------------------------
 
-export type ListFilters = { view?: unknown; approval?: unknown; work?: unknown; departmentId?: unknown; priority?: unknown; q?: unknown };
+export type ListFilters = { view?: unknown; status?: unknown; approval?: unknown; work?: unknown; departmentId?: unknown; priority?: unknown; q?: unknown };
 
 export async function listRequests(userId: string, f: ListFilters = {}) {
   if (!(await deptReady())) return { ready: false, items: [], counts: {}, total: 0 };
@@ -281,19 +337,32 @@ export async function listRequests(userId: string, f: ListFilters = {}) {
   const or: Record<string, unknown>[] = [{ raisedById: userId }, { managerId: userId }, { adminApproverIds: { has: userId } }, { assigneeId: userId }];
   if (v.deptIds.length) or.push({ departmentId: { in: v.deptIds }, approvalStatus: "APPROVED" });
   if (v.role === "MANAGER" && v.reportIds.size) or.push({ raisedById: { in: [...v.reportIds] } });
-  if (v.role === "ADMIN" || v.role === "HR") or.push(v.access.all ? {} : { platformId: { in: v.access.ids } });
-  const rows = await prisma.deptRequest.findMany({ where: { OR: or as never }, orderBy: { createdAt: "desc" }, take: 800 });
+  // An Admin/HR with access to every company reads everything: no filter at all (an empty condition inside OR does not match everything).
+  const staffAll = (v.role === "ADMIN" || v.role === "HR") && v.access.all;
+  if ((v.role === "ADMIN" || v.role === "HR") && !v.access.all) or.push({ platformId: { in: v.access.ids } });
+  const rows = await prisma.deptRequest.findMany({ where: staffAll ? {} : ({ OR: or } as never), orderBy: { createdAt: "desc" }, take: 800 });
   const visible = rows.filter((r) => L.canView(v, asFacts(r)));
 
-  const userIds = [...new Set(visible.flatMap((r) => [r.raisedById, r.assigneeId, r.managerId].filter((x): x is string => !!x)))];
+  const userIds = [...new Set(visible.flatMap((r) => [r.raisedById, r.assigneeId, r.managerId, ...r.adminApproverIds].filter((x): x is string => !!x)))];
   const users = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, firstName: true, lastName: true, employeeCode: true } }) : [];
   const uName = new Map(users.map((u) => [u.id, u]));
   const depts = await prisma.department.findMany({ where: { id: { in: [...new Set(visible.map((r) => r.departmentId))] } }, select: { id: true, name: true } });
   const dName = new Map(depts.map((d) => [d.id, d.name]));
 
+  // company and project (the requester's main team) for the overview, read in two batched queries
+  const companies = await prisma.platform.findMany({ where: { id: { in: [...new Set(visible.map((r) => r.platformId))] } }, select: { id: true, name: true } });
+  const cName = new Map(companies.map((c) => [c.id, c.name]));
+  const raiserIds = [...new Set(visible.map((r) => r.raisedById))];
+  const memberships = raiserIds.length ? await prisma.teamMember.findMany({ where: { userId: { in: raiserIds }, isActive: true, team: { isActive: true } }, select: { userId: true, isPrimary: true, team: { select: { name: true } } } }) : [];
+  const projectOf = new Map<string, string>();
+  // a primary team wins; otherwise the first by name
+  for (const m of [...memberships].sort((a, b) => Number(a.isPrimary) - Number(b.isPrimary) || b.team.name.localeCompare(a.team.name))) projectOf.set(m.userId, m.team.name);
   const counts: Record<string, number> = {};
   for (const view of L.VIEWS) counts[view] = visible.filter((r) => L.inView(view, v, asFacts(r))).length;
 
+  const summary: Record<string, number> = { PENDING: 0, APPROVED: 0, REJECTED: 0, ON_HOLD: 0, RESOLVED: 0 };
+  for (const r of visible) summary[L.statusBucket(asFacts(r))]++;
+  const status = L.STATUS_BUCKETS.find((x) => x === f.status) ?? null;
   const view = L.VIEWS.find((x) => x === f.view) ?? "ALL";
   const approval = String(f.approval ?? "");
   const work = String(f.work ?? "");
@@ -302,6 +371,7 @@ export async function listRequests(userId: string, f: ListFilters = {}) {
   const q = String(f.q ?? "").trim().toLowerCase().slice(0, 100);
   const items = visible
     .filter((r) => L.inView(view, v, asFacts(r)))
+    .filter((r) => !status || L.statusBucket(asFacts(r)) === status)
     .filter((r) => !approval || r.approvalStatus === approval)
     .filter((r) => !work || r.workStatus === work)
     .filter((r) => !departmentId || r.departmentId === departmentId)
@@ -309,7 +379,7 @@ export async function listRequests(userId: string, f: ListFilters = {}) {
     .filter((r) => {
       if (!q) return true;
       const p = uName.get(r.raisedById);
-      return r.title.toLowerCase().includes(q) || r.reference.toLowerCase().includes(q) || (p ? `${p.firstName} ${p.lastName} ${p.employeeCode ?? ""}`.toLowerCase().includes(q) : false);
+      return r.title.toLowerCase().includes(q) || r.reference.toLowerCase().includes(q) || (dName.get(r.departmentId) ?? "").toLowerCase().includes(q) || (cName.get(r.platformId) ?? "").toLowerCase().includes(q) || (p ? `${p.firstName} ${p.lastName} ${p.employeeCode ?? ""}`.toLowerCase().includes(q) : false);
     })
     .slice(0, 500)
     .map((r) => {
@@ -322,11 +392,14 @@ export async function listRequests(userId: string, f: ListFilters = {}) {
         department: dName.get(r.departmentId) ?? "", departmentId: r.departmentId,
         raisedBy: { id: r.raisedById, name: nameOf(p) ?? "", employeeCode: p?.employeeCode ?? null },
         assignedTo: nameOf(r.assigneeId ? uName.get(r.assigneeId) : null),
+        company: cName.get(r.platformId) ?? "", project: projectOf.get(r.raisedById) ?? null,
+        admins: r.adminApproverIds.map((a) => ({ id: a, name: nameOf(uName.get(a)) ?? "" })).filter((a) => a.name),
+        taggedToMe: v.role === "ADMIN" && r.adminApproverIds.includes(userId), statusBucket: L.statusBucket(asFacts(r)),
         createdAt: r.createdAt, isMine: r.raisedById === userId,
         needsYou: L.canManagerDecide(v, asFacts(r)) || L.canAdminDecide(v, asFacts(r)) || L.canConfirm(v, asFacts(r)) || (L.canAccept(v, asFacts(r))) || (r.assigneeId === userId && r.workStatus === "REOPENED"),
       };
     });
-  return { ready: true, view, total: items.length, counts, items, isDeptMember: v.deptIds.length > 0 };
+  return { ready: true, view, total: items.length, counts, summary, status, items, isDeptMember: v.deptIds.length > 0 };
 }
 
 /** How many department requests are waiting for this person (feeds the sidebar badge together with the existing queries). */

@@ -32,6 +32,7 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   TITLE_TOO_LONG: { status: 400, message: "Keep the title under 150 characters." },
   BAD_PRIORITY: { status: 400, message: "Choose a priority: Low, Medium, High or Urgent." },
   DEPARTMENT_REQUIRED: { status: 400, message: "Choose the department that should do the work." },
+  BAD_TAGGED_ADMIN: { status: 400, message: "That Admin is not available for your company. Pick one from the list or leave it empty." },
   BAD_DEPARTMENT: { status: 400, message: "That department is not available. Pick one from the list." },
   BAD_DEPARTMENT_NAME: { status: 400, message: "A department name needs 2 to 80 characters." },
   DEPARTMENT_EXISTS: { status: 409, message: "A department with that name already exists in this company." },

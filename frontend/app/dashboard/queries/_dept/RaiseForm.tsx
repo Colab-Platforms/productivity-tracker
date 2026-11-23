@@ -7,7 +7,7 @@ import { apiGet, apiPost } from "@/lib/api";
 import { Modal } from "../../_employees/Modal";
 
 type Dept = { id: string; name: string };
-type Preview = { employee: { name: string; employeeCode: string | null; designation: string | null; company: string }; reportingManager: string | null; hasManagerStep: boolean; finalApprovers: string[]; adminsMapped: boolean };
+type Preview = { employee: { name: string; employeeCode: string | null; designation: string | null; company: string }; reportingManager: string | null; hasManagerStep: boolean; finalApprovers: string[]; adminsMapped: boolean; adminChoices?: { id: string; name: string; employeeCode: string | null }[] };
 type Sent = { id: string; reference: string; stage: string; stageLabel: string };
 
 const PRIORITIES = [
@@ -28,6 +28,7 @@ export function DeptRaiseModal({ departments, onClose, onDone }: { departments: 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [departmentId, setDepartmentId] = useState("");
+  const [taggedAdminId, setTaggedAdminId] = useState(""); // optional: a specific Admin takes the Admin stage (the manager step is never skipped)
   const [find, setFind] = useState("");
   const [priority, setPriority] = useState("MEDIUM");
   const [file, setFile] = useState<File | null>(null);
@@ -84,7 +85,7 @@ export function DeptRaiseModal({ departments, onClose, onDone }: { departments: 
     setBusy(true); setError("");
     try {
       const attachment = file ? { fileName: file.name, data: await readFile(file), mimeType: file.type } : undefined;
-      const r = await apiPost<Sent>("/queries/dept", { title, description, departmentId, priority, attachment });
+      const r = await apiPost<Sent>("/queries/dept", { title, description, departmentId, priority, attachment, ...(taggedAdminId ? { taggedAdminId } : {}) });
       setSent(r);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
@@ -137,7 +138,17 @@ export function DeptRaiseModal({ departments, onClose, onDone }: { departments: 
               <div><dt className="text-xs text-slate-500">Reporting manager</dt><dd className="font-medium text-slate-900" data-testid="pf-manager">{preview.hasManagerStep ? preview.reportingManager : "None, goes straight to an Admin"}</dd></div>
             </dl>
           )}
-          {preview && preview.finalApprovers.length > 0 && <p className="mt-3 text-xs text-slate-500">Final approval by: {preview.finalApprovers.join(", ")}{preview.adminsMapped ? "" : " (any Admin of your company)"}</p>}
+          {preview && (preview.adminChoices?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              <label htmlFor="dq-admin" className="text-sm font-medium text-slate-700">Tag an Admin <span className="font-normal text-slate-400">(optional)</span></label>
+              <select id="dq-admin" data-testid="tag-admin" value={taggedAdminId} onChange={(e) => setTaggedAdminId(e.target.value)} className={`mt-1 ${input}`}>
+                <option value="">No one in particular (usual routing)</option>
+                {preview.adminChoices!.map((a) => <option key={a.id} value={a.id}>{a.name}{a.employeeCode ? ` (${a.employeeCode})` : ""}</option>)}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">The tagged Admin gives the final approval and is told about it. Your reporting manager still approves first.</p>
+            </div>
+          )}
+          {preview && (taggedAdminId || preview.finalApprovers.length > 0) && <p className="mt-3 text-xs text-slate-500" data-testid="final-by">Final approval by: {taggedAdminId ? (preview.adminChoices?.find((a) => a.id === taggedAdminId)?.name ?? "") : preview.finalApprovers.join(", ")}{taggedAdminId || preview.adminsMapped ? "" : " (any Admin of your company)"}</p>}
         </section>
 
         <div>
