@@ -12,12 +12,6 @@ import { Modal } from "../_employees/Modal";
 import { BLOCKED_REASON_MAX, PROGRESS_OPTIONS, blockedReasonProblem } from "../_progress/progress";
 import { fieldChanges, type EditChoices, type EditableTask } from "./editTypes";
 
-const WEIGHTS = [
-  { value: "LOW", label: "Low" },
-  { value: "MEDIUM", label: "Medium" },
-  { value: "HIGH", label: "High" },
-  { value: "CRITICAL", label: "Critical" },
-];
 const input = "mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500";
 const normProgress = (p?: string | null) => (p === "NOT_STARTED" || !p ? "TODO" : p);
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
@@ -196,19 +190,9 @@ export function EditTaskModal({
               <input type="date" value={date} max={isoDaysAgo(0)} min={isoDaysAgo(latePolicy?.maxDays ?? 14)} onChange={(e) => e.target.value && setDate(e.target.value)} disabled={correction} className={input} aria-label="Task date" />
             </label>
             <label className="block text-xs text-slate-500">
-              Hours spent
-              <input type="number" min={0} max={24} step={0.25} value={hours} onChange={(e) => setHours(e.target.value)} className={input} aria-label="Hours spent" />
-            </label>
-            <label className="block text-xs text-slate-500">
               Progress
               <select value={progress} onChange={(e) => setProgress(e.target.value)} className={input} aria-label="Progress">
                 {PROGRESS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </label>
-            <label className="block text-xs text-slate-500">
-              Task priority
-              <select value={weight} onChange={(e) => setWeight(e.target.value)} className={input} aria-label="Priority">
-                {WEIGHTS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
               </select>
             </label>
           </div>

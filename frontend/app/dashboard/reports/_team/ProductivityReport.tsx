@@ -1,5 +1,6 @@
 "use client";
 
+import { durationShort } from "../../_timer/TaskTimer";
 import { pctText, sampleText, scoreText, STATUS_CHIP, STATUS_LABEL, type Weighted } from "../../_weighted/Weighted";
 import ScoreBreakdown from "./ScoreBreakdown";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
@@ -23,6 +24,7 @@ import { PROGRESS_LABEL } from "../../_progress/progress";
 type Day = { date: string; completed: number | null; percent: number | null; state: "DATA" | "NO_TASK_DATA" };
 type Person = {
   userId: string; name: string; employeeCode: string | null; teamName: string | null;
+  trackedSeconds?: number; trackedTasks?: number; // automatic task time (a separate metric, never part of the score)
   projects?: string[]; reportingManager?: string | null; // added for the Excel export
   targetPerDay: number | null; targetSource: "PERSON" | "TEAM" | "COMPANY" | null;
   daysWithData: number; completedTotal: number | null; targetTotal: number | null; overallPercent: number | null; days: Day[];
@@ -269,6 +271,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
                   <th className={`${th} text-right`} title="Average of the manager's stars over the completed tasks that have been rated">Avg rating</th>
                   <th className={`${th} text-right`} title="Completion % x 60% + manager rating % x 40%. Task priority is not used. Click a score for the breakdown.">Overall Performance Score</th>
                   <th className={th}>Evaluation status</th>
+                  <th className={`${th} text-right`} title="Working time recorded automatically while tasks were In Progress and the person was clocked in and not on a break. Tasks running at the same time are counted once. It is shown for information and never changes the score.">Task time</th>
                   <th className={`${th} text-right`}>Daily target</th>
                   <th className={`${th} text-right`} title="Tasks finished in the period divided by the daily target (needs a target)">Productivity</th>
                 </tr>
@@ -301,7 +304,8 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
                         ) : <span className="text-xs text-slate-400">N/A</span>}
                       </td>
                       <td className="px-3 py-2.5">{p.weighted ? <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CHIP[p.weighted.status]}`} title={p.weighted.provisional ? `${p.weighted.awaitingRating} completed ${p.weighted.awaitingRating === 1 ? "task is" : "tasks are"} waiting for a rating` : undefined}>{STATUS_LABEL[p.weighted.status]}{p.weighted.provisional ? ` (${p.weighted.awaitingRating} pending)` : ""}</span> : null}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-900">
+
+                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-700" data-testid="task-time-cell">{p.trackedTasks ? durationShort(p.trackedSeconds ?? 0) : <span className="text-xs text-slate-400">Not tracked</span>}</td>                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-900">
                         {p.targetPerDay !== null ? (p.targetPerDay === 0 ? <span className="text-xs text-amber-700" title="A target of 0 is set, so no percentage can be calculated">0</span> : p.targetPerDay) : (
                           <span className="text-xs text-slate-400">Not set{canSetTargets && !self ? <button type="button" onClick={(e) => { e.stopPropagation(); document.getElementById("task-targets")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} className="ml-1 font-medium text-indigo-700 hover:underline">Set</button> : null}</span>
                         )}

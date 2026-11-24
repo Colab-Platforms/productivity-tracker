@@ -12,13 +12,14 @@ import AssignedByMe, { TaskForm, type Person } from "./AssignedByMe";
 export default function AssignTasks() {
   const [sub, setSub] = useState<"new" | "mine">("new");
   const [people, setPeople] = useState<Person[] | null>(null);
+  const [total, setTotal] = useState<number | undefined>(undefined);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [formKey, setFormKey] = useState(0);
 
   useEffect(() => {
     let live = true;
-    apiGet<{ people: Person[] }>("/tasks/assigned/people").then((r) => live && setPeople(r.people)).catch((e: Error) => live && setError(e.message));
+    apiGet<{ people: Person[]; total?: number }>("/tasks/assigned/people").then((r) => { if (live) { setPeople(r.people); setTotal(r.total); } }).catch((e: Error) => live && setError(e.message));
     return () => { live = false; };
   }, []);
 
@@ -45,6 +46,7 @@ export default function AssignTasks() {
               inline
               company
               people={people ?? []}
+              eligibleTotal={total}
               task={null}
               onClose={() => setFormKey((n) => n + 1)}
               onSaved={() => { setNotice("Task assigned. The employee has been notified."); setFormKey((n) => n + 1); }}

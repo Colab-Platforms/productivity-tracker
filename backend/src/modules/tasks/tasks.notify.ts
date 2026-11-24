@@ -87,7 +87,9 @@ export async function taskNotice(event: TaskEvent, taskId: string, actorId: stri
 
     if (event === "assigned") {
       if (task.userId === actorId) return;
-      return send([task.userId], { type: "TASK_ASSIGNED", title: "New task assigned", body: `${by} assigned you: ${task.title}`, link: "/dashboard/tasks?tab=assigned", dedupeKey: `task:${task.id}:assigned`, data });
+      // a manager keeps "Assigned by me" under ?tab=assigned, so work assigned TO a manager opens ?tab=received
+      const recipient = await prisma.user.findUnique({ where: { id: task.userId }, select: { role: true } });
+      return send([task.userId], { type: "TASK_ASSIGNED", title: "New task assigned", body: `${by} assigned you: ${task.title}`, link: String(recipient?.role) === "MANAGER" ? "/dashboard/tasks?tab=received" : "/dashboard/tasks?tab=assigned", dedupeKey: `task:${task.id}:assigned`, data });
     }
     if (event === "proposed") {
       return send(await reviewersOf(task.id, task.userId, null, [actorId, task.userId]), { type: "TASK_PROPOSED", title: extra.lateDate ? "Late task needs your approval" : "Task needs your approval", body: extra.lateDate ? `${owner} submitted late for ${extra.lateDate}: ${task.title}` : `${owner} proposed: ${task.title}`, link: MANAGER_LINK, dedupeKey: `task:${task.id}:proposed`, data });

@@ -13,11 +13,12 @@ const OPTIONS = [
 
 // A manager sends a Completed task back to In Progress. Both options keep the employee's submission and the task's history; a remark is
 // required before either one is confirmed, and the employee is told the kind and the remark.
-export function RevertModal({ title, who, busy, error, onSubmit, onCancel }: { title: string; who: string; busy: boolean; error: string; onSubmit: (type: "PARTIAL" | "NOT_FULL", remark: string) => void; onCancel: () => void }) {
+export function RevertModal({ title, who, busy, error, onSubmit, onCancel }: { title: string; who: string; busy: boolean; error: string; onSubmit: (type: "PARTIAL" | "NOT_FULL", remark: string, reason: "QUALITY" | "REQUIREMENT_CHANGE") => void; onCancel: () => void }) {
   const [type, setType] = useState<"PARTIAL" | "NOT_FULL" | "">("");
   const [text, setText] = useState("");
+  const [reason, setReason] = useState<"QUALITY" | "REQUIREMENT_CHANGE" | "">("");
   const trimmed = text.trim();
-  const ok = type !== "" && trimmed.length >= MIN && trimmed.length <= MAX;
+  const ok = type !== "" && reason !== "" && trimmed.length >= MIN && trimmed.length <= MAX;
   return (
     <Modal
       title="Revert / Reopen task"
@@ -27,7 +28,7 @@ export function RevertModal({ title, who, busy, error, onSubmit, onCancel }: { t
       footer={
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} disabled={busy} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
-          <button onClick={() => ok && onSubmit(type, trimmed)} disabled={busy || !ok} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+          <button onClick={() => ok && onSubmit(type as "PARTIAL" | "NOT_FULL", trimmed, reason as "QUALITY" | "REQUIREMENT_CHANGE")} disabled={busy || !ok} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
             {busy ? "Reopening…" : "Confirm"}
           </button>
         </div>
@@ -42,6 +43,15 @@ export function RevertModal({ title, who, busy, error, onSubmit, onCancel }: { t
               <span className="block text-sm font-medium text-slate-900">{o.label}</span>
               <span className="block text-xs text-slate-500">{o.hint}</span>
             </span>
+          </label>
+        ))}
+      </fieldset>
+      <fieldset className="mt-4 space-y-2">
+        <legend className="mb-1 text-sm text-slate-600">Why is it being sent back? (used fairly in the Work Efficiency Index)</legend>
+        {([["QUALITY", "Quality problem: rework is needed"], ["REQUIREMENT_CHANGE", "The requirement changed: not the employee's fault"]] as const).map(([v, label]) => (
+          <label key={v} className="flex cursor-pointer items-center gap-2 text-sm text-slate-800">
+            <input type="radio" name="revert-reason" value={v} checked={reason === v} onChange={() => setReason(v)} data-testid={"revert-reason-" + v} />
+            {label}
           </label>
         ))}
       </fieldset>

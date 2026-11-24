@@ -61,6 +61,21 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // --- Task productivity (tasks completed / daily target) -------------------------------------
 const goodIds = (...v: (string | undefined)[]) => v.every((x) => !x || UUID.test(x));
 
+// Work Efficiency Index (policy EFFICIENCY_V1): same people and filters as the productivity report; with userId it carries the task lines behind the number.
+router.get("/efficiency", async (req, res) => {
+  try {
+    const userId = text(req.query.userId, 40);
+    const teamId = text(req.query.teamId, 40);
+    if (!goodIds(userId, teamId)) {
+      res.status(400).json({ error: "One of the values sent is not valid." });
+      return;
+    }
+    res.json(await productivity.getEfficiency(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), userId, teamId, filters: parseFilters(req.query as Record<string, unknown>) }));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 router.get("/productivity", async (req, res) => {
   try {
     const userId = text(req.query.userId, 40);

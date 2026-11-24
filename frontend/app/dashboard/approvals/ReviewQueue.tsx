@@ -306,12 +306,12 @@ export default function ReviewQueue() {
     }
   }
 
-  async function sendRevert(type: "PARTIAL" | "NOT_FULL", remark: string) {
+  async function sendRevert(type: "PARTIAL" | "NOT_FULL", remark: string, reason: "QUALITY" | "REQUIREMENT_CHANGE") {
     if (!revertFor) return;
     setBusy(true);
     setRevertError("");
     try {
-      await call<Queue>(`/tasks/review/${revertFor.id}/revert`, "POST", { type, remark });
+      await call<Queue>(`/tasks/review/${revertFor.id}/revert`, "POST", { type, remark, reason });
       setRevertFor(null);
       setReload((n) => n + 1);
     } catch (e) {
@@ -394,7 +394,7 @@ export default function ReviewQueue() {
       )}
 
       {revertFor && (
-        <RevertModal title={revertFor.title} who={personLabel(revertFor as RowLike)} busy={busy} error={revertError} onSubmit={(type, remark) => void sendRevert(type, remark)} onCancel={() => setRevertFor(null)} />
+        <RevertModal title={revertFor.title} who={personLabel(revertFor as RowLike)} busy={busy} error={revertError} onSubmit={(type, remark, reason) => void sendRevert(type, remark, reason)} onCancel={() => setRevertFor(null)} />
       )}
 
       {staff && (
@@ -733,8 +733,15 @@ export default function ReviewQueue() {
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => run(() => call<Queue>(`/tasks/review/${t.id}/partial`, "POST", { partial: !t.partial }))}
-                title={t.partial ? "Remove the partial mark (the task counts as fully completed again)" : "Mark this task as partially completed: it earns half its weight"}
+                onClick={() => {
+                  if (t.partial) return void run(() => call<Queue>(`/tasks/review/${t.id}/partial`, "POST", { partial: false }));
+                  const pct = window.prompt("How much of the work is done and verified? (1 to 99 %)");
+                  if (!pct) return;
+                  const milestone = window.prompt("Milestone reached (short note, e.g. 'draft finished, review pending')");
+                  if (!milestone) return;
+                  void run(() => call<Queue>(`/tasks/review/${t.id}/partial`, "POST", { partial: true, percent: Number(pct), milestone }));
+                }}
+                title={t.partial ? "Remove the partial mark (the task counts as fully completed again)" : "Mark this task as partially completed, with the verified progress and a milestone note"}
                 className="shrink-0 rounded-xl border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-50 disabled:opacity-40"
               >
                 {t.partial ? "Undo partial" : "Mark partial"}
@@ -761,8 +768,10 @@ export default function ReviewQueue() {
                   initialComment={t.ratingComment}
                   busy={busy}
                   saveLabel={t.rating != null ? "Update rating" : "Save rating"}
-                  onSave={(rating, comment) =>
-                    run(() => call<Queue>(`/tasks/review/${t.id}/rating`, "POST", { rating, comment: comment || undefined })).then(() => setRatingEdit(null))
+                  showTime
+                  timeDefaultMinutes={(t as { timer?: { tracked?: boolean; activeSeconds?: number } }).timer?.tracked ? Math.max(1, Math.round(((t as { timer?: { activeSeconds?: number } }).timer?.activeSeconds ?? 0) / 60)) : null}
+                  onSave={(rating, comment, expectedMinutes) =>
+                    run(() => call<Queue>(`/tasks/review/${t.id}/rating`, "POST", { rating, comment: comment || undefined, expectedMinutes })).then(() => setRatingEdit(null))
                   }
                 />
               )}

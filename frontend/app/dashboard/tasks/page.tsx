@@ -31,6 +31,7 @@ import { ViewTabs } from "../_assigned/ViewTabs";
 import AssignedToMe from "../_assigned/AssignedToMe";
 import AssignedByMe from "../_assigned/AssignedByMe";
 import AssignTasks from "../_assigned/AssignTasks";
+import { TaskTimer, type TaskTimerData } from "../_timer/TaskTimer";
 import ReviewQueue from "../approvals/ReviewQueue";
 import { type Weighted } from "../_weighted/Weighted";
 import EmployeeRepetitionAlert from "./_repetition/EmployeeRepetitionAlert";
@@ -77,6 +78,8 @@ type Task = {
   // Daily task entry (present once the server has it switched on): progress is separate from approval.
   progress?: "TODO" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED" | "NOT_STARTED";
   hoursSpent?: number | null;
+  /** the automatic work timer from the server (follows the task's status; "Not tracked" for older work) */
+  timer?: TaskTimerData;
   taggedManager?: string | null;
   blockedNote?: string | null;
   approvalNote?: string | null;
@@ -124,12 +127,6 @@ type Payload = {
   weighted?: Weighted;
 };
 
-const WEIGHTS = [
-  { value: "LOW", label: "Low", points: 1 },
-  { value: "MEDIUM", label: "Medium", points: 4 },
-  { value: "HIGH", label: "High", points: 5 },
-  { value: "CRITICAL", label: "Critical", points: 5 },
-];
 
 const WEIGHT_CHIP: Record<string, string> = {
   LOW: "bg-[#E7F6F1] text-slate-600",
@@ -185,7 +182,7 @@ function TasksPageInner() {
   const [latePolicy, setLatePolicy] = useState<{ ready: boolean; allowedDays: number; maxDays: number } | null>(null);
   // Which part of Daily Tasks is open. Employee: "main" (my submitted tasks) or "assigned". Manager: "own", "submitted" (the approval queue) or "assigned".
   // Same page, no sidebar item: the switch sits at the top.
-  const view = pickedView ?? (tabParam === "submitted" || tabParam === "assigned" || tabParam === "assign" ? tabParam : "main");
+  const view = pickedView ?? (tabParam === "submitted" || tabParam === "assigned" || tabParam === "assign" || tabParam === "received" ? tabParam : "main");
   const setView = setPickedView;
   // HR and Admin may open the same queue of employee-submitted tasks (they only act on tasks tagged to them; the rest is view only).
   const canReview = me?.role === "HR" || me?.role === "ADMIN";
@@ -325,17 +322,18 @@ function TasksPageInner() {
 
   // A manager's own work: self-managed, no approval. Employees (and everyone else) keep the screen below.
   if (data?.selfManagedMode) {
-    const mgrView = view === "submitted" || view === "assigned" ? view : "own";
+    const mgrView = view === "submitted" || view === "assigned" || view === "received" ? view : "own";
     return (
       <div className="space-y-5">
         <ViewTabs
           value={mgrView}
           onChange={setView}
-          tabs={[{ key: "own", label: "My own tasks" }, { key: "submitted", label: "Employee submitted tasks" }, { key: "assigned", label: "Assigned by me" }]}
+          tabs={[{ key: "own", label: "My own tasks" }, { key: "submitted", label: "Employee submitted tasks" }, { key: "assigned", label: "Assigned by me" }, { key: "received", label: "Assigned to me", badge: assignedOpen }]}
         />
         {mgrView === "own" && <SelfManagedTasks data={data as unknown as SelfPayload} onData={(p) => setData(p as unknown as Payload)} error={error} setError={setError} />}
         {mgrView === "submitted" && <ReviewQueue />}
         {mgrView === "assigned" && <AssignedByMe />}
+        {mgrView === "received" && <AssignedToMe onCount={setAssignedOpen} />}
       </div>
     );
   }
@@ -555,17 +553,13 @@ function TasksPageInner() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-2">
           {data?.entryForm?.ready && (
             <>
               <div className="min-w-0 text-xs text-slate-500">
                 Date
                 <p className="mt-1 w-full truncate rounded-xl border border-indigo-100 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">{formatDate(new Date(), { day: "numeric", month: "short", year: "numeric" })}</p>
               </div>
-              <label className="min-w-0 text-xs text-slate-500">
-                Hours spent
-                <input type="number" min={0} max={24} step={0.25} value={hours} onChange={(e) => setHours(e.target.value)} placeholder="0" className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500" />
-              </label>
               <label className="min-w-0 text-xs text-slate-500">
                 Progress
                 <select value={progress} onChange={(e) => setProgress(e.target.value)} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500">
@@ -576,16 +570,6 @@ function TasksPageInner() {
               </label>
             </>
           )}
-          <label className="min-w-0 text-xs text-slate-500">
-            Task priority
-            <select value={weight} onChange={(e) => setWeight(e.target.value)} className="mt-1 w-full min-w-0 rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-500">
-              {WEIGHTS.map((w) => (
-                <option key={w.value} value={w.value}>
-                  {w.label} · {w.points}pt
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
 
         {data?.entryForm?.ready && progress === "BLOCKED" && (
@@ -823,6 +807,7 @@ function EntryMeta({ t }: { t: Task }) {
   const p = PROGRESS_CHIP(t.progress);
   const a = APPROVAL_CHIP[t.approvalStatus];
   return (
+    <>
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
       <span className={`rounded-full px-2 py-0.5 font-medium ${p.cls}`}>{p.label}</span>
       <span className={`rounded-full px-2 py-0.5 font-medium ${a.cls}`}>{a.label}</span>
@@ -832,6 +817,9 @@ function EntryMeta({ t }: { t: Task }) {
       {t.progress === "BLOCKED" && t.blockedNote && <span className="text-amber-800">· Blocked: {t.blockedNote}</span>}
       {t.approvalNote && <span className="text-slate-500">· Manager's comment: “{t.approvalNote}”</span>}
     </div>
+    {/* Time follows the status automatically: no Start button. */}
+    <TaskTimer timer={t.timer} status={t.progress === "COMPLETED" ? "COMPLETED" : t.progress} />
+    </>
   );
 }
 

@@ -1,12 +1,13 @@
 // Manager-assigned tasks: the shapes the server sends and the words/colours the screens use. (Server rules: backend tasks.assigned.logic.ts.)
 
+import type { TaskTimerData } from "../_timer/TaskTimer";
 export type Stage = "TODO" | "IN_PROGRESS" | "AWAITING_CONFIRMATION" | "CONFIRMED" | "CANCELLED";
 
 export type AssignedTask = {
   id: string; title: string; description: string | null; priority: string; projectId: string | null; project: string | null;
   employeeId: string; employee: string; employeeCode: string | null; assignedById: string | null; assignedBy: string; assignedOn: string;
   due: string | null; overdue: boolean; stage: Stage; completionNote: string | null; completedAt: string | null; rating?: number | null; confirmedAt: string | null;
-  sentBackReason: string | null; commentCount: number; lastComment: { text: string; at: string } | null; updatedAt: string;
+  timer?: TaskTimerData; sentBackReason: string | null; commentCount: number; lastComment: { text: string; at: string } | null; updatedAt: string;
 };
 export type AssignedCounts = { total: number; todo: number; inProgress: number; awaiting: number; confirmed: number; overdue: number };
 export type AssignedPayload = { ready: boolean; tasks: AssignedTask[]; counts: AssignedCounts };

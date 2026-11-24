@@ -26,8 +26,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   FORBIDDEN: { status: 403, message: "Only managers can do that." },
   NOT_YOUR_TEAM: { status: 403, message: "That person isn't in your team." },
   ADMIN_ASSIGNS_EMPLOYEES: { status: 403, message: "An Admin can assign tasks to employees only." },
-  ASSIGN_TO_EMPLOYEES_ONLY: { status: 403, message: "You can assign tasks to employees only." },
-  NOT_SAME_COMPANY: { status: 403, message: "You can assign tasks only to people of your own company." },
+  ASSIGN_TO_EMPLOYEES_ONLY: { status: 403, message: "Tasks can't be assigned to Admin accounts." },
+  NOT_SAME_COMPANY: { status: 403, message: "That person is outside the companies you can assign tasks in." },
   CANNOT_ASSIGN_SELF: { status: 400, message: "You can't assign a task to yourself." },
   ASSIGNER_CANNOT_CONFIRM: { status: 403, message: "Confirming or sending back finished work is a manager's decision. You can follow the progress here." },
   MANAGER_TASKS_ARE_PERSONAL: { status: 403, message: "A manager's tasks are their own. Tasks can't be assigned to a manager." },
@@ -94,6 +94,9 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   REMARK_REQUIRED: { status: 400, message: "Add a remark (at least 3 characters) explaining why." },
   REMARK_TOO_LONG: { status: 400, message: "Keep the remark to 300 characters or fewer." },
   NOT_STARTED_YET: { status: 400, message: "This task is still To Do. It cannot be marked as partly done yet." },
+  BAD_EXPECTED_TIME: { status: 400, message: "Enter the reasonable time for this work in minutes (1 to 1440)." },
+  BAD_PARTIAL_PROGRESS: { status: 400, message: "Enter how much is done (1 to 99 %) and a short milestone note." },
+  REVERT_REASON_REQUIRED: { status: 400, message: "Say why it is sent back: a quality problem or a changed requirement." },
   BAD_PARTIAL: { status: 400, message: "Say whether the task is partially completed (true or false)." },
   ALREADY_REOPENED: { status: 409, message: "That task was already reopened." },
   BACKDATE_NOT_PAST: { status: 400, message: "Pick a date before today. Use Quick Add or Add Single Task for today." },
@@ -363,7 +366,7 @@ router.post("/review/:id/approve", async (req, res) => {
 // Rate a finished task 1-5 stars. Body: { rating, comment? }. (/outcome is the old path: it only answers "use stars".)
 router.post(["/review/:id/rating", "/review/:id/outcome"], async (req, res) => {
   try {
-    res.json(await tasks.reviewTask(req.user!.userId, id(req.params.id), { rating: req.body?.rating, comment: req.body?.comment, outcome: req.body?.outcome }));
+    res.json(await tasks.reviewTask(req.user!.userId, id(req.params.id), { rating: req.body?.rating, comment: req.body?.comment, outcome: req.body?.outcome, expectedMinutes: req.body?.expectedMinutes }));
   } catch (e) {
     fail(res, e);
   }
@@ -372,7 +375,7 @@ router.post(["/review/:id/rating", "/review/:id/outcome"], async (req, res) => {
 // Mark a task partially completed (earns half its weight) or undo it. Body: { partial: true | false }.
 router.post("/review/:id/partial", async (req, res) => {
   try {
-    res.json(await tasks.markPartial(req.user!.userId, id(req.params.id), req.body?.partial));
+    res.json(await tasks.markPartial(req.user!.userId, id(req.params.id), req.body?.partial, { percent: req.body?.percent, milestone: req.body?.milestone }));
   } catch (e) {
     fail(res, e);
   }
@@ -459,7 +462,7 @@ router.post("/repetition/scan", async (req, res) => {
 
 router.post("/review/:id/revert", async (req, res) => {
   try {
-    res.json(await tasks.revertTask(req.user!.userId, id(req.params.id), req.body?.type, req.body?.remark));
+    res.json(await tasks.revertTask(req.user!.userId, id(req.params.id), req.body?.type, req.body?.remark, req.body?.reason));
   } catch (e) {
     fail(res, e);
   }

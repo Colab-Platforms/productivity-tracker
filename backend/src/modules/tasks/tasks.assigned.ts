@@ -10,7 +10,9 @@ import { auditNote } from "../../lib/auditContext.js";
 import { emitTaskChange } from "../../lib/realtime.js";
 import { notifyUsers } from "../../lib/notify.js";
 import { CAP_TASK_ASSIGN_COMPANY, hasCapability } from "../../lib/capabilities.js";
+import { isSupervisor, monitoringWhere } from "../../lib/supervisor.js";
 import { starsFor } from "./tasks.rating.js";
+import { notTracked, timersFor } from "./tasks.timer.js";
 import { activeAssigned } from "./tasks.deleted.js";
 import { selfTasksReady } from "./tasks.self.js";
 import { assertCanManage, manageableUserIds, resolveProject, userContext } from "./tasks.service.js";
@@ -63,7 +65,7 @@ async function loadRows(where: Record<string, unknown>) {
 }
 
 async function shape(rows: Row[]) {
-  const [events, zones, stars] = await Promise.all([eventsOf(rows.map((r) => r.id)), timezones(rows.map((r) => r.platformId)), starsFor(rows)]);
+  const [events, zones, stars, timers] = await Promise.all([eventsOf(rows.map((r) => r.id)), timezones(rows.map((r) => r.platformId)), starsFor(rows), timersFor(rows)]);
   return rows.map((r) => {
     const ev = events.get(r.id) ?? [];
     const stage = stageOf(String(r.status), r.reviewedAt);
@@ -90,6 +92,8 @@ async function shape(rows: Row[]) {
       completedAt: r.completedAt ? r.completedAt.toISOString() : null,
       // the manager's star rating when one exists (assigned work is confirmed, not rated, so this is normally blank)
       rating: stars.get(r.id) ?? null,
+      // the automatic work timer (follows the task's status; "Not tracked" for work that was under way before timing existed)
+      timer: timers.get(r.id) ?? notTracked(),
       confirmedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
       sentBackReason: stage === "IN_PROGRESS" || stage === "TODO" ? (r.reviewNote ?? null) : null,
       commentCount: comments.length,
@@ -113,11 +117,18 @@ function tell(taskId: string, ownerId: string, managerId: string, action: "assig
 
 async function notice(recipients: string[], o: { type: string; title: string; body: string; taskId: string; key: string; link: string }) {
   try {
-    const people = await prisma.user.findMany({ where: { id: { in: recipients } }, select: { id: true, platformId: true } });
-    const byPlatform = new Map<string, string[]>();
-    for (const p of people) byPlatform.set(p.platformId, [...(byPlatform.get(p.platformId) ?? []), p.id]);
-    for (const [platformId, userIds] of byPlatform) {
-      await notifyUsers({ platformId, userIds, type: o.type, title: o.title, body: o.body, link: o.link, dedupeKey: o.key, data: { taskId: o.taskId } });
+    const people = await prisma.user.findMany({ where: { id: { in: recipients } }, select: { id: true, platformId: true, role: true } });
+    const groups = new Map<string, { platformId: string; link: string; ids: string[] }>();
+    for (const p of people) {
+      // a MANAGER's Daily Tasks keeps "Assigned by me" under ?tab=assigned, so work assigned TO a manager lives under ?tab=received
+      const link = String(p.role) === "MANAGER" && o.link.endsWith("tab=assigned") ? o.link.replace("tab=assigned", "tab=received") : o.link;
+      const k = p.platformId + "|" + link;
+      const g = groups.get(k) ?? { platformId: p.platformId, link, ids: [] };
+      g.ids.push(p.id);
+      groups.set(k, g);
+    }
+    for (const g of groups.values()) {
+      await notifyUsers({ platformId: g.platformId, userIds: g.ids, type: o.type, title: o.title, body: o.body, link: g.link, dedupeKey: o.key, data: { taskId: o.taskId } });
     }
   } catch (e) {
     console.error("[tasks] assigned notice failed:", e instanceof Error ? e.message : e);
@@ -141,6 +152,17 @@ async function managerContext(userId: string) {
   throw new Error("NOT_ALLOWED");
 }
 
+/**
+ * WHO a capability holder may assign to. A Productivity Supervisor (which Saurabh and Chirag are) already has organisation-wide reach over every company
+ * (`monitoringWhere`, which a deployment pinned to one company limits to that one), so their assignment scope is the same. Someone who holds the capability
+ * but is not a supervisor is limited to their OWN company. In both cases: ACTIVE accounts only, never an ADMIN account (Admins are not assigned work), never
+ * themselves. Managers and HR are eligible (only Admin accounts are excluded); no project, department or reporting-line restriction applies.
+ */
+async function assignScope(actor: { id: string; platformId: string }) {
+  const company = (await isSupervisor(actor.id)) ? await monitoringWhere() : { platformId: actor.platformId };
+  return { ...company, status: "ACTIVE" as never, role: { not: "ADMIN" as never }, id: { not: actor.id } };
+}
+
 async function nameOfPerson(id: string) {
   const u = await prisma.user.findUnique({ where: { id }, select: { firstName: true, lastName: true } });
   return fullName(u) || "Your manager";
@@ -162,16 +184,18 @@ export async function assignablePeople(managerId: string) {
   // An Admin assigns to EMPLOYEES only (never to a manager, HR or another Admin); a manager keeps the earlier rule (anyone of their team but a manager).
   const people = await prisma.user.findMany({
     where: actor.assigner
-      ? { platformId: actor.platformId, id: { not: managerId }, status: "ACTIVE" as never, role: "EMPLOYEE" as never }
+      ? await assignScope(actor)
       : { id: { in: ids as string[] }, status: "ACTIVE" as never, role: actor.role === "ADMIN" ? ("EMPLOYEE" as never) : { not: "MANAGER" as never } },
-    select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true },
+    select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true, platform: { select: { name: true } } },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
   // Their projects, so the form can suggest the person's own project.
   const members = await prisma.teamMember.findMany({ where: { userId: { in: people.map((p) => p.id) }, isActive: true, team: { isActive: true } }, select: { userId: true, isPrimary: true, team: { select: { id: true, name: true } } } });
   return {
+    // the count the screen shows ("Assign to (47 eligible employees)"): worked out here from the real, filtered list, never from a loaded page
+    total: people.length,
     people: people.map((p) => ({
-      id: p.id, name: fullName(p), code: p.employeeCode,
+      id: p.id, name: fullName(p), code: p.employeeCode, company: p.platform.name, role: String(p.role),
       projects: members.filter((m) => m.userId === p.id).map((m) => ({ id: m.team.id, name: m.team.name, primary: m.isPrimary })),
     })),
   };
@@ -197,12 +221,14 @@ export async function assignNew(managerId: string, body: Record<string, unknown>
   if (!targetId) throw new Error("USER_REQUIRED");
   const target = await prisma.user.findUnique({ where: { id: targetId }, include: { platform: true } });
   if (!target || String(target.status) !== "ACTIVE") throw new Error("USER_NOT_FOUND");
-  if (String(target.role) === "MANAGER") throw new Error("MANAGER_TASKS_ARE_PERSONAL");
+  if (!actor.assigner && String(target.role) === "MANAGER") throw new Error("MANAGER_TASKS_ARE_PERSONAL");
   if (actor.assigner) {
-    // A capability holder: active EMPLOYEES of their OWN company only (enforced here, whatever the screen offers).
+    // A capability holder: the same scope as the list (enforced here, whatever the screen offers): active, not an Admin account, not themselves, and inside
+    // the companies they reach (a Productivity Supervisor: all of them; otherwise their own).
     if (targetId === managerId) throw new Error("CANNOT_ASSIGN_SELF");
-    if (target.platformId !== actor.platformId) throw new Error("NOT_SAME_COMPANY");
-    if (String(target.role) !== "EMPLOYEE") throw new Error("ASSIGN_TO_EMPLOYEES_ONLY");
+    if (String(target.role) === "ADMIN") throw new Error("ASSIGN_TO_EMPLOYEES_ONLY");
+    const inScope = await prisma.user.count({ where: { ...(await assignScope(actor)), id: targetId } });
+    if (inScope === 0) throw new Error("NOT_SAME_COMPANY");
   } else if (actor.role === "ADMIN") {
     // An Admin assigns to employees of the companies they act on (company access), never to HR or another Admin.
     if (String(target.role) !== "EMPLOYEE") throw new Error("ADMIN_ASSIGNS_EMPLOYEES");

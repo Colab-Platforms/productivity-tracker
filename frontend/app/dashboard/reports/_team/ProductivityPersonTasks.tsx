@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { dayLabel } from "./format";
+import { durationShort } from "../../_timer/TaskTimer";
 import { PROGRESS_LABEL } from "../../_progress/progress";
 
 // The tasks behind one person's row in the Task Productivity report (opened by clicking the person). Real records from
@@ -14,7 +15,7 @@ export type TaskSummary = {
 };
 export type Reason = "HAS_DATA" | "NO_TASKS" | "AWAITING_APPROVAL" | "NO_COMPLETION_TIME" | "NONE_COMPLETED";
 
-type Submitted = { id: string; title: string; description: string | null; date: string; submittedAt: string; priority: string; progress: string; approvalStatus: string; taggedManager: string | null; reportingManager: string | null; completedAt: string | null; counted: boolean; inScore?: boolean; scoreCompleted?: boolean; ratingStatus?: string; rating?: number | null };
+type Submitted = { id: string; title: string; description: string | null; date: string; submittedAt: string; priority: string; progress: string; approvalStatus: string; taggedManager: string | null; reportingManager: string | null; completedAt: string | null; counted: boolean; inScore?: boolean; scoreCompleted?: boolean; ratingStatus?: string; rating?: number | null; timer?: { tracked: boolean; activeSeconds: number } };
 type Assigned = { id: string; title: string; description: string | null; priority: string; assignedBy: string; assignedOn: string; due: string | null; overdue: boolean; stage: string; completedAt: string | null; confirmedAt: string | null };
 type Person = { from: string; to: string; person: { name: string; employeeCode: string | null }; submitted: Submitted[]; assigned: Assigned[] };
 
@@ -82,7 +83,7 @@ export default function PersonTasks({ userId, from, to, hrQuery, summary }: { us
             ) : (
               <div className="overflow-x-auto rounded-xl bg-white ring-1 ring-indigo-50">
                 <table className="w-full min-w-[900px] text-xs">
-                  <thead className="bg-slate-50"><tr><th className={th}>Task</th><th className={th}>Description</th><th className={th}>Sent to (approver)</th><th className={th}>Task date</th><th className={th}>Submitted</th><th className={th}>Completed</th><th className={th}>Status</th><th className={th}>Approval</th><th className={th}>Priority</th><th className={`${th} text-right`}>Counted</th></tr></thead>
+                  <thead className="bg-slate-50"><tr><th className={th}>Task</th><th className={th}>Description</th><th className={th}>Sent to (approver)</th><th className={th}>Task date</th><th className={th}>Submitted</th><th className={th}>Completed</th><th className={th}>Status</th><th className={th}>Approval</th><th className={th}>Priority</th><th className={`${th} text-right`}>Time spent</th><th className={`${th} text-right`}>Counted</th></tr></thead>
                   <tbody>
                     {data.submitted.map((t) => (
                       <tr key={t.id} className="border-t border-indigo-50" data-testid="task-row">
@@ -95,6 +96,7 @@ export default function PersonTasks({ userId, from, to, hrQuery, summary }: { us
                         <td className={td}>{PROGRESS_LABEL[t.progress as keyof typeof PROGRESS_LABEL] ?? t.progress}</td>
                         <td className={td}>{APPROVAL[t.approvalStatus] ?? t.approvalStatus}</td>
                         <td className={td} title={t.inScore ? (t.scoreCompleted ? (t.ratingStatus === "RATED" ? `Completed and rated ${t.rating}/5` : "Completed, pending manager evaluation") : "Eligible, not completed") : "Not part of the performance score (not approved, or dated outside the period)"}>{PRIORITY[t.priority] ?? t.priority}</td>
+                        <td className={`${td} text-right tabular-nums`}>{t.timer?.tracked ? durationShort(t.timer.activeSeconds) : <span className="text-slate-400">Not tracked</span>}</td>
                         <td className={`${td} text-right`}>{t.counted ? "Yes" : "No"}</td>
                       </tr>
                     ))}

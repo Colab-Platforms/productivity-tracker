@@ -42,12 +42,6 @@ type Manager = { id: string; name: string; code: string | null; role: string };
 type DraftsPayload = { ready: boolean; drafts: Parameters<typeof fromDraft>[0][] };
 type BulkPayload = { results: ServerResult[]; submitted: number; failed: number };
 
-const WEIGHTS = [
-  { value: "LOW", label: "Low · 1pt" },
-  { value: "MEDIUM", label: "Medium · 2pt" },
-  { value: "HIGH", label: "High · 3pt" },
-  { value: "CRITICAL", label: "Critical · 5pt" },
-];
 
 const LAST_KEY = "hrms-quickadd-last"; // a convenience only: the last project and manager chosen in this browser
 
@@ -435,18 +429,6 @@ export default function QuickAdd({ projects, managers, onSent, previous, default
                   ))}
                 </select>
               </div>
-              <label className="min-w-0 text-xs text-slate-500 sm:col-span-2">
-                Hours
-                <input type="number" min={0} max={24} step={0.25} value={r.hours} onChange={(e) => patch(r.uid, { hours: e.target.value })} placeholder="0" className={field} />
-              </label>
-              <label className="min-w-0 text-xs text-slate-500 sm:col-span-2">
-                Priority
-                <select value={r.weight} onChange={(e) => patch(r.uid, { weight: e.target.value })} className={field}>
-                  {WEIGHTS.map((w) => (
-                    <option key={w.value} value={w.value}>{w.label}</option>
-                  ))}
-                </select>
-              </label>
               <label className="col-span-2 min-w-0 text-xs text-slate-500 sm:col-span-2">
                 Progress
                 <select value={r.progress} onChange={(e) => patch(r.uid, { progress: e.target.value })} className={field}>

@@ -77,9 +77,10 @@ export function StarPicker({ value, onChange, disabled, label = "Rating" }: { va
 const COMMENT_MAX = 300;
 
 /** The manager's rating box: stars, an optional comment, Save. */
-export function RateControl({ initial, initialComment, busy, onSave, saveLabel = "Save rating" }: { initial?: number | null; initialComment?: string | null; busy: boolean; onSave: (rating: number, comment: string) => void; saveLabel?: string }) {
+export function RateControl({ initial, initialComment, busy, onSave, saveLabel = "Save rating", timeDefaultMinutes, showTime = false }: { initial?: number | null; initialComment?: string | null; busy: boolean; onSave: (rating: number, comment: string, expectedMinutes?: number) => void; timeDefaultMinutes?: number | null; showTime?: boolean; saveLabel?: string }) {
   const [stars, setStars] = useState<number | null>(initial ?? null);
   const [comment, setComment] = useState(initialComment ?? "");
+  const [minutes, setMinutes] = useState(timeDefaultMinutes ? String(timeDefaultMinutes) : "");
   return (
     <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[19rem]">
       <StarPicker value={stars} onChange={setStars} disabled={busy} />
@@ -92,12 +93,20 @@ export function RateControl({ initial, initialComment, busy, onSave, saveLabel =
         placeholder="Optional comment for the employee"
         className="w-full resize-y break-words rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs text-slate-800 [overflow-wrap:anywhere]"
       />
+      {showTime && (
+        <label className="block text-xs text-slate-500">
+          Reasonable time for this work (minutes)
+          <input type="number" min={1} max={1440} value={minutes} disabled={busy} onChange={(e) => setMinutes(e.target.value)} data-testid="expected-minutes" placeholder={timeDefaultMinutes ? "" : "Not tracked: enter your estimate"}
+            className="mt-1 w-full rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-xs text-slate-800" />
+          <span className="mt-0.5 block text-[11px] text-slate-400">Starts as the time the task actually took; lower it if that was longer than it should have been. Used for the task-time part of the Work Efficiency Index.</span>
+        </label>
+      )}
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-slate-400">{comment.length}/{COMMENT_MAX}</span>
         <button
           type="button"
           disabled={busy || stars == null}
-          onClick={() => stars != null && onSave(stars, comment.trim())}
+          onClick={() => stars != null && onSave(stars, comment.trim(), showTime && Number(minutes) >= 1 ? Number(minutes) : undefined)}
           className="rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
         >
           {saveLabel}

@@ -25,10 +25,11 @@ import ShiftBreakdownCard from "./_team/ShiftBreakdownCard";
 import TeamExport from "./_team/TeamExport";
 import RepetitionSummary from "../tasks/_repetition/RepetitionSummary";
 import ProductivityReport from "./_team/ProductivityReport";
+import EfficiencyReport from "./_team/EfficiencyReport";
 import FilterBar from "../_filters/FilterBar";
 import { useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 
-type Tab = "summary" | "attendance" | "shift" | "productivity";
+type Tab = "summary" | "attendance" | "shift" | "productivity" | "efficiency";
 import { addDaysIso, firstOfMonthIso as firstOfMonth, formatTime, todayIso } from "@/lib/time";
 
 type GroupBy = "person" | "day" | "week" | "month" | "year";
@@ -189,7 +190,7 @@ function ReportsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const tab: Exclude<Tab, "summary"> = tabParam === "productivity" || tabParam === "shift" ? tabParam : "attendance";
+  const tab: Exclude<Tab, "summary"> = tabParam === "productivity" || tabParam === "shift" || tabParam === "efficiency" ? tabParam : "attendance";
   const setTab = (next: Exclude<Tab, "summary">) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", next);
@@ -206,6 +207,7 @@ function ReportsPageInner() {
     ["attendance", "Attendance report"],
     ["shift", "Shift breakdown"],
     ["productivity", "Task productivity"],
+    ["efficiency", "Work efficiency"],
   ];
 
   if (!me) return <div className="p-8" aria-busy="true"><div className="skeleton h-10" /></div>;
@@ -243,6 +245,8 @@ function ReportsPageInner() {
         <AttendanceReport filters={filters} ready={ready} onScope={setScope} />
       ) : tab === "shift" ? (
         <ShiftBreakdownCard filters={filters} ready={ready} onScope={setScope} />
+      ) : tab === "efficiency" ? (
+        <EfficiencyReport filters={filters} ready={ready} />
       ) : (
         <>
           <ProductivityReport canSetTargets={!!me && ["HR", "ADMIN"].includes(me.role)} filters={filters} ready={ready} onScope={setScope} />

@@ -30,6 +30,11 @@ import { progressOf, pendingTaskVisibleTo } from "../tasks/tasks.entry.logic.js"
 import { activeAssigned, activeTasks } from "../tasks/tasks.deleted.js";
 import { assignedTasksForReport } from "../tasks/tasks.assigned.js";
 import { lateDetailsFor } from "../tasks/tasks.late.js";
+import { EFFICIENCY_POLICY_VERSION, efficiencyIndex, type EfficiencyTask } from "../tasks/efficiency.logic.js";
+import { readEvidence } from "../tasks/tasks.evidence.js";
+import { deletionsReady } from "../tasks/tasks.deleted.js";
+import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
+import { notTracked, timersFor, trackedSecondsByUser } from "../tasks/tasks.timer.js";
 
 const MAX_RANGE_DAYS = 93;
 const MAX_TARGET = 1000;
@@ -245,6 +250,8 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   const weightedBy = new Map<string, typeof weightedRated>();
   for (const r of weightedRated) { const l = weightedBy.get(r.userId) ?? []; l.push(r); weightedBy.set(r.userId, l); }
   const details = await projectsAndManagers(ids);
+  // each person's tracked working time over the tasks dated in the period (tasks that ran at the same time are counted once)
+  const trackedBy = await trackedSecondsByUser(weightedRows);
   const summaries = await summariesFor(viewer, ids, selfIds, fromIso, toIso, today, startUtc, endUtc);
   const out = people.map((p) => {
     const t = resolveTarget(targets.rows, p.platformId, p.id, p.teamId);
@@ -283,6 +290,8 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
       targetTotal,
       overallPercent: targetTotal && dataDays > 0 ? Math.round((completedTotal / targetTotal) * 1000) / 10 : null,
       weighted: weightedPerformance(weightedBy.get(p.id) ?? [], { cutoff: endUtc }),
+      trackedSeconds: trackedBy.get(p.id)?.seconds ?? 0,
+      trackedTasks: trackedBy.get(p.id)?.tasks ?? 0,
       tasks: summaries.get(p.id) ?? emptySummary(),
       reason: taskReason(summaries.get(p.id) ?? emptySummary(), dataDays > 0 ? completedTotal : null),
       days,
@@ -331,6 +340,7 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
     orderBy: [{ date: "asc" }, { createdAt: "asc" }],
   });
   const taskIds = rows.map((r) => r.id);
+  const timers = await timersFor(rows);
   const [details, people2, countedRows, ratings, lates] = await Promise.all([
     entryDetailsFor(taskIds),
     projectsAndManagers(ids),
@@ -372,6 +382,8 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       completionNote: t.completionNote ?? null,
       rejectionNote: t.rejectionNote ?? null,
       counted: counted.has(t.id),
+      // Automatic task time (a separate figure: it never feeds the Overall Performance Score). Older tasks read "Not tracked".
+      timer: timers.get(t.id) ?? notTracked(),
       // Weighted score of this one task: its priority weight, the share earned (1, 0.5 or 0) and the points; blank when it is not scored (not approved / cancelled).
       // How this task takes part in the Overall Performance Score (same rules as the score itself; priority plays no part):
       //   inScore         eligible (approved, not cancelled, dated inside the period)
@@ -541,4 +553,100 @@ export async function setTarget(viewerId: string, body: { scope?: unknown; id?: 
     if (isMissingTable(e)) throw new Error("TARGETS_NOT_READY");
     throw e;
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// WORK EFFICIENCY INDEX (policy EFFICIENCY_V1; the rules are in tasks/efficiency.logic.ts, this only reads the records)
+// The same authorised people and filters as the productivity report. Reads only: nothing is stored, so the figure is recomputed from the records every time
+// and every percentage can be reproduced from the breakdown. With `userId` the answer also carries the task lines and deletions behind the number.
+// ---------------------------------------------------------------------------------------------
+export async function getEfficiency(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters; self?: boolean }) {
+  const viewer = await getViewer(viewerId, q.self === true);
+  const tz = viewer.platform.timezone;
+  const today = platformToday(tz).toISOString().slice(0, 10);
+  const fromIso = q.from ? parseIsoDay(q.from).toISOString().slice(0, 10) : today;
+  const toIsoRaw = q.to ? parseIsoDay(q.to).toISOString().slice(0, 10) : fromIso;
+  if (toIsoRaw < fromIso) throw new Error("BAD_RANGE");
+  if ((Date.parse(toIsoRaw) - Date.parse(fromIso)) / 86400000 + 1 > MAX_RANGE_DAYS) throw new Error("RANGE_TOO_LONG");
+  const toIso = toIsoRaw > today ? today : toIsoRaw;
+  const base = { generatedAt: new Date().toISOString(), timezone: tz, today, from: fromIso, to: toIso, version: EFFICIENCY_POLICY_VERSION };
+  const { people, scope } = await scopedPeople(viewer, q);
+  if (people.length === 0 || toIso < fromIso) return { ...base, scope, people: [] as unknown[] };
+  const ids = people.map((p) => p.id);
+  const startUtc = zonedToUtc(fromIso, "00:00", tz);
+  const endUtc = zonedToUtc(addDays(toIso, 1), "00:00", tz);
+  const cutoff = endUtc.getTime() - 1;
+  const selfIds = await selfManagedTaskIdsOf(ids);
+
+  const rows = await prisma.dailyTask.findMany({
+    where: { userId: { in: ids }, id: { notIn: selfIds }, ...(await activeTasks()), approvalStatus: "APPROVED" as never, status: { not: "CANCELLED" as never }, date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } },
+    select: { id: true, userId: true, title: true, status: true, outcome: true, date: true, completedAt: true },
+    orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+  });
+  const taskIds = rows.map((r) => r.id);
+  const timers = await timersFor(rows);
+  const [details, stars, evidence, deletions, attendance] = await Promise.all([
+    entryDetailsFor(taskIds),
+    starsFor(rows),
+    readEvidence(taskIds),
+    deletedTasksFor(ids, startUtc, endUtc, fromIso, toIso),
+    attendanceFor(ids, fromIso, toIso),
+  ]);
+  const byUser = new Map<string, EfficiencyTask[]>();
+  for (const r of rows) {
+    const d = details.get(r.id);
+    const tm = timers.get(r.id);
+    const list = byUser.get(r.userId) ?? [];
+    list.push({
+      id: r.id, title: r.title, date: r.date.toISOString().slice(0, 10), status: String(r.status), outcome: r.outcome ? String(r.outcome) : null,
+      completedAt: r.completedAt ? r.completedAt.getTime() : null, blocked: d?.blocked === true, blockedNote: d?.blockedNote ?? null,
+      rating: stars.get(r.id) ?? null, qualityReverts: evidence.quality.get(r.id) ?? 0, requirementReverts: evidence.requirement.get(r.id) ?? 0,
+      unclassifiedReverts: evidence.unclassified.get(r.id) ?? 0, partialPercent: evidence.partial.get(r.id)?.percent ?? null,
+      actualSeconds: tm?.tracked ? tm.activeSeconds : null, expectedSeconds: evidence.expected.get(r.id) ?? null,
+    });
+    byUser.set(r.userId, list);
+  }
+  const detail = !!q.userId;
+  const out = people.map((p) => {
+    const e = efficiencyIndex({ tasks: byUser.get(p.id) ?? [], deletions: deletions.get(p.id) ?? [], attendance: attendance.get(p.id) ?? null, cutoff, cutoffDay: toIso });
+    return { userId: p.id, name: p.name, employeeCode: p.code, teamName: p.teamName, efficiency: detail ? e : { ...e, lines: [], deletions: [] } };
+  });
+  return { ...base, scope, people: out };
+}
+
+/** Manager deletions (task_deletions) of these people's tasks that fall in the period, by the task's own day. Tolerates a missing table. */
+async function deletedTasksFor(userIds: string[], _s: Date, _e: Date, fromIso: string, toIso: string) {
+  const out = new Map<string, { id: string; title: string; reasonCode: string; reasonNote: string | null }[]>();
+  if (!(await deletionsReady())) return out;
+  const rows = await prisma.taskDeletion.findMany({
+    where: { task: { userId: { in: userIds }, assignedById: null, date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } } },
+    select: { id: true, reasonCode: true, reasonNote: true, task: { select: { userId: true, title: true } } },
+  });
+  for (const r of rows) {
+    const list = out.get(r.task.userId) ?? [];
+    list.push({ id: r.id, title: r.task.title, reasonCode: r.reasonCode, reasonNote: r.reasonNote });
+    out.set(r.task.userId, list);
+  }
+  return out;
+}
+
+/** Credited and scheduled days from the one attendance engine (never recalculated here). Present = 1, half day = 0.5; absent counts as scheduled. */
+async function attendanceFor(userIds: string[], fromIso: string, toIso: string) {
+  const out = new Map<string, { scheduledDays: number; creditDays: number }>();
+  const months: { y: number; m: number }[] = [];
+  for (let d = new Date(`${fromIso.slice(0, 7)}-01T00:00:00Z`); d.toISOString().slice(0, 10) <= toIso; d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) months.push({ y: d.getUTCFullYear(), m: d.getUTCMonth() + 1 });
+  for (const { y, m } of months) {
+    const res = await getMonthAttendanceBulk(userIds, y, m).catch(() => []);
+    for (const person of res) {
+      const cur = out.get(person.userId) ?? { scheduledDays: 0, creditDays: 0 };
+      for (const day of person.days) {
+        if (day.date < fromIso || day.date > toIso) continue;
+        if (day.status === "PRESENT") { cur.scheduledDays += 1; cur.creditDays += 1; }
+        else if (day.status === "HALF_DAY") { cur.scheduledDays += 1; cur.creditDays += 0.5; }
+        else if (day.status === "ABSENT") cur.scheduledDays += 1;
+      }
+      out.set(person.userId, cur);
+    }
+  }
+  return out;
 }

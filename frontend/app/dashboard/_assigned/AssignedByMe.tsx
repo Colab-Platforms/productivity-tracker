@@ -6,18 +6,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { useTaskRealtime } from "@/lib/realtime";
 import { Modal } from "../_employees/Modal";
-import { PRIORITY_CHIP, PRIORITY_LABEL, STAGE_CHIP, STAGE_LABEL, dayLabel, matchesFilter, type AssignedPayload, type AssignedTask, type FilterKey } from "./assignedTypes";
+import { STAGE_CHIP, STAGE_LABEL, dayLabel, matchesFilter, type AssignedPayload, type AssignedTask, type FilterKey } from "./assignedTypes";
 import { FilterChips } from "./AssignedToMe";
 import { ThreadModal } from "./ThreadModal";
+import { TaskTimer } from "../_timer/TaskTimer";
 
-export type Person = { id: string; name: string; code: string | null; projects: { id: string; name: string; primary: boolean }[] };
+export type Person = { id: string; name: string; code: string | null; company?: string; role?: string; projects: { id: string; name: string; primary: boolean }[] };
 
 // `inline` shows the same form as a card (the Assign Tasks tab) instead of a pop-up; `company` words it for someone who assigns across their whole company.
-export function TaskForm({ people, task, onClose, onSaved, inline = false, company = false }: { people: Person[]; task: AssignedTask | null; onClose: () => void; onSaved: (p: AssignedPayload) => void; inline?: boolean; company?: boolean }) {
+export function TaskForm({ people, task, onClose, onSaved, inline = false, company = false, eligibleTotal }: { people: Person[]; task: AssignedTask | null; onClose: () => void; onSaved: (p: AssignedPayload) => void; inline?: boolean; company?: boolean; eligibleTotal?: number }) {
   const [userId, setUserId] = useState(task?.employeeId ?? "");
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
-  const [priority, setPriority] = useState(task?.priority ?? "MEDIUM");
+  const [priority] = useState(task?.priority ?? "MEDIUM");
   const [due, setDue] = useState(task?.due ?? "");
   const [projectId, setProjectId] = useState(task?.projectId ?? "");
   const [find, setFind] = useState("");
@@ -38,7 +39,8 @@ export function TaskForm({ people, task, onClose, onSaved, inline = false, compa
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   const invalid = !title.trim() || (!editing && !userId);
-  const shown = people.filter((p) => !find.trim() || `${p.name} ${p.code ?? ""} ${p.projects.map((x) => x.name).join(" ")}`.toLowerCase().includes(find.trim().toLowerCase()));
+  const shown = people.filter((p) => !find.trim() || `${p.name} ${p.code ?? ""} ${p.company ?? ""} ${p.role ?? ""} ${p.projects.map((x) => x.name).join(" ")}`.toLowerCase().includes(find.trim().toLowerCase()));
+  const eligible = eligibleTotal ?? people.length; // the count the SERVER worked out from the full eligible list
 
   const fields = (
     <div className="space-y-3">
@@ -46,17 +48,19 @@ export function TaskForm({ people, task, onClose, onSaved, inline = false, compa
         <div>
           {company && (
             <label className="mb-1 block text-xs font-medium text-slate-500">
-              Search employees (name, ID or project)
+              Search employees (name, ID, project or company)
               <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Type to narrow the list" data-testid="assign-search" className="mt-1 w-full rounded-xl border border-indigo-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500" />
             </label>
           )}
           <label className="block text-xs font-medium text-slate-500">
-            Assign to <span className="text-rose-500">*</span>{company ? <span className="ml-1 font-normal text-slate-400">({shown.length} of {people.length} active employees in your company)</span> : null}
+            Assign to <span className="text-rose-500">*</span>{company ? <span className="ml-1 font-normal text-slate-400" data-testid="assign-count">({eligible} eligible employees{find.trim() ? ` · ${shown.length} match` : ""})</span> : null}
             <select value={userId} onChange={(e) => { setUserId(e.target.value); setProjectId(""); }} data-testid="assign-person" className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-900">
               <option value="">Select a person</option>
               {shown.map((p) => <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ""}</option>)}
             </select>
           </label>
+          {company && find.trim() && shown.length === 0 && <p className="mt-1 text-xs text-amber-700" data-testid="assign-empty">No eligible employee matches &ldquo;{find.trim()}&rdquo;.</p>}
+          {company && person && <p className="mt-1 text-xs text-slate-500" data-testid="assign-selected">{[person.company, person.role ? person.role.charAt(0) + person.role.slice(1).toLowerCase() : null, person.projects.length ? `Project: ${person.projects.map((x) => x.name).join(", ")}` : "No project"].filter(Boolean).join(" · ")}</p>}
         </div>
       )}
       <label className="block text-xs font-medium text-slate-500">
@@ -82,12 +86,6 @@ export function TaskForm({ people, task, onClose, onSaved, inline = false, compa
         <label className="block text-xs font-medium text-slate-500">
           Due date (optional)
           <input type="date" value={due} min={editing ? undefined : today} onChange={(e) => setDue(e.target.value)} data-testid="assign-due" className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-900" />
-        </label>
-        <label className="block text-xs font-medium text-slate-500">
-          Priority <span className="font-normal text-slate-400">(for organising only)</span>
-          <select value={priority} onChange={(e) => setPriority(e.target.value)} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-900">
-            {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((w) => <option key={w} value={w}>{PRIORITY_LABEL[w]}</option>)}
-          </select>
         </label>
       </div>
       {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
@@ -203,10 +201,10 @@ export default function AssignedByMe({ assigner = false }: { assigner?: boolean 
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {t.overdue && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">Overdue</span>}
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_CHIP[t.priority] ?? ""}`}>{PRIORITY_LABEL[t.priority] ?? t.priority}</span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STAGE_CHIP[t.stage]}`}>{assigner && t.stage === "AWAITING_CONFIRMATION" ? "Completed by employee" : STAGE_LABEL[t.stage]}</span>
                 </div>
               </div>
+              <TaskTimer timer={t.timer} status={t.stage === "IN_PROGRESS" ? "IN_PROGRESS" : t.stage === "TODO" ? "PENDING" : "COMPLETED"} />
               {t.description && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-600 [overflow-wrap:anywhere]">{t.description}</p>}
               {t.stage === "AWAITING_CONFIRMATION" && t.completionNote && <p className="mt-2 break-words rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800 [overflow-wrap:anywhere]">Employee&apos;s note: {t.completionNote}</p>}
               {t.lastComment && <p className="mt-2 break-words rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-600 [overflow-wrap:anywhere]">Latest comment: {t.lastComment.text}</p>}

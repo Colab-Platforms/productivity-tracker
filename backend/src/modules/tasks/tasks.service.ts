@@ -2,6 +2,7 @@ import { NOT_ADMIN } from "../../lib/tracked.js";
 import { isLinkedManager, linkedReportIds } from "../../lib/reportingLinks.js";
 import { PRIORITY_WEIGHT, weightOf, weightedPerformance } from "./tasks.weighted.js";
 import { CAP_TASK_ASSIGN_COMPANY, hasCapability } from "../../lib/capabilities.js";
+import { attachTimers } from "./tasks.timer.js";
 import { emitTaskChange } from "../../lib/realtime.js";
 import { taskNotice } from "./tasks.notify.js";
 import { managedByWhere, isTeamManager } from "../../lib/teamManagers.js";
@@ -25,6 +26,7 @@ import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeReve
 import { checkComment, creditOf, parseRating } from "./tasks.rating.logic.js";
 import { isRated, ratingReady, ratingsFor, withRatings } from "./tasks.rating.js";
 import { editInfoFor } from "./tasks.edit.js";
+import { clearPartialProgress, evidenceReady, parseExpectedMinutes, parsePartialProgress, parseRevertKind, recordRevertAttempt, savePartialProgress, saveTimeReview } from "./tasks.evidence.js";
 import { editView } from "./tasks.edit.logic.js";
 import { detectAfterSubmit } from "./repetition.detect.js";
 
@@ -241,6 +243,11 @@ async function myProjects(userId: string) {
 // Record<string, unknown> — spreading a Record loses every field from the
 // result type.
 // ---------------------------------------------------------------------------
+/** Each task row with its manager's rating AND its automatic work timer attached (the timer follows the task's status; older tasks read "Not tracked"). */
+async function withRatedTimers<T extends { id: string; userId: string; status: unknown; completedAt?: Date | null; outcome?: unknown }>(rows: T[]) {
+  return attachTimers(await withRatings(rows));
+}
+
 function shape<
   T extends {
     id: string;
@@ -326,11 +333,11 @@ export async function listTasks(userId: string) {
     })),
     myProjects(userId),
   ]);
-  const rows = await withRatings(rawRows);
+  const rows = await withRatedTimers(rawRows);
 
   // A task a manager reopened keeps its original day, which may be earlier than today, but it is unfinished work again: it is shown with
   // the rest of the person's working tasks, flagged with the day it came from. It does not change today's score.
-  const reopenedOld = await withRatings(await prisma.dailyTask.findMany({
+  const reopenedOld = await withRatedTimers(await prisma.dailyTask.findMany({
     where: { userId, approvalStatus: "APPROVED", status: { in: ["PENDING", "IN_PROGRESS"] }, outcome: null, date: { lt: date }, reviewNote: { startsWith: REVERT_MARK_PREFIX }, ...(await activeTasks()) },
     include: { team: { select: { name: true } } },
     orderBy: { date: "asc" },
@@ -390,7 +397,7 @@ export async function listTasks(userId: string) {
 // One earlier (or later) day of the person's OWN tasks, for My History. Read-only; nothing is recomputed.
 export async function listMyDay(userId: string, day: unknown) {
   const date = parseIsoDay(day);
-  const rows = await withRatings(await prisma.dailyTask.findMany({
+  const rows = await withRatedTimers(await prisma.dailyTask.findMany({
     where: { userId, date, ...(await activeTasks()) },
     include: { team: { select: { name: true } } },
     orderBy: { title: "asc" },
@@ -409,7 +416,7 @@ export async function listMyRange(userId: string, from: unknown, to: unknown) {
   const end = parseIsoDay(to);
   if (end.getTime() < start.getTime()) throw new Error("BAD_RANGE");
   if ((end.getTime() - start.getTime()) / 86400000 > 92) throw new Error("RANGE_TOO_LONG");
-  const rows = await withRatings(await prisma.dailyTask.findMany({
+  const rows = await withRatedTimers(await prisma.dailyTask.findMany({
     where: { userId, date: { gte: start, lte: end }, ...(await activeTasks()) },
     include: { team: { select: { name: true } } },
     orderBy: [{ date: "desc" }, { title: "asc" }],
@@ -914,7 +921,7 @@ export async function listForApproval(
   const selfIds = new Set((await detailsFor(rawRows.map((r) => r.id))).keys());
   const rows = rawRows.filter((r) => !selfIds.has(r.id));
 
-  const [entries, acting, ratedRows, lates, edits] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatings(rows), lateDetailsFor(rows.map((r) => r.id)), editInfoFor(rows.map((r) => r.id))]);
+  const [entries, acting, ratedRows, lates, edits] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatedTimers(rows), lateDetailsFor(rows.map((r) => r.id)), editInfoFor(rows.map((r) => r.id))]);
   const deciderIds = [...new Set(ratedRows.map((t) => t.approvedById).filter((x): x is string => !!x))];
   const deciders = new Map(
     (deciderIds.length ? await prisma.user.findMany({ where: { id: { in: deciderIds } }, select: { id: true, firstName: true, lastName: true } }) : []).map((u) => [u.id, `${u.firstName} ${u.lastName}`.trim()])
@@ -1124,7 +1131,7 @@ export async function approveTask(
 export async function reviewTask(
   managerId: string,
   taskId: string,
-  input: { rating?: unknown; comment?: unknown; outcome?: unknown }
+  input: { rating?: unknown; comment?: unknown; outcome?: unknown; expectedMinutes?: unknown }
 ) {
   const ctx = await userContext(managerId);
   if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
@@ -1137,6 +1144,10 @@ export async function reviewTask(
   const comment = checkComment(input.comment);
   if ("error" in comment) throw new Error(comment.error);
   if (!(await ratingReady())) throw new Error("FEATURES_NOT_READY");
+  // The time the manager confirms as reasonable for this work (optional; the efficiency index leaves task time unscored without it)
+  const expectedSeconds = input.expectedMinutes === undefined || input.expectedMinutes === null || input.expectedMinutes === "" ? null : parseExpectedMinutes(input.expectedMinutes);
+  if (input.expectedMinutes !== undefined && input.expectedMinutes !== null && input.expectedMinutes !== "" && expectedSeconds === null) throw new Error("BAD_EXPECTED_TIME");
+  if (expectedSeconds !== null && !(await evidenceReady())) throw new Error("FEATURES_NOT_READY");
 
   const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
   if (!task) throw new Error("NOT_FOUND");
@@ -1164,6 +1175,7 @@ export async function reviewTask(
     // who reviewed and when stay on the task itself; a fresh rating also replaces any "reopened" marker note
     await tx.dailyTask.update({ where: { id: taskId }, data: { reviewedById: managerId, reviewedAt: now, reviewNote: null } });
   });
+  if (expectedSeconds !== null) await saveTimeReview(taskId, managerId, expectedSeconds, null);
   auditNote({
     platformId: task.platformId,
     module: "Tasks",
@@ -1185,7 +1197,7 @@ export async function reviewTask(
  * Only people who can review the task, never its owner, never a manager's own self-managed task. A task still To Do cannot be partly done.
  * Stored in the existing `outcome` column; nothing else about the task changes. The change is audited and the employee is told.
  */
-export async function markPartial(managerId: string, taskId: string, partialIn: unknown) {
+export async function markPartial(managerId: string, taskId: string, partialIn: unknown, extra: { percent?: unknown; milestone?: unknown } = {}) {
   const ctx = await userContext(managerId);
   if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
@@ -1198,6 +1210,14 @@ export async function markPartial(managerId: string, taskId: string, partialIn: 
   if (String(task.approvalStatus) !== "APPROVED" || String(task.status) === "CANCELLED") throw new Error("NOT_APPROVED");
   if (String(task.status) === "PENDING") throw new Error("NOT_STARTED_YET");
   const was = String(task.outcome ?? "") === "PARTIALLY_COMPLETED";
+  // A partial mark needs verified progress: a percent and a milestone note (once the evidence tables exist). The mark alone earns nothing in the efficiency index.
+  let progress: { percent: number; milestone: string } | null = null;
+  if (partialIn === true && (await evidenceReady())) {
+    progress = parsePartialProgress(extra.percent, extra.milestone);
+    if (!progress) throw new Error("BAD_PARTIAL_PROGRESS");
+  }
+  if (progress) await savePartialProgress(taskId, managerId, progress);
+  if (partialIn === false) await clearPartialProgress(taskId);
   if (was !== partialIn) {
     // guarded: two presses at once change it once
     const done = await prisma.dailyTask.updateMany({
@@ -1221,7 +1241,7 @@ export async function markPartial(managerId: string, taskId: string, partialIn: 
  * The permanent record (previous and new status, kind, who, when, remark, the original grade) goes to the immutable audit log.
  * One transaction with a state check, so two presses cannot revert the same task twice.
  */
-export async function revertTask(managerId: string, taskId: string, typeIn: unknown, remarkIn: unknown) {
+export async function revertTask(managerId: string, taskId: string, typeIn: unknown, remarkIn: unknown, reasonIn?: unknown) {
   const ctx = await userContext(managerId);
   if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
@@ -1230,6 +1250,9 @@ export async function revertTask(managerId: string, taskId: string, typeIn: unkn
   if (!REVERT_TYPES.includes(type)) throw new Error("BAD_REVERT_TYPE");
   const remark = checkRemark(remarkIn);
   if ("error" in remark) throw new Error(remark.error);
+  // Why it is sent back (a quality problem or a changed requirement): needed once the evidence tables exist, so a changed requirement is never held against the employee.
+  const kind = parseRevertKind(reasonIn);
+  if ((await evidenceReady()) && !kind) throw new Error("REVERT_REASON_REQUIRED");
 
   const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
   if (!task) throw new Error("NOT_FOUND");
@@ -1255,6 +1278,9 @@ export async function revertTask(managerId: string, taskId: string, typeIn: unkn
     },
   });
   if (claimed.count !== 1) throw new Error("ALREADY_REOPENED");
+  if (kind) await recordRevertAttempt({ taskId, platformId: task.platformId, kind, revertType: type, remark: remark.text, byId: managerId });
+  // a reopened task is no longer partial: its verified progress is cleared with the mark
+  await clearPartialProgress(taskId);
   // The task is unfinished again, so its rating goes too (the previous stars are kept in the audit row below).
   const previous = (await ratingsFor([task])).get(taskId) ?? null;
   if (await ratingReady()) await prisma.taskRating.deleteMany({ where: { taskId } });

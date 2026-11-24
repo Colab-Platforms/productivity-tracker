@@ -28,6 +28,7 @@ const script = (args, url = DBURL) => spawnSync(process.execPath, [path.join(__d
   const wipe = async () => {
     const ids = `(select id from users where "employeeCode" in ('CP-01','AWL-06') or "employeeCode" like 'TAC-%')`;
     await q(`delete from user_capabilities where "userId" in ${ids}`).catch(() => {});
+    await q(`delete from productivity_supervisors where "userId" in ${ids}`).catch(() => {});
     await q(`delete from task_events where "taskId" in (select id from daily_tasks where "userId" in ${ids})`).catch(() => {});
     await q(`delete from task_ratings where "taskId" in (select id from daily_tasks where "userId" in ${ids})`).catch(() => {});
     await q(`delete from task_entry_details where "taskId" in (select id from daily_tasks where "userId" in ${ids})`).catch(() => {});
@@ -59,7 +60,8 @@ const script = (args, url = DBURL) => spawnSync(process.execPath, [path.join(__d
   const INACT = await mk("TAC-OFF", "Gone", "Tac", "EMPLOYEE", { status: "SUSPENDED" });      // A, suspended
   const REG = await mk("TAC-REG", "Plain", "Tac", "EMPLOYEE", { boss: MGR.id });              // A, no capability
   const MGRB = await mk("TAC-MGB", "MgrB", "Tac", "MANAGER", { platform: B });
-  const all = [ADMIN, MGR, HR, SAU, CHI, E1, E2, E3, E4, INACT, REG, MGRB];
+  const CAPO = await mk("TAC-CAP", "Capo", "Tac", "EMPLOYEE", { boss: MGR.id });               // holds the capability but is NOT a Productivity Supervisor: own company only
+  const all = [ADMIN, MGR, HR, SAU, CHI, E1, E2, E3, E4, INACT, REG, MGRB, CAPO];
   for (const u of all) if (u !== INACT) u.tok = await u.login();
   const teamId = (await q(`insert into teams (id,"platformId",name,"managerId","isActive","createdAt","updatedAt") values (gen_random_uuid(),$1,'TAC-Proj',$2,true,now(),now()) returning id`, [A, MGR.id]))[0].id;
   await q(`insert into team_members (id,"teamId","userId","isActive","isPrimary","joinedAt") values (gen_random_uuid(),$1,$2,true,true,now()),(gen_random_uuid(),$1,$3,true,false,now())`, [teamId, E1.id, SAU.id]);
@@ -100,14 +102,25 @@ const script = (args, url = DBURL) => spawnSync(process.execPath, [path.join(__d
     ok("their roles are still EMPLOYEE and nobody else got a row", (await q(`select role::text r from users where id in ($1,$2)`, [SAU.id, CHI.id])).every((r) => r.r === "EMPLOYEE") && Number((await q(`select count(*)::int c from user_capabilities where "userId" not in ($1,$2)`, [SAU.id, CHI.id]))[0].c) === 0);
     ok("a grant is audited", Number((await q(`select count(*)::int c from audit_logs where "targetUserId" in ($1,$2) and path='/scripts/provision-capabilities'`, [SAU.id, CHI.id]))[0].c) === 2);
 
-    console.log("\n## 2. Saurabh (company A) assigns to employees of company A");
+    // the supervisor table (migration 20261119120000) is applied part-way too, because the throwaway database may not have it
+    await db.query(fs.readFileSync(path.join(__dirname, "..", "prisma", "migrations", "20261119120000_productivity_supervisors", "migration.sql"), "utf8").replace("CREATE TABLE \"productivity_supervisors\"", "CREATE TABLE IF NOT EXISTS \"productivity_supervisors\"").replace(/CREATE UNIQUE INDEX/g, "CREATE UNIQUE INDEX IF NOT EXISTS")).catch((e) => console.log("supervisor table note:", e.message.slice(0, 90)));
+    await q(`insert into productivity_supervisors (id,"userId",note,"createdAt") values (gen_random_uuid(),$1,'test',now()),(gen_random_uuid(),$2,'test',now()) on conflict do nothing`, [SAU.id, CHI.id]);
+    await q(`insert into user_capabilities ("userId", capability) values ($1,'TASK_ASSIGN_COMPANY')`, [CAPO.id]);
+    console.log("\n## 2. Saurabh assigns company-wide (he is a Productivity Supervisor)");
     await sleep(16000); // the server re-checks a missing table every 15 seconds
     ok("his Daily Tasks says he can assign (canAssignCompany)", (await call("GET", "/tasks", SAU.tok)).b.canAssignCompany === true);
     const pplRaw = (await call("GET", "/tasks/assigned/people", SAU.tok)).b.people;
     const ppl = pplRaw.map((p) => p.code);
     const dbRows = await q(`select "employeeCode" c, "platformId" p, role::text r, status::text s from users where "employeeCode" = any($1)`, [ppl]);
-    ok("the list holds our company's active employees (E1, E2 and Plain) and nobody who must not be there", ["TAC-E1", "TAC-E2", "TAC-REG"].every((c) => ppl.includes(c)) && !["TAC-OFF", "TAC-MGR", "TAC-HR", "TAC-ADM", "TAC-E3", "TAC-E4", "CP-01", "AWL-06"].some((c) => ppl.includes(c)), ppl.filter((c) => c.startsWith("TAC") || c.includes("-0")));
-    ok("EVERY person listed is an active EMPLOYEE of Saurabh's own company (the rest of the company is searchable, nothing else)", dbRows.length === ppl.length && dbRows.every((r) => r.p === A && r.r === "EMPLOYEE" && r.s === "ACTIVE"), dbRows.filter((r) => r.p !== A || r.r !== "EMPLOYEE" || r.s !== "ACTIVE"));
+    const eligibleSql = async (selfId, platformId) => (await q(`select id, "employeeCode" c from users where status::text='ACTIVE' and role::text <> 'ADMIN' and id <> $1 ${platformId ? 'and "platformId" = $2' : ''}`, platformId ? [selfId, platformId] : [selfId]));
+    const wantAll = await eligibleSql(SAU.id);
+    const adminCodes = (await q(`select "employeeCode" c from users where role::text='ADMIN'`)).map((r) => r.c);
+    const sres = (await call("GET", "/tasks/assigned/people", SAU.tok)).b;
+    ok("the list is EVERY active non-Admin account in every company in scope (compared with the database), and the count the screen shows comes from the server", ppl.length === wantAll.length && sres.total === wantAll.length && wantAll.every((w) => ppl.includes(w.c)), [ppl.length, sres.total, wantAll.length]);
+    ok("the list includes people of other companies, managers and HR", ["TAC-E1", "TAC-E2", "TAC-REG", "TAC-E3", "TAC-E4", "TAC-MGR", "TAC-MGB", "TAC-HR"].every((c) => ppl.includes(c)), ppl.filter((c) => c.startsWith("TAC")));
+    ok("it never includes an Admin account, a suspended person, or himself", !ppl.some((c) => adminCodes.includes(c)) && !ppl.includes("TAC-OFF") && !ppl.includes("CP-01") && ppl.includes("AWL-06"), ppl.filter((c) => adminCodes.includes(c)));
+    ok("EVERY person listed is ACTIVE and not an Admin, and each carries a company and a role for the screen", dbRows.length === ppl.length && dbRows.every((r) => r.s === "ACTIVE" && r.r !== "ADMIN") && pplRaw.every((p) => p.company && p.role), dbRows.filter((r) => r.s !== "ACTIVE" || r.r === "ADMIN"));
+    ok("the list is in alphabetical order", pplRaw.map((p) => p.name).join("|") === [...pplRaw.map((p) => p.name)].sort((a, b) => a.localeCompare(b)).join("|") || pplRaw.map((p) => p.name.toLowerCase()).join("|") === [...pplRaw.map((p) => p.name.toLowerCase())].sort().join("|"));
     ok("a person's own projects are offered with them", (await call("GET", "/tasks/assigned/people", SAU.tok)).b.people.find((p) => p.code === "TAC-E1").projects.some((p) => p.id === teamId));
     const a1 = await call("POST", "/tasks/assigned", SAU.tok, { userId: E1.id, title: "TAC from Saurabh to E1", description: "details", priority: "HIGH", due: new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10), projectId: teamId });
     ok("he assigns a task to Eone", a1.s === 200, a1);
@@ -122,12 +135,16 @@ const script = (args, url = DBURL) => spawnSync(process.execPath, [path.join(__d
 
     console.log("\n## 3. The server refuses everything outside his rights");
     const bad = async (u, title) => (await call("POST", "/tasks/assigned", SAU.tok, { userId: u.id, title })).s;
-    ok("another company's employee: refused", (await bad(E3, "x")) === 403 && !(await idOf("x")));
+    ok("another company's employee: ALLOWED for a Productivity Supervisor (organisation-wide scope)", (await bad(E3, "TAC to company B employee")) === 200 && (await notes(E3.id, "TASK_ASSIGNED")) === 1);
     ok("an inactive employee: refused", (await bad(INACT, "x2")) === 404 && !(await idOf("x2")));
-    ok("a manager: refused (a manager's tasks are personal)", (await bad(MGR, "x3")) === 403);
-    ok("HR and Admin: refused (employees only)", (await bad(HR, "x4")) === 403 && (await bad(ADMIN, "x5")) === 403);
+    ok("a manager is eligible: Mgr receives it, sees it in Assigned to me, and the notification opens that tab", (await bad(MGR, "TAC to a manager")) === 200 && (await call("GET", "/tasks/assigned/mine", MGR.tok)).b.tasks.some((x) => x.title === "TAC to a manager") && (await q(`select link from notifications where "userId"=$1 and type='TASK_ASSIGNED'`, [MGR.id]))[0].link.endsWith("tab=received"));
+    ok("HR is eligible", (await bad(HR, "TAC to HR")) === 200);
+    ok("an Admin account: refused", (await bad(ADMIN, "x5")) === 403 && !(await idOf("x5")));
     ok("himself: refused", (await bad(SAU, "x6")) === 400);
-    ok("nothing was created by the refused attempts", Number((await q(`select count(*)::int c from daily_tasks where title in ('x','x2','x3','x4','x5','x6')`))[0].c) === 0);
+    ok("nothing was created by the refused attempts", Number((await q(`select count(*)::int c from daily_tasks where title in ('x2','x5','x6')`))[0].c) === 0);
+    const capoCall = async (u, title) => (await call("POST", "/tasks/assigned", CAPO.tok, { userId: u.id, title })).s;
+    ok("a capability holder who is NOT a Productivity Supervisor stays inside their own company (company B refused, company A allowed)", (await capoCall(E3, "TAC capo cross")) === 403 && (await capoCall(E2, "TAC capo own")) === 200 && !(await idOf("TAC capo cross")));
+    ok("and their list is only their own company's people", await (async () => { const l = (await call("GET", "/tasks/assigned/people", CAPO.tok)).b.people; const rows = await q(`select "platformId" p from users where "employeeCode" = any($1)`, [l.map((p) => p.code)]); return l.length > 0 && rows.every((r) => r.p === A) && !l.some((p) => p.code === "TAC-E3"); })());
     ok("he cannot edit or remove somebody else's assigned task", await (async () => { const mid = (await call("POST", "/tasks/assigned", MGR.tok, { userId: E1.id, title: "TAC from manager to E1" })).s; const id = await idOf("TAC from manager to E1"); return mid === 200 && (await call("POST", `/tasks/assigned/${id}/edit`, SAU.tok, { title: "hijack" })).s === 404 && (await call("POST", `/tasks/assigned/${id}/cancel`, SAU.tok, {})).s === 404; })());
 
     console.log("\n## 4. Monitoring: progress, completion, comments, edits");
@@ -138,7 +155,7 @@ const script = (args, url = DBURL) => spawnSync(process.execPath, [path.join(__d
     const mine = (await call("GET", "/tasks/assigned/by-me", SAU.tok)).b;
     const t1 = mine.tasks.find((t) => t.title === "TAC from Saurabh to E1");
     ok("his list shows employee, task, project, assigned date, due date, status, completion date and (blank) rating", t1 && t1.employee === "Eone Tac" && t1.project === "TAC-Proj" && t1.assignedOn && t1.due && t1.stage === "AWAITING_CONFIRMATION" && t1.completedAt && "rating" in t1 && t1.rating === null, t1);
-    ok("it lists only what HE assigned (not the manager's task)", mine.tasks.length === 2 && mine.tasks.every((t) => t.assignedById === SAU.id), mine.tasks.map((t) => t.title));
+    ok("it lists only what HE assigned (not the manager's task)", mine.tasks.length >= 2 && mine.tasks.every((t) => t.assignedById === SAU.id) && !mine.tasks.some((t) => t.title === "TAC from manager to E1"), mine.tasks.map((t) => t.title));
     ok("he can comment and the employee is told", (await call("POST", `/tasks/assigned/${tid}/comment`, SAU.tok, { text: "thanks" })).s === 200 && (await notes(E1.id, "ASSIGNED_TASK_COMMENT")) === 1);
     ok("he can read the history", (await call("GET", `/tasks/assigned/${tid}/history`, SAU.tok)).b.events.length >= 3);
     const t2 = await idOf("TAC from Saurabh to E2");
@@ -149,7 +166,7 @@ const script = (args, url = DBURL) => spawnSync(process.execPath, [path.join(__d
     ok("he cannot confirm finished work (a manager does)", (await call("POST", `/tasks/assigned/${tid}/confirm`, SAU.tok, {})).s === 403);
     ok("he cannot send it back either", (await call("POST", `/tasks/assigned/${tid}/send-back`, SAU.tok, { reason: "no thanks" })).s === 403);
     ok("the task is still waiting, nothing changed", (await q(`select "reviewedAt" r from daily_tasks where id=$1`, [tid]))[0].r === null);
-    ok("he cannot open the approval queue or approve/rate anyone's task", (await call("GET", "/tasks/review/queue", SAU.tok)).s === 403 && (await call("POST", `/tasks/review/${tid}/approve`, SAU.tok, { approve: true })).s >= 400 && (await call("POST", `/tasks/review/${tid}/rating`, SAU.tok, { rating: 5 })).s >= 400);
+    ok("as a Productivity Supervisor he may READ the task queue (monitoring) but nothing in it is actionable, and he cannot approve or rate anyone's task", await (async () => { const qq = await call("GET", "/tasks/review/queue", SAU.tok); const rows = Object.values(qq.b ?? {}).flat().filter((x) => x && typeof x === "object" && "canAct" in x); return qq.s === 200 && rows.every((x) => x.canAct === false) && (qq.b.proposals ?? []).length === 0; })() && (await call("POST", `/tasks/review/${tid}/approve`, SAU.tok, { approve: true })).s >= 400 && (await call("POST", `/tasks/review/${tid}/rating`, SAU.tok, { rating: 5 })).s >= 400);
     ok("the MANAGER who assigned his own task still confirms it (existing flow untouched)", await (async () => { const mt = await idOf("TAC from manager to E1"); await call("POST", `/tasks/assigned/${mt}/progress`, E1.tok, { to: "COMPLETED" }); return (await call("POST", `/tasks/assigned/${mt}/confirm`, MGR.tok, {})).s === 200; })());
 
     console.log("\n## 6. Performance score: assigned tasks are never in it and never counted twice");
@@ -165,13 +182,16 @@ const script = (args, url = DBURL) => spawnSync(process.execPath, [path.join(__d
 
     console.log("\n## 7. Chirag (company B) separately");
     ok("Chirag can assign too", (await call("GET", "/tasks", CHI.tok)).b.canAssignCompany === true);
-    const cp = (await call("GET", "/tasks/assigned/people", CHI.tok)).b.people.map((p) => p.code);
+    const cres = (await call("GET", "/tasks/assigned/people", CHI.tok)).b;
+    const cp = cres.people.map((p) => p.code);
+    const cWant = await eligibleSql(CHI.id);
     const cpRows = await q(`select "employeeCode" c, "platformId" p, role::text r, status::text s from users where "employeeCode" = any($1)`, [cp]);
-    ok("his list holds company B's employees (Ethree, Efour) and none of Saurabh's people", ["TAC-E3", "TAC-E4"].every((c) => cp.includes(c)) && !["TAC-E1", "TAC-E2", "TAC-REG"].some((c) => cp.includes(c)), cp);
-    ok("EVERY person in his list is an active EMPLOYEE of Chirag's own company", cpRows.length === cp.length && cpRows.every((r) => r.p === B && r.r === "EMPLOYEE" && r.s === "ACTIVE"), cpRows.filter((r) => r.p !== B));
-    ok("he assigns to Ethree", (await call("POST", "/tasks/assigned", CHI.tok, { userId: E3.id, title: "TAC from Chirag to E3", priority: "LOW" })).s === 200 && (await notes(E3.id, "TASK_ASSIGNED")) === 1);
+    ok("his list is the same company-wide set (compared with the database), without himself and with Saurabh", cp.length === cWant.length && cres.total === cWant.length && cWant.every((w) => cp.includes(w.c)) && cp.includes("CP-01") && !cp.includes("AWL-06") && !cp.some((c) => adminCodes.includes(c)), [cp.length, cres.total, cWant.length]);
+    ok("EVERY person in his list is active and not an Admin", cpRows.length === cp.length && cpRows.every((r) => r.s === "ACTIVE" && r.r !== "ADMIN"), cpRows.filter((r) => r.s !== "ACTIVE" || r.r === "ADMIN"));
+    ok("he assigns to Ethree", (await call("POST", "/tasks/assigned", CHI.tok, { userId: E3.id, title: "TAC from Chirag to E3", priority: "LOW" })).s === 200 && (await notes(E3.id, "TASK_ASSIGNED")) === 2);
     ok("Ethree sees it in Assigned tasks", (await call("GET", "/tasks/assigned/mine", E3.tok)).b.tasks.some((t) => t.title === "TAC from Chirag to E3" && t.assignedBy === "Chirag Parmar"));
-    ok("Chirag cannot assign to company A's people", (await call("POST", "/tasks/assigned", CHI.tok, { userId: E1.id, title: "TAC cross company" })).s === 403 && !(await idOf("TAC cross company")));
+    ok("Chirag can assign to company A's people too, and they are told", (await call("POST", "/tasks/assigned", CHI.tok, { userId: E1.id, title: "TAC Chirag to E1" })).s === 200 && (await notes(E1.id, "TASK_ASSIGNED")) >= 3);
+    ok("Chirag cannot assign to an Admin account or to himself", (await call("POST", "/tasks/assigned", CHI.tok, { userId: ADMIN.id, title: "x7" })).s === 403 && (await call("POST", "/tasks/assigned", CHI.tok, { userId: CHI.id, title: "x8" })).s === 400);
     ok("Chirag's list shows only his own task, Saurabh's list only his own", (await call("GET", "/tasks/assigned/by-me", CHI.tok)).b.tasks.every((t) => t.assignedById === CHI.id) && (await call("GET", "/tasks/assigned/by-me", SAU.tok)).b.tasks.every((t) => t.assignedById === SAU.id));
     ok("Ethree completes it, Chirag is told, and Chirag cannot confirm", (await call("POST", `/tasks/assigned/${await idOf("TAC from Chirag to E3")}/progress`, E3.tok, { to: "COMPLETED" })).s === 200 && (await notes(CHI.id, "ASSIGNED_TASK_DONE")) === 1 && (await call("POST", `/tasks/assigned/${await idOf("TAC from Chirag to E3")}/confirm`, CHI.tok, {})).s === 403);
 

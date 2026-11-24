@@ -5,8 +5,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { useTaskRealtime } from "@/lib/realtime";
-import { FILTERS, PRIORITY_CHIP, PRIORITY_LABEL, STAGE_CHIP, STAGE_LABEL, dayLabel, filterCount, matchesFilter, type AssignedPayload, type AssignedTask, type FilterKey } from "./assignedTypes";
+import { FILTERS, STAGE_CHIP, STAGE_LABEL, dayLabel, filterCount, matchesFilter, type AssignedPayload, type AssignedTask, type FilterKey } from "./assignedTypes";
 import { ThreadModal } from "./ThreadModal";
+import { TaskTimer } from "../_timer/TaskTimer";
 
 export function FilterChips({ tasks, value, onChange }: { tasks: AssignedTask[]; value: FilterKey; onChange: (k: FilterKey) => void }) {
   return (
@@ -79,10 +80,11 @@ export default function AssignedToMe({ onCount }: { onCount?: (n: number) => voi
                   <p className="mt-0.5 text-xs text-slate-500">
                     Assigned by {t.assignedBy || "your manager"}{t.project ? ` · ${t.project}` : ""}{t.due ? ` · due ${dayLabel(t.due)}` : ""}
                   </p>
+                  <p className="mt-0.5 text-xs text-slate-400" data-testid="assigned-dates">Assigned {dayLabel(t.assignedOn.slice(0, 10))}{t.rating ? ` · manager rating ${t.rating}/5` : ""}</p>
+                  <TaskTimer timer={t.timer} status={t.stage === "IN_PROGRESS" ? "IN_PROGRESS" : t.stage === "TODO" ? "PENDING" : "COMPLETED"} onStale={() => void load()} />
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {t.overdue && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">Overdue</span>}
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_CHIP[t.priority] ?? ""}`}>{PRIORITY_LABEL[t.priority] ?? t.priority}</span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STAGE_CHIP[t.stage]}`}>{STAGE_LABEL[t.stage]}</span>
                 </div>
               </div>
