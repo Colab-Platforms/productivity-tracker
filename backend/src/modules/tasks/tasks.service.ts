@@ -1,6 +1,7 @@
 import { NOT_ADMIN } from "../../lib/tracked.js";
 import { isLinkedManager, linkedReportIds } from "../../lib/reportingLinks.js";
 import { PRIORITY_WEIGHT, weightOf, weightedPerformance } from "./tasks.weighted.js";
+import { CAP_TASK_ASSIGN_COMPANY, hasCapability } from "../../lib/capabilities.js";
 import { emitTaskChange } from "../../lib/realtime.js";
 import { taskNotice } from "./tasks.notify.js";
 import { managedByWhere, isTeamManager } from "../../lib/teamManagers.js";
@@ -365,6 +366,8 @@ export async function listTasks(userId: string) {
     entryForm,
     selfApproves: selfManagedMode || (!ctx.user.reportsToId && entryForm.managers.length === 0),
     selfManagedMode,
+    // true for an Employee who holds TASK_ASSIGN_COMPANY (Productivity Supervisors): the page then shows the "Assign Tasks" tab. The server enforces it again on every call.
+    canAssignCompany: String(ctx.role) === "EMPLOYEE" && (await hasCapability(userId, CAP_TASK_ASSIGN_COMPANY)),
     score,
     scorePercent: score.percent,
     weighted: weightedPerformance(rows),

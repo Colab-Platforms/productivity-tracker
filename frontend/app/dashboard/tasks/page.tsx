@@ -30,6 +30,7 @@ import type { EditableTask } from "../_taskedit/editTypes";
 import { ViewTabs } from "../_assigned/ViewTabs";
 import AssignedToMe from "../_assigned/AssignedToMe";
 import AssignedByMe from "../_assigned/AssignedByMe";
+import AssignTasks from "../_assigned/AssignTasks";
 import ReviewQueue from "../approvals/ReviewQueue";
 import { type Weighted } from "../_weighted/Weighted";
 import EmployeeRepetitionAlert from "./_repetition/EmployeeRepetitionAlert";
@@ -111,6 +112,8 @@ type Score = {
 type Payload = {
   // true for a manager once self-managed tasks are available: his own tasks need no approval (see _self/SelfManagedTasks)
   selfManagedMode?: boolean;
+  // true for an Employee who holds the TASK_ASSIGN_COMPANY capability (a Productivity Supervisor): the "Assign Tasks" tab is shown
+  canAssignCompany?: boolean;
   entryForm?: EntryForm;
   projects?: { id: string; name: string }[];
   awaitingApproval: Task[];
@@ -182,7 +185,7 @@ function TasksPageInner() {
   const [latePolicy, setLatePolicy] = useState<{ ready: boolean; allowedDays: number; maxDays: number } | null>(null);
   // Which part of Daily Tasks is open. Employee: "main" (my submitted tasks) or "assigned". Manager: "own", "submitted" (the approval queue) or "assigned".
   // Same page, no sidebar item: the switch sits at the top.
-  const view = pickedView ?? (tabParam === "submitted" || tabParam === "assigned" ? tabParam : "main");
+  const view = pickedView ?? (tabParam === "submitted" || tabParam === "assigned" || tabParam === "assign" ? tabParam : "main");
   const setView = setPickedView;
   // HR and Admin may open the same queue of employee-submitted tasks (they only act on tasks tagged to them; the rest is view only).
   const canReview = me?.role === "HR" || me?.role === "ADMIN";
@@ -352,11 +355,24 @@ function TasksPageInner() {
   }
 
   // An employee's "Assigned by manager" part of the same page.
+  const canAssign = data?.canAssignCompany === true && me?.role === "EMPLOYEE";
   const employeeTabs = [
     { key: "main", label: "My submitted tasks" },
     ...(canReview ? [{ key: "submitted", label: "Employee submitted tasks" }] : []),
     { key: "assigned", label: "Assigned by manager", badge: assignedOpen },
+    ...(canAssign ? [{ key: "assign", label: "Assign Tasks" }] : []),
   ];
+  if (view === "assign" && canAssign) {
+    return (
+      <div className="space-y-5">
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Daily tasks</h1>
+        </header>
+        <ViewTabs value="assign" onChange={setView} tabs={employeeTabs} />
+        <AssignTasks />
+      </div>
+    );
+  }
   if (view === "submitted" && canReview) {
     return (
       <div className="space-y-5">

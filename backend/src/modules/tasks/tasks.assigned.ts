@@ -9,6 +9,8 @@ import { platformToday } from "../../lib/dates.js";
 import { auditNote } from "../../lib/auditContext.js";
 import { emitTaskChange } from "../../lib/realtime.js";
 import { notifyUsers } from "../../lib/notify.js";
+import { CAP_TASK_ASSIGN_COMPANY, hasCapability } from "../../lib/capabilities.js";
+import { starsFor } from "./tasks.rating.js";
 import { activeAssigned } from "./tasks.deleted.js";
 import { selfTasksReady } from "./tasks.self.js";
 import { assertCanManage, manageableUserIds, resolveProject, userContext } from "./tasks.service.js";
@@ -61,7 +63,7 @@ async function loadRows(where: Record<string, unknown>) {
 }
 
 async function shape(rows: Row[]) {
-  const [events, zones] = await Promise.all([eventsOf(rows.map((r) => r.id)), timezones(rows.map((r) => r.platformId))]);
+  const [events, zones, stars] = await Promise.all([eventsOf(rows.map((r) => r.id)), timezones(rows.map((r) => r.platformId)), starsFor(rows)]);
   return rows.map((r) => {
     const ev = events.get(r.id) ?? [];
     const stage = stageOf(String(r.status), r.reviewedAt);
@@ -86,6 +88,8 @@ async function shape(rows: Row[]) {
       stage,
       completionNote: r.completionNote,
       completedAt: r.completedAt ? r.completedAt.toISOString() : null,
+      // the manager's star rating when one exists (assigned work is confirmed, not rated, so this is normally blank)
+      rating: stars.get(r.id) ?? null,
       confirmedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
       sentBackReason: stage === "IN_PROGRESS" || stage === "TODO" ? (r.reviewNote ?? null) : null,
       commentCount: comments.length,
@@ -124,11 +128,22 @@ async function ready() {
   if (!(await selfTasksReady())) throw new Error("FEATURES_NOT_READY");
 }
 
-/** A manager assigns, and so does an ADMIN (owner decision 2026-11-21: Admin assigns work to employees). HR does not. An Admin reaches the employees of the companies they act on. */
+/**
+ * Who may assign: a MANAGER, an ADMIN (owner decision 2026-11-21: Admin assigns work to employees), and an EMPLOYEE who holds the TASK_ASSIGN_COMPANY
+ * capability (a Productivity Supervisor; they stay Employees). HR does not. `assigner` marks the capability holder: they may assign, edit and remove what
+ * THEY assigned, comment and follow progress, but they are not a manager: no confirming or sending back finished work, no approval, no rating.
+ */
 async function managerContext(userId: string) {
   const ctx = await userContext(userId);
-  if (String(ctx.role) !== "MANAGER" && String(ctx.role) !== "ADMIN") throw new Error("NOT_ALLOWED");
-  return { id: userId, role: String(ctx.role), platformId: ctx.platformId };
+  const role = String(ctx.role);
+  if (role === "MANAGER" || role === "ADMIN") return { id: userId, role, platformId: ctx.platformId, assigner: false };
+  if (role === "EMPLOYEE" && (await hasCapability(userId, CAP_TASK_ASSIGN_COMPANY))) return { id: userId, role, platformId: ctx.platformId, assigner: true };
+  throw new Error("NOT_ALLOWED");
+}
+
+async function nameOfPerson(id: string) {
+  const u = await prisma.user.findUnique({ where: { id }, select: { firstName: true, lastName: true } });
+  return fullName(u) || "Your manager";
 }
 
 async function ownedByManager(managerId: string, taskId: string) {
@@ -142,10 +157,13 @@ async function ownedByManager(managerId: string, taskId: string) {
 /** The people a manager may assign to: their reporting team and project members, never another manager. */
 export async function assignablePeople(managerId: string) {
   const actor = await managerContext(managerId);
-  const ids = (await manageableUserIds(actor)).filter((i) => i !== managerId);
+  // A capability holder reaches EVERY active employee of their own company (searchable across departments and projects), never another company, never themselves.
+  const ids = actor.assigner ? null : (await manageableUserIds(actor)).filter((i) => i !== managerId);
   // An Admin assigns to EMPLOYEES only (never to a manager, HR or another Admin); a manager keeps the earlier rule (anyone of their team but a manager).
   const people = await prisma.user.findMany({
-    where: { id: { in: ids }, status: "ACTIVE" as never, role: actor.role === "ADMIN" ? ("EMPLOYEE" as never) : { not: "MANAGER" as never } },
+    where: actor.assigner
+      ? { platformId: actor.platformId, id: { not: managerId }, status: "ACTIVE" as never, role: "EMPLOYEE" as never }
+      : { id: { in: ids as string[] }, status: "ACTIVE" as never, role: actor.role === "ADMIN" ? ("EMPLOYEE" as never) : { not: "MANAGER" as never } },
     select: { id: true, firstName: true, lastName: true, employeeCode: true, role: true },
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
@@ -180,7 +198,12 @@ export async function assignNew(managerId: string, body: Record<string, unknown>
   const target = await prisma.user.findUnique({ where: { id: targetId }, include: { platform: true } });
   if (!target || String(target.status) !== "ACTIVE") throw new Error("USER_NOT_FOUND");
   if (String(target.role) === "MANAGER") throw new Error("MANAGER_TASKS_ARE_PERSONAL");
-  if (actor.role === "ADMIN") {
+  if (actor.assigner) {
+    // A capability holder: active EMPLOYEES of their OWN company only (enforced here, whatever the screen offers).
+    if (targetId === managerId) throw new Error("CANNOT_ASSIGN_SELF");
+    if (target.platformId !== actor.platformId) throw new Error("NOT_SAME_COMPANY");
+    if (String(target.role) !== "EMPLOYEE") throw new Error("ASSIGN_TO_EMPLOYEES_ONLY");
+  } else if (actor.role === "ADMIN") {
     // An Admin assigns to employees of the companies they act on (company access), never to HR or another Admin.
     if (String(target.role) !== "EMPLOYEE") throw new Error("ADMIN_ASSIGNS_EMPLOYEES");
     if (!(await manageableUserIds(actor)).includes(targetId)) throw new Error("NOT_YOUR_TEAM");
@@ -265,13 +288,14 @@ export async function editAssigned(managerId: string, taskId: string, body: Reco
   });
   auditNote({ summary: `Edited an assigned task: ${task.title}`, recordType: "DailyTask", recordId: taskId, targetUserId: task.userId, before: Object.fromEntries(changes.map((c) => [c.field, c.from])), after: Object.fromEntries(changes.map((c) => [c.field, c.to])) });
   tell(taskId, task.userId, managerId, "updated");
-  await notice([task.userId], { type: "ASSIGNED_TASK_UPDATED", title: "Assigned task changed", body: `Your manager changed: ${task.title}`, taskId, key: `asg:${taskId}:edit:${Date.now()}`, link: "/dashboard/tasks?tab=assigned" });
+  await notice([task.userId], { type: "ASSIGNED_TASK_UPDATED", title: "Assigned task changed", body: `${await nameOfPerson(managerId)} changed: ${task.title}`, taskId, key: `asg:${taskId}:edit:${Date.now()}`, link: "/dashboard/tasks?tab=assigned" });
   return listAssignedByMe(managerId);
 }
 
 export async function confirmAssigned(managerId: string, taskId: string, note: unknown) {
   await ready();
-  await managerContext(managerId);
+  // Confirming finished work is a manager's decision; a capability holder only assigns and follows.
+  if ((await managerContext(managerId)).assigner) throw new Error("ASSIGNER_CANNOT_CONFIRM");
   const task = await ownedByManager(managerId, taskId);
   const text = String(note ?? "").trim() ? checkText("note", note, 1, 300) : null;
   const done = await prisma.dailyTask.updateMany({
@@ -282,13 +306,13 @@ export async function confirmAssigned(managerId: string, taskId: string, note: u
   await writeEvent(taskId, task.platformId, managerId, "UPDATE", { v: 1, t: "confirmed", note: text });
   auditNote({ summary: `Confirmed an assigned task as complete: ${task.title}`, recordType: "DailyTask", recordId: taskId, targetUserId: task.userId });
   tell(taskId, task.userId, managerId, "status");
-  await notice([task.userId], { type: "ASSIGNED_TASK_CONFIRMED", title: "Task confirmed", body: `Your manager confirmed: ${task.title}`, taskId, key: `asg:${taskId}:confirmed`, link: "/dashboard/tasks?tab=assigned" });
+  await notice([task.userId], { type: "ASSIGNED_TASK_CONFIRMED", title: "Task confirmed", body: `${await nameOfPerson(managerId)} confirmed: ${task.title}`, taskId, key: `asg:${taskId}:confirmed`, link: "/dashboard/tasks?tab=assigned" });
   return listAssignedByMe(managerId);
 }
 
 export async function sendBackAssigned(managerId: string, taskId: string, reason: unknown) {
   await ready();
-  await managerContext(managerId);
+  if ((await managerContext(managerId)).assigner) throw new Error("ASSIGNER_CANNOT_CONFIRM");
   const task = await ownedByManager(managerId, taskId);
   const why = checkText("reason", reason, 3, 300);
   const res = await prisma.dailyTask.updateMany({
@@ -313,7 +337,7 @@ export async function cancelAssigned(managerId: string, taskId: string) {
   await writeEvent(taskId, task.platformId, managerId, "UPDATE", { v: 1, t: "cancelled" });
   auditNote({ summary: `Removed an assigned task before it started: ${task.title}`, recordType: "DailyTask", recordId: taskId, targetUserId: task.userId });
   tell(taskId, task.userId, managerId, "updated");
-  await notice([task.userId], { type: "ASSIGNED_TASK_UPDATED", title: "Assigned task removed", body: `Your manager removed: ${task.title}`, taskId, key: `asg:${taskId}:cancelled`, link: "/dashboard/tasks?tab=assigned" });
+  await notice([task.userId], { type: "ASSIGNED_TASK_UPDATED", title: "Assigned task removed", body: `${await nameOfPerson(managerId)} removed: ${task.title}`, taskId, key: `asg:${taskId}:cancelled`, link: "/dashboard/tasks?tab=assigned" });
   return listAssignedByMe(managerId);
 }
 
