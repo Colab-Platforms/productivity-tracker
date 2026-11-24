@@ -15,7 +15,7 @@
 
 "use client";
 
-import { pctText, pointsText, type Weighted } from "../_weighted/Weighted";
+import { pctText, sampleText, STATUS_LABEL, type Weighted } from "../_weighted/Weighted";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiGet } from "@/lib/api";
@@ -343,7 +343,7 @@ function SummaryReport() {
           "Days on leave", "Days absent", "Days not tracked", "Late days", "Late minutes",
           "Productive", "Of which Team Huddle", "Break", "Washroom", "Target", "Productivity %",
           "Tasks completed", "Tasks pending", "Task completion %",
-          "Task score %", "Weighted score %", "Weighted points", "Average rating (out of 5)", "Tasks rated", "Alerts", "Auto-closed days",
+          "Task score %", "Overall Performance Score %", "Eligible tasks", "Completed tasks", "Evaluation status", "Average rating (out of 5)", "Tasks rated", "Alerts", "Auto-closed days",
         ];
         rows = report.people.map((p) => [
           p.name, p.employeeCode, p.role, p.daysExpected, p.daysPresent,
@@ -351,7 +351,7 @@ function SummaryReport() {
           hm(p.productiveSeconds), hm(p.huddleSeconds), hm(p.breakSeconds), hm(p.washroomSeconds),
           hm(p.targetSeconds), Math.round(p.attainment * 100),
           p.tasksCompleted, p.tasksPending, Math.round(p.taskCompletion * 100),
-          Math.round(p.taskScore * 100), p.weighted?.percent ?? "N/A", p.weighted ? pointsText(p.weighted) : "", p.avgRating ?? "", p.ratedCount, p.alertCount, p.autoClosedDays,
+          Math.round(p.taskScore * 100), p.weighted?.percent ?? (p.weighted?.status === "AWAITING_EVALUATION" ? "Awaiting evaluation" : "N/A"), p.weighted?.tasks ?? "", p.weighted?.completed ?? "", p.weighted ? STATUS_LABEL[p.weighted.status] : "", p.avgRating ?? "", p.ratedCount, p.alertCount, p.autoClosedDays,
         ]);
       } else {
         header = [
@@ -593,7 +593,7 @@ function SummaryReport() {
                   <th className="px-4 py-3 text-right" title="Approved tasks finished and accepted in full">Tasks done</th>
                   <th className="px-4 py-3 text-right" title="Approved tasks not fully done yet (open, partly done or sent back)">Tasks pending</th>
                   <th className="px-4 py-3 text-right" title="Done ÷ (done + pending)">Completion</th>
-                  <th className="px-4 py-3 text-right" title="Weighted score of the day's tasks">Task score</th>
+                  <th className="px-4 py-3 text-right" title="The older priority-weighted completion share of the day's tasks (not the Overall Performance Score)">Task score</th>
                   <th className="px-4 py-3 text-right" title="Priority-weighted score (Critical 5, High 5, Medium 4, Low 1): a completed task earns its weight x the manager's stars / 5, full credit while it is not rated yet; a manager-marked partial earns half. Approved tasks only. N/A when nothing was scored.">Weighted score</th>
                   <th className="px-4 py-3 text-right" title="Average of the manager's 1 to 5 star ratings on finished tasks">Avg rating</th>
                   <th className="px-4 py-3 text-right">Alerts</th>
@@ -660,8 +660,8 @@ function SummaryReport() {
                     <td className="px-4 py-3 text-right tabular-nums text-slate-600">
                       {p.tasksTotal > 0 ? pct(p.taskScore) : "—"}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-900" title={p.weighted ? `${pointsText(p.weighted)} points` : undefined}>
-                      {pctText(p.weighted)}
+                    <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-900" title={p.weighted ? `${p.weighted.completed} of ${p.weighted.tasks} tasks completed` : undefined}>
+                      {pctText(p.weighted)} <span className="text-xs font-normal text-slate-400">{sampleText(p.weighted)}</span>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-700" title={p.ratedCount > 0 ? `${p.ratedCount} rated task${p.ratedCount === 1 ? "" : "s"}` : "No rated tasks"}>
                       {p.avgRating != null ? `${p.avgRating}/5` : "—"}

@@ -15,7 +15,8 @@ import { prisma } from "../../lib/prisma.js";
 import { parseIsoDay, platformToday, zonedToUtc } from "../../lib/dates.js";
 import type { HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { getAttendanceReport } from "./teamAttendance.service.js";
-import { getProductivityTasks } from "./productivity.service.js";
+import { getProductivity, getProductivityTasks } from "./productivity.service.js";
+import type { Weighted } from "../tasks/tasks.weighted.js";
 import { projectsAndManagers } from "./peopleDetails.js";
 import { classOfRow, discussionRemark } from "../tracker/activityClass.js";
 import { participationReady } from "../meetings/participation.service.js";
@@ -65,7 +66,7 @@ export async function getTeamReport(viewerId: string, q: { from?: string; to?: s
   const idSet = new Set(ids);
   const empty = {
     generatedAt: new Date().toISOString(), timezone: tz, today, from: fromIso, to: toRaw, days, scope: attendance.scope,
-    people: [] as unknown[], attendance: [] as unknown[], tasks: [] as unknown[], breaks: [] as unknown[], meetings: [] as unknown[], liveMeetings: [] as unknown[],
+    people: [] as unknown[], attendance: [] as unknown[], tasks: [] as unknown[], performance: {} as Record<string, unknown>, breaks: [] as unknown[], meetings: [] as unknown[], liveMeetings: [] as unknown[],
     leave: [] as unknown[], leaveDays: [] as unknown[], corrections: [] as unknown[],
   };
   if (ids.length === 0 || toIso < fromIso) return empty;
@@ -73,6 +74,10 @@ export async function getTeamReport(viewerId: string, q: { from?: string; to?: s
   // ---- 2. the same tasks the Task productivity report uses (ratings and feedback included) ----
   const tasksRes = await getProductivityTasks(viewerId, { from: fromIso, to: toIso, filters: q.filters });
   const tasks = (tasksRes.tasks as { userId: string }[]).filter((t) => idSet.has(t.userId));
+  // the Overall Performance Score of each person, from the SAME server calculation as the Task productivity report (nothing is recalculated in the workbook)
+  const productivity = (await getProductivity(viewerId, { from: fromIso, to: toIso, filters: q.filters })) as { people?: { userId: string; weighted?: Weighted }[] };
+  const performance: Record<string, Weighted> = {};
+  for (const p of productivity.people ?? []) if (p.weighted && idSet.has(p.userId)) performance[p.userId] = p.weighted;
 
   // ---- 3. the rest, limited to those ids ----
   const [details, users, breaks, live, leave, leaveDays, corrections, attendees, participation] = await Promise.all([
@@ -152,6 +157,7 @@ export async function getTeamReport(viewerId: string, q: { from?: string; to?: s
     people: opt.map((p) => ({ id: p.id, name: p.name, employeeCode: p.code, designation: users.find((u) => u.id === p.id)?.designation ?? null, company: users.find((u) => u.id === p.id)?.platform.name ?? null, reportingManager: details.get(p.id)?.reportingManager ?? null, projects: details.get(p.id)?.projects ?? [], status: String(users.find((u) => u.id === p.id)?.status ?? ""), joinedOn: users.find((u) => u.id === p.id)?.dateOfJoining ? users.find((u) => u.id === p.id)!.dateOfJoining!.toISOString().slice(0, 10) : null })),
     attendance: attendance.rows,
     tasks,
+    performance,
     breaks: breaks.map((b) => {
       const c = classOfRow(b);
       const recorded = b.durationSeconds ?? (b.endedAt ? Math.max(0, Math.floor((b.endedAt.getTime() - b.startedAt.getTime()) / 1000)) : null);

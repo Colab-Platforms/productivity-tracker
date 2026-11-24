@@ -28,7 +28,7 @@ import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
 import { awayOf } from "../tracker/activityClass.js";
-import { platformToday, parseIsoDay } from "../../lib/dates.js";
+import { platformToday, parseIsoDay, zonedToUtc } from "../../lib/dates.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
 import { earlyDayTargetSeconds, isEarlyLogoutDay } from "../attendance/earlyLogout.logic.js";
 import { loadEarlyLogoutPolicy } from "../attendance/earlyLogout.js";
@@ -205,7 +205,7 @@ export async function getTeamReport(
 
       activeTasks().then((live) => prisma.dailyTask.findMany({
         where: { userId: { in: userIds }, date: dateFilter, ...live },
-        select: { id: true, userId: true, date: true, weight: true, status: true, approvalStatus: true, outcome: true },
+        select: { id: true, userId: true, date: true, weight: true, status: true, approvalStatus: true, outcome: true, completedAt: true },
       })),
 
       prisma.alert.findMany({
@@ -488,6 +488,8 @@ export async function getTeamReport(
   const stars = await starsFor(tasks); // the managers' star ratings (batched)
   // the weighted score needs each task's stars (a completed task earns weight x stars / 5)
   const rateAll = (list: typeof tasks) => list.map((t) => ({ ...t, rating: stars.get(t.id) ?? null }));
+  // As-of cutoff of this report: the end of its last day in the company's time zone (a task finished after it is unfinished in this report).
+  const scoreCutoff = zonedToUtc(new Date(to.getTime() + 86400000).toISOString().slice(0, 10), "00:00", viewer.platform?.timezone ?? "Asia/Kolkata");
   for (const t of tasks) {
     const person = byPerson.get(t.userId);
     if (!person) continue;
@@ -537,7 +539,7 @@ export async function getTeamReport(
     person.attainment =
       person.targetSeconds > 0 ? person.productiveSeconds / person.targetSeconds : 0;
     person.taskScore = person.tasksTotal > 0 ? person.tasksDone / person.tasksTotal : 0;
-    person.weighted = weightedPerformance(rateAll(tasksOf.get(person.userId) ?? []));
+    person.weighted = weightedPerformance(rateAll(tasksOf.get(person.userId) ?? []), { cutoff: scoreCutoff });
     const counted = person.tasksCompleted + person.tasksPending;
     person.taskCompletion = counted > 0 ? person.tasksCompleted / counted : 0;
     person.avgRating = person.ratedCount > 0 ? Math.round((person.ratingSum / person.ratedCount) * 10) / 10 : null;
@@ -603,7 +605,7 @@ export async function getTeamReport(
   totals.attainment =
     totals.targetSeconds > 0 ? totals.productiveSeconds / totals.targetSeconds : 0;
   totals.taskScore = totals.tasksTotal > 0 ? totals.tasksDone / totals.tasksTotal : 0;
-  totals.weighted = weightedPerformance(rateAll(people.filter((p) => p.role !== "MANAGER").flatMap((p) => tasksOf.get(p.userId) ?? [])));
+  totals.weighted = weightedPerformance(rateAll(people.filter((p) => p.role !== "MANAGER").flatMap((p) => tasksOf.get(p.userId) ?? [])), { cutoff: scoreCutoff });
   totals.taskCompletion =
     totals.tasksCompleted + totals.tasksPending > 0 ? totals.tasksCompleted / (totals.tasksCompleted + totals.tasksPending) : 0;
 

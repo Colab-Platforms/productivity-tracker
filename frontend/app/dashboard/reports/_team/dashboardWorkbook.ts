@@ -44,7 +44,7 @@ const hoursOf = (seconds: number) => round2(seconds / 3600);
 // ---------------------------------------------------------------------------------------------- the dashboard table
 type DashKey =
   | "name" | "code" | "designation" | "department" | "company" | "manager" | "status" | "workingDays" | "present" | "half" | "absent" | "leave" | "late" | "lateRemarks"
-  | "workHrs" | "prodHrs" | "breakHrs" | "meetHrs" | "submitted" | "completed" | "pending" | "approved" | "rejected" | "blocked" | "rated" | "avg" | "wPct" | "wEarned" | "wPossible" | "note"
+  | "workHrs" | "prodHrs" | "breakHrs" | "meetHrs" | "submitted" | "completed" | "pending" | "approved" | "rejected" | "blocked" | "rated" | "avg" | "wPct" | "wEligible" | "wDone" | "wCompletion" | "wPending" | "wStatus" | "note"
   | "hActive" | "hPresent" | "hAbsent";
 type DashCol = { key: DashKey; header: string; kind: Kind; width: number; note?: string };
 export const DASH_COLS: DashCol[] = [
@@ -74,9 +74,14 @@ export const DASH_COLS: DashCol[] = [
   { key: "blocked", header: "Tasks blocked", kind: "int", width: 10 },
   { key: "rated", header: "Tasks rated", kind: "int", width: 10 },
   { key: "avg", header: "Average rating (rated tasks only)", kind: "decimal", width: 14, note: "Stars 1-5, averaged over tasks a manager actually rated. Blank = no rated task. An unrated task is never counted as 0 or 5." },
-  { key: "wPct", header: "Weighted score %", kind: "percent", width: 13, note: "Priority-weighted score of the approved tasks dated in the period: points earned / points possible (Critical 5, High 5, Medium 4, Low 1; a completed task earns its weight x the manager's stars / 5, full credit while it is not rated yet; a manager-marked partial earns half). Blank = nothing was scored." },
-  { key: "wEarned", header: "Weighted points earned", kind: "decimal", width: 12 },
-  { key: "wPossible", header: "Weighted points possible", kind: "int", width: 12 },
+  { key: "wEligible", header: "Eligible tasks (score)", kind: "int", width: 12, note: "Approved, not cancelled, dated inside the period." },
+  { key: "wDone", header: "Completed tasks (score)", kind: "int", width: 12 },
+  { key: "wCompletion", header: "Completion %", kind: "percent", width: 12, note: "Completed tasks / eligible tasks." },
+  { key: "wPending", header: "Pending evaluation", kind: "int", width: 11, note: "Completed tasks the manager has not rated yet (never counted as 5 stars)." },
+  { key: "wPct", header: "Overall Performance Score %", kind: "percent", width: 14, note: "Completion % x 0.60 + manager rating % x 0.40, from the server. Task priority is not used. Blank = N/A or awaiting evaluation (see Evaluation status)." },
+  { key: "wStatus", header: "Evaluation status", kind: "text", width: 17 },
+
+
   { key: "note", header: "Data note", kind: "text", width: 36 },
   { key: "hActive", header: "Active (1 = yes)", kind: "int", width: 9, note: "Helper column for the summary tiles." },
   { key: "hPresent", header: "Present at least once (1 = yes)", kind: "int", width: 12, note: "Helper column for the summary tiles." },
@@ -112,9 +117,11 @@ export function dashRow(data: TeamReportData, ix: Index, p: TRPerson, sheet: str
     meetHrs: hasMeetings ? hoursOf(s.meetingSec) : null,
     submitted: s.submitted, completed: s.completed, pending: s.waiting, approved: s.approved, rejected: s.rejected, blocked: s.blocked, rated: rated.length,
     avg: rated.length > 0 ? round2(sum(rated.map((k) => k.rating)) / rated.length) : null,
-    wPct: s.wPossible > 0 ? round2((s.wEarned / s.wPossible) * 100) : null,
-    wEarned: s.wPossible > 0 ? s.wEarned : null,
-    wPossible: s.wPossible > 0 ? s.wPossible : null,
+    wPct: s.perf?.percent ?? null,
+    wEligible: s.perf?.tasks ?? null, wDone: s.perf?.completed ?? null, wCompletion: s.perf?.completionPercent ?? null, wPending: s.perf?.awaitingRating ?? null,
+    wStatus: s.perf ? (s.perf.percent === null && s.perf.status === "AWAITING_EVALUATION" ? "Awaiting evaluation" : s.perf.status === "NO_TASKS" ? "N/A" : s.perf.status === "PROVISIONAL" ? "Provisional" : "Final") : null,
+
+
     note: notes.join("; "),
     hActive: p.status ? (p.status === "ACTIVE" ? 1 : 0) : null,
     hPresent: hasAtt ? (s.present + s.halfDays > 0 ? 1 : 0) : null,

@@ -456,8 +456,8 @@ function TasksPageInner() {
           </div>
 
           <p className="mt-3 text-xs text-indigo-200">
-            Weighted — a critical task counts five times a low one. Partially done work
-            scores half.
+            Every task counts the same, whatever its priority. Your Overall Performance Score
+            (60% completion, 40% manager rating) is under Reports.
           </p>
         </section>
       )}

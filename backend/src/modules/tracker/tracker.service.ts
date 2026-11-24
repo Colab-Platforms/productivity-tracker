@@ -5,7 +5,7 @@ import { linkedReportIds } from "../../lib/reportingLinks.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
 import { onlyPinnedCompany } from "../../lib/deployment.js";
 import { managedByWhere } from "../../lib/teamManagers.js";
-import { parseIsoDay, platformToday } from "../../lib/dates.js";
+import { parseIsoDay, platformToday, zonedToUtc } from "../../lib/dates.js";
 import { cleanRemark, lateRemarksReady, LateRemarkRequired, remarksBySession } from "./lateRemarks.js";
 import { huddleSecondsByDay } from "../meetings/participation.service.js";
 import { starsFor } from "../tasks/tasks.rating.js";
@@ -917,6 +917,8 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
   // The manager's star ratings. Same scale the Daily Tasks page uses (stars / 5), so a day's score reads identically in both places.
   const stars = await starsFor(tasks);
   const rateAll = (list: typeof tasks) => list.map((t) => ({ ...t, rating: stars.get(t.id) ?? null }));
+  // each day is scored as of the end of that day in the company's time zone; the whole range as of the end of its last day
+  const cutoffOf = (dayIso: string) => zonedToUtc(new Date(Date.parse(dayIso) + 86400000).toISOString().slice(0, 10), "00:00", ctx.timezone);
 
   const leaveByDate = new Map(leaveDays.map((l) => [key(l.date), l]));
 
@@ -984,7 +986,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
       taskDone: dayTasks.filter((t) => String(t.status) === "COMPLETED").length,
       ratedCount: ratedToday.length,
       avgRating: ratedToday.length ? Math.round((ratedToday.reduce((a, b) => a + b, 0) / ratedToday.length) * 10) / 10 : null,
-      weighted: weightedPerformance(rateAll(tasksByDate.get(k) ?? [])),
+      weighted: weightedPerformance(rateAll(tasksByDate.get(k) ?? []), { cutoff: cutoffOf(k) }),
       taskPercent:
         totalWeight === 0 ? null : Math.round((doneWeight / totalWeight) * 100),
     };
@@ -1001,7 +1003,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
     breakBudget: ctx.config.breakBudgetMinutes * 60,
     rows,
     summary: {
-      weighted: weightedPerformance(rateAll(tasks)),
+      weighted: weightedPerformance(rateAll(tasks), { cutoff: cutoffOf(key(to)) }),
       daysWorked: worked.length,
       daysOnLeave: rows.filter((r) => r.onLeave).length,
       daysLate: worked.filter((r) => r.wasLateLogin).length,

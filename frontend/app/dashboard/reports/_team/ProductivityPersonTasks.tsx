@@ -14,7 +14,7 @@ export type TaskSummary = {
 };
 export type Reason = "HAS_DATA" | "NO_TASKS" | "AWAITING_APPROVAL" | "NO_COMPLETION_TIME" | "NONE_COMPLETED";
 
-type Submitted = { id: string; title: string; description: string | null; date: string; submittedAt: string; priority: string; progress: string; approvalStatus: string; taggedManager: string | null; reportingManager: string | null; completedAt: string | null; counted: boolean; weightPoints: number | null; earnedPoints: number | null };
+type Submitted = { id: string; title: string; description: string | null; date: string; submittedAt: string; priority: string; progress: string; approvalStatus: string; taggedManager: string | null; reportingManager: string | null; completedAt: string | null; counted: boolean; inScore?: boolean; scoreCompleted?: boolean; ratingStatus?: string; rating?: number | null };
 type Assigned = { id: string; title: string; description: string | null; priority: string; assignedBy: string; assignedOn: string; due: string | null; overdue: boolean; stage: string; completedAt: string | null; confirmedAt: string | null };
 type Person = { from: string; to: string; person: { name: string; employeeCode: string | null }; submitted: Submitted[]; assigned: Assigned[] };
 
@@ -94,7 +94,7 @@ export default function PersonTasks({ userId, from, to, hrQuery, summary }: { us
                         <td className={`${td} whitespace-nowrap`}>{stamp(t.completedAt)}</td>
                         <td className={td}>{PROGRESS_LABEL[t.progress as keyof typeof PROGRESS_LABEL] ?? t.progress}</td>
                         <td className={td}>{APPROVAL[t.approvalStatus] ?? t.approvalStatus}</td>
-                        <td className={td} title={t.weightPoints !== null ? `${t.earnedPoints ?? 0} of ${t.weightPoints} points` : "Not scored (not approved)"}>{PRIORITY[t.priority] ?? t.priority}</td>
+                        <td className={td} title={t.inScore ? (t.scoreCompleted ? (t.ratingStatus === "RATED" ? `Completed and rated ${t.rating}/5` : "Completed, pending manager evaluation") : "Eligible, not completed") : "Not part of the performance score (not approved, or dated outside the period)"}>{PRIORITY[t.priority] ?? t.priority}</td>
                         <td className={`${td} text-right`}>{t.counted ? "Yes" : "No"}</td>
                       </tr>
                     ))}

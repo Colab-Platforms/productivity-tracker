@@ -1,7 +1,7 @@
 "use client";
 
 import HuddleWord from "../_shell/HuddleWord";
-import { pctText, pointsText, type Weighted } from "../_weighted/Weighted";
+import { pctText, sampleText, completedText, type Weighted } from "../_weighted/Weighted";
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch } from "@/lib/api";
 import { formatTime, getPlatformTimezone, isoDaysAgo } from "@/lib/time";
@@ -222,7 +222,7 @@ function HistoryScreen() {
       "On leave",
       "Tasks done",
       "Task score %",
-      "Weighted score %",
+      "Overall Performance Score %",
       "Avg rating (out of 5)",
     ];
 
@@ -317,7 +317,7 @@ function HistoryScreen() {
                   ? "—"
                   : `${data.summary.avgTaskScore}%`,
               ],
-              ["Weighted task score", pctText(data.summary.weighted)],
+              ["Overall Performance Score", `${pctText(data.summary.weighted)} ${sampleText(data.summary.weighted)}`.trim()],
             ].map(([label, value]) => (
               <div
                 key={label}
@@ -450,7 +450,7 @@ function HistoryScreen() {
                             <span className="ml-1.5 text-xs text-slate-400">
                               {r.taskPercent}%
                             </span>
-                            {r.weighted && <span className="ml-1.5 text-xs text-indigo-700" title={`Weighted score: ${pointsText(r.weighted)} points`}>wtd {pctText(r.weighted)}</span>}
+                            {r.weighted && <span className="ml-1.5 text-xs text-indigo-700" title={`Overall Performance Score: ${completedText(r.weighted)}`}>score {pctText(r.weighted)} {sampleText(r.weighted)}</span>}
                             {r.avgRating != null && (
                               <span className="ml-1.5 text-xs text-amber-600" title={`Average of ${r.ratedCount} star rating${r.ratedCount === 1 ? "" : "s"} from your manager`}>
                                 ★ {r.avgRating}

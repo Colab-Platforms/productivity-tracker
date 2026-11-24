@@ -729,7 +729,7 @@ export default function ReviewQueue() {
 
               {t.completedAt && t.date && doneDay(t.completedAt) > t.date && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Task was for ${t.date}; the employee ticked it done on ${doneDay(t.completedAt)}. Check their note and grade it as you see fit.`}>ticked later · {doneDay(t.completedAt)}</span>}
               {t.reopened?.resubmitted && <span className="shrink-0 rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={`Reopened (${t.reopened.label}) and finished again`}>resubmitted</span>}
-              {t.partial && <span className="shrink-0 rounded bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800" title="Counts as half of this task's weight in the weighted score">partially completed</span>}
+              {t.partial && <span className="shrink-0 rounded bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800" title="Partly done: not counted as completed in the Overall Performance Score">partially completed</span>}
               <button
                 type="button"
                 disabled={busy}

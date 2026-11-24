@@ -238,7 +238,7 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
   // Priority-weighted performance of each person's tasks dated inside the range (rules in tasks.weighted.ts, the same everywhere).
   const weightedRows = await prisma.dailyTask.findMany({
     where: { userId: { in: ids }, id: { notIn: selfIds }, ...(await activeTasks()), date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } },
-    select: { id: true, userId: true, weight: true, status: true, approvalStatus: true, outcome: true },
+    select: { id: true, userId: true, weight: true, status: true, approvalStatus: true, outcome: true, completedAt: true },
   });
   const weightedStars = await starsFor(weightedRows);
   const weightedRated = weightedRows.map((r) => ({ ...r, rating: weightedStars.get(r.id) ?? null }));
@@ -282,14 +282,14 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
       completedTotal: dataDays > 0 ? completedTotal : null,
       targetTotal,
       overallPercent: targetTotal && dataDays > 0 ? Math.round((completedTotal / targetTotal) * 1000) / 10 : null,
-      weighted: weightedPerformance(weightedBy.get(p.id) ?? []),
+      weighted: weightedPerformance(weightedBy.get(p.id) ?? [], { cutoff: endUtc }),
       tasks: summaries.get(p.id) ?? emptySummary(),
       reason: taskReason(summaries.get(p.id) ?? emptySummary(), dataDays > 0 ? completedTotal : null),
       days,
     };
   });
 
-  return { ...base, scope, targetsReady: targets.ready, weightedTotal: weightedPerformance(weightedRated), people: out };
+  return { ...base, scope, targetsReady: targets.ready, weightedTotal: weightedPerformance(weightedRated, { cutoff: endUtc }), people: out };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -373,7 +373,18 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       rejectionNote: t.rejectionNote ?? null,
       counted: counted.has(t.id),
       // Weighted score of this one task: its priority weight, the share earned (1, 0.5 or 0) and the points; blank when it is not scored (not approved / cancelled).
-      ...(() => { const w = weightedPerformance([{ ...t, rating: ratings.get(t.id)?.rating ?? null }]); return { weightPoints: w.tasks ? w.possible : null, earnedPoints: w.tasks ? w.earned : null, partial: String(t.outcome ?? "") === "PARTIALLY_COMPLETED" }; })(),
+      // How this task takes part in the Overall Performance Score (same rules as the score itself; priority plays no part):
+      //   inScore         eligible (approved, not cancelled, dated inside the period)
+      //   scoreCompleted  completed as of the end of the period
+      //   ratingStatus    RATED (the manager's stars) | PENDING_EVALUATION (completed, not rated yet) | NOT_APPLICABLE (not completed)
+      ...(() => {
+        const rating = ratings.get(t.id)?.rating ?? null;
+        const inPeriod = t.date >= parseIsoDay(fromIso) && t.date <= parseIsoDay(toIso);
+        const one = { ...t, rating };
+        const eligible = inPeriod && weightedPerformance([one]).tasks === 1;
+        const done = eligible && weightedPerformance([one], { cutoff: endUtc }).completed === 1;
+        return { inScore: eligible, scoreCompleted: done, ratingStatus: done ? (rating !== null ? "RATED" : "PENDING_EVALUATION") : "NOT_APPLICABLE", partial: String(t.outcome ?? "") === "PARTIALLY_COMPLETED" };
+      })(),
     };
   });
   return { ...base, scope, tasks };

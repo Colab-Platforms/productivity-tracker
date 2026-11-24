@@ -300,7 +300,7 @@ export default function TasksPerformancePage() {
             {(() => {
               // The server's own figure for the people in view (it follows the dates and filters of the queue; a project choice made on this page is not applied to it).
               const w = person ? queue.weightedByUser?.[person] : queue.weighted;
-              return w && !project ? <WeightedCard w={w} title={person ? "Weighted task performance (selected employee)" : "Weighted task performance (everyone in view)"} /> : null;
+              return w && !project ? <WeightedCard w={w} title={person ? "Overall Performance Score (selected employee)" : "Overall Performance Score (everyone in view)"} /> : null;
             })()}
             {assigned && (
               <div data-testid="assigned-counts" className="rounded-2xl bg-white p-3.5 shadow-[var(--shadow-card)]">
@@ -334,7 +334,7 @@ export default function TasksPerformancePage() {
                         <td className="px-2 py-2 text-right tabular-nums">{g.counts.submitted}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.approved}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.pending}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.rejected}</td>
                         <td className="px-2 py-2 text-right tabular-nums">{g.counts.todo}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.inProgress}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.completed}</td><td className="px-2 py-2 text-right tabular-nums">{g.counts.blocked}</td>
                         <td className="px-2 py-2 text-right tabular-nums">{g.counts.overdue}</td><td className="px-2 py-2 text-right tabular-nums">{rating(g.counts)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums" title="Priority-weighted score from the server. Not narrowed by the project box on this page.">{project ? "—" : pctText(queue.weightedByUser?.[g.key] ?? null)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums" title="Overall Performance Score from the server (60% completion + 40% manager rating). Not narrowed by the project box on this page.">{project ? "—" : pctText(queue.weightedByUser?.[g.key] ?? null)}</td>
                       </tr>
                     ))}
                   </tbody>
