@@ -12,6 +12,10 @@ export type Weighted = {
   completed: number;
   partial: number;
   notCompleted: number;
+  /** completed tasks the manager has rated / not rated yet, and the points taken off because of stars below 5 */
+  rated?: number;
+  awaitingRating?: number;
+  lostToRatings?: number;
   notScored: { waitingForApproval: number; rejected: number };
   byPriority: WeightedLine[];
 };
@@ -35,6 +39,8 @@ export function WeightedNote({ w }: { w: Weighted | null | undefined }) {
   return (
     <p className="text-xs text-slate-500">
       {w.percent === null ? "No approved tasks to score yet" : `${pointsText(w)} points · ${w.completed} completed${w.partial ? ` · ${w.partial} partial` : ""} · ${w.notCompleted} not completed`}
+      {w.lostToRatings ? ` · ${w.lostToRatings} pts lost to ratings below 5 stars` : ""}
+      {w.awaitingRating ? ` · ${w.awaitingRating} awaiting rating (full credit until rated)` : ""}
       {waiting ? ` · ${waiting} waiting for approval (not scored)` : ""}
       {rejected ? ` · ${rejected} rejected (not scored)` : ""}
     </p>

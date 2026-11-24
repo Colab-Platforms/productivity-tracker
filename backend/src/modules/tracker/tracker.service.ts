@@ -916,6 +916,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
 
   // The manager's star ratings. Same scale the Daily Tasks page uses (stars / 5), so a day's score reads identically in both places.
   const stars = await starsFor(tasks);
+  const rateAll = (list: typeof tasks) => list.map((t) => ({ ...t, rating: stars.get(t.id) ?? null }));
 
   const leaveByDate = new Map(leaveDays.map((l) => [key(l.date), l]));
 
@@ -983,7 +984,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
       taskDone: dayTasks.filter((t) => String(t.status) === "COMPLETED").length,
       ratedCount: ratedToday.length,
       avgRating: ratedToday.length ? Math.round((ratedToday.reduce((a, b) => a + b, 0) / ratedToday.length) * 10) / 10 : null,
-      weighted: weightedPerformance(tasksByDate.get(k) ?? []),
+      weighted: weightedPerformance(rateAll(tasksByDate.get(k) ?? [])),
       taskPercent:
         totalWeight === 0 ? null : Math.round((doneWeight / totalWeight) * 100),
     };
@@ -1000,7 +1001,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
     breakBudget: ctx.config.breakBudgetMinutes * 60,
     rows,
     summary: {
-      weighted: weightedPerformance(tasks),
+      weighted: weightedPerformance(rateAll(tasks)),
       daysWorked: worked.length,
       daysOnLeave: rows.filter((r) => r.onLeave).length,
       daysLate: worked.filter((r) => r.wasLateLogin).length,

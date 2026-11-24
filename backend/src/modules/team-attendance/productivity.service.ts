@@ -240,8 +240,10 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
     where: { userId: { in: ids }, id: { notIn: selfIds }, ...(await activeTasks()), date: { gte: parseIsoDay(fromIso), lte: parseIsoDay(toIso) } },
     select: { id: true, userId: true, weight: true, status: true, approvalStatus: true, outcome: true },
   });
-  const weightedBy = new Map<string, typeof weightedRows>();
-  for (const r of weightedRows) { const l = weightedBy.get(r.userId) ?? []; l.push(r); weightedBy.set(r.userId, l); }
+  const weightedStars = await starsFor(weightedRows);
+  const weightedRated = weightedRows.map((r) => ({ ...r, rating: weightedStars.get(r.id) ?? null }));
+  const weightedBy = new Map<string, typeof weightedRated>();
+  for (const r of weightedRated) { const l = weightedBy.get(r.userId) ?? []; l.push(r); weightedBy.set(r.userId, l); }
   const details = await projectsAndManagers(ids);
   const summaries = await summariesFor(viewer, ids, selfIds, fromIso, toIso, today, startUtc, endUtc);
   const out = people.map((p) => {
@@ -287,7 +289,7 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
     };
   });
 
-  return { ...base, scope, targetsReady: targets.ready, weightedTotal: weightedPerformance(weightedRows), people: out };
+  return { ...base, scope, targetsReady: targets.ready, weightedTotal: weightedPerformance(weightedRated), people: out };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -371,7 +373,7 @@ export async function getProductivityTasks(viewerId: string, q: { from?: string;
       rejectionNote: t.rejectionNote ?? null,
       counted: counted.has(t.id),
       // Weighted score of this one task: its priority weight, the share earned (1, 0.5 or 0) and the points; blank when it is not scored (not approved / cancelled).
-      ...(() => { const w = weightedPerformance([t]); return { weightPoints: w.tasks ? w.possible : null, earnedPoints: w.tasks ? w.earned : null, partial: String(t.outcome ?? "") === "PARTIALLY_COMPLETED" }; })(),
+      ...(() => { const w = weightedPerformance([{ ...t, rating: ratings.get(t.id)?.rating ?? null }]); return { weightPoints: w.tasks ? w.possible : null, earnedPoints: w.tasks ? w.earned : null, partial: String(t.outcome ?? "") === "PARTIALLY_COMPLETED" }; })(),
     };
   });
   return { ...base, scope, tasks };

@@ -951,7 +951,8 @@ export async function listForApproval(
 
   // The rows as the score rules need them (the screen rows do not carry the stored outcome).
   const outcomeOf = new Map(ratedRows.map((r) => [r.id, r.outcome]));
-  const scoreRows = all.map((t) => ({ id: t.id, userId: t.userId, weight: t.weight, status: t.status, approvalStatus: t.approvalStatus, outcome: outcomeOf.get(t.id) ?? null }));
+  const starsOf = new Map(ratedRows.map((r) => [r.id, r.rating]));
+  const scoreRows = all.map((t) => ({ id: t.id, userId: t.userId, weight: t.weight, status: t.status, approvalStatus: t.approvalStatus, outcome: outcomeOf.get(t.id) ?? null, rating: starsOf.get(t.id) ?? null }));
 
   const roster = people.map((p) => ({
     id: p.id,

@@ -74,7 +74,7 @@ export const DASH_COLS: DashCol[] = [
   { key: "blocked", header: "Tasks blocked", kind: "int", width: 10 },
   { key: "rated", header: "Tasks rated", kind: "int", width: 10 },
   { key: "avg", header: "Average rating (rated tasks only)", kind: "decimal", width: 14, note: "Stars 1-5, averaged over tasks a manager actually rated. Blank = no rated task. An unrated task is never counted as 0 or 5." },
-  { key: "wPct", header: "Weighted score %", kind: "percent", width: 13, note: "Priority-weighted score of the approved tasks dated in the period: points earned / points possible (Critical 5, High 5, Medium 4, Low 1; completed earns all, a manager-marked partial half). Blank = nothing was scored." },
+  { key: "wPct", header: "Weighted score %", kind: "percent", width: 13, note: "Priority-weighted score of the approved tasks dated in the period: points earned / points possible (Critical 5, High 5, Medium 4, Low 1; a completed task earns its weight x the manager's stars / 5, full credit while it is not rated yet; a manager-marked partial earns half). Blank = nothing was scored." },
   { key: "wEarned", header: "Weighted points earned", kind: "decimal", width: 12 },
   { key: "wPossible", header: "Weighted points possible", kind: "int", width: 12 },
   { key: "note", header: "Data note", kind: "text", width: 36 },

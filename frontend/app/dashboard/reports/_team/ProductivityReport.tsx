@@ -158,7 +158,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
       { header: "Employee ID", width: 14 }, { header: "Employee", width: 24 }, { header: "Team", width: 20 }, { header: "Project(s)", width: 28 }, { header: "Reporting manager", width: 22 },
       { header: "Daily target", kind: "int", width: 12 }, { header: "Target level", width: 13 }, { header: "Days with data", kind: "int", width: 13 },
       { header: "Tasks completed", kind: "int", width: 14 }, { header: "Productivity %", kind: "percent", width: 14, note: "Tasks completed divided by the daily target on the days with task data. Text means there is nothing to calculate (target not set, or no task data); it is never shown as 0%." },
-      { header: "Weighted score %", kind: "percent", width: 15, note: "Priority-weighted score of the approved tasks dated in the period: points earned / points possible (Critical 5, High 5, Medium 4, Low 1; completed earns all, a manager-marked partial half). N/A when nothing was scored." },
+      { header: "Weighted score %", kind: "percent", width: 15, note: "Priority-weighted score of the approved tasks dated in the period: points earned / points possible (Critical 5, High 5, Medium 4, Low 1; a completed task earns its weight x the manager's stars / 5, full credit while it is not rated yet; a manager-marked partial earns half). N/A when nothing was scored." },
       { header: "Points earned", kind: "decimal", width: 13 }, { header: "Points possible", kind: "int", width: 14 },
       { header: "Critical (pts)", width: 14 }, { header: "High (pts)", width: 12 }, { header: "Medium (pts)", width: 13 }, { header: "Low (pts)", width: 11 },
     ];
@@ -258,7 +258,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
                   <th className={`${th} text-right`}>Days with data</th>
                   <th className={`${th} text-right`}>Completed</th>
                   <th className={`${th} text-right`}>Productivity</th>
-                  <th className={`${th} text-right`} title="Priority-weighted score of the approved tasks dated in the period (Critical 5, High 5, Medium 4, Low 1)">Weighted score</th>
+                  <th className={`${th} text-right`} title="Priority-weighted score of the approved tasks dated in the period (Critical 5, High 5, Medium 4, Low 1). A completed task earns its weight x the manager's stars / 5 (full credit until it is rated).">Weighted score</th>
                 </tr>
               </thead>
               <tbody>

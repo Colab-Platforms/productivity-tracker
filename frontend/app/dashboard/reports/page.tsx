@@ -594,7 +594,7 @@ function SummaryReport() {
                   <th className="px-4 py-3 text-right" title="Approved tasks not fully done yet (open, partly done or sent back)">Tasks pending</th>
                   <th className="px-4 py-3 text-right" title="Done ÷ (done + pending)">Completion</th>
                   <th className="px-4 py-3 text-right" title="Weighted score of the day's tasks">Task score</th>
-                  <th className="px-4 py-3 text-right" title="Priority-weighted score (Critical 5, High 5, Medium 4, Low 1): completed earns all, a manager-marked partial half. Approved tasks only. N/A when nothing was scored.">Weighted score</th>
+                  <th className="px-4 py-3 text-right" title="Priority-weighted score (Critical 5, High 5, Medium 4, Low 1): a completed task earns its weight x the manager's stars / 5, full credit while it is not rated yet; a manager-marked partial earns half. Approved tasks only. N/A when nothing was scored.">Weighted score</th>
                   <th className="px-4 py-3 text-right" title="Average of the manager's 1 to 5 star ratings on finished tasks">Avg rating</th>
                   <th className="px-4 py-3 text-right">Alerts</th>
                 </tr>

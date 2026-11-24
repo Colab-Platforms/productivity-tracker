@@ -159,7 +159,7 @@ function summarySheet(data: TeamReportData, ix: Index): SheetSpec {
     { header: "To Do", kind: "int", width: 8 }, { header: "In progress", kind: "int", width: 9 }, { header: "Blocked", kind: "int", width: 9 }, { header: "Completed", kind: "int", width: 10 }, { header: "Counted as completed", kind: "int", width: 11, note: "Completed, approved and not rated below the completed star: the number the Task productivity report counts." },
     { header: "Tasks rated", kind: "int", width: 9 }, { header: "Ratings given", width: 18 }, { header: "Task hours recorded", kind: "duration", width: 11 },
     { header: "Leave days taken", kind: "decimal", width: 10 }, { header: "Leave requests pending", kind: "int", width: 10 }, { header: "Leave requests rejected", kind: "int", width: 10 }, { header: "Attendance corrections", kind: "int", width: 11 },
-    { header: "Weighted score %", kind: "percent", width: 12, note: "Points earned / points possible for the approved tasks dated in this period (Critical 5, High 5, Medium 4, Low 1; completed earns all, a manager-marked partial half). N/A when nothing was scored." },
+    { header: "Weighted score %", kind: "percent", width: 12, note: "Points earned / points possible for the approved tasks dated in this period (Critical 5, High 5, Medium 4, Low 1; a completed task earns its weight x the manager's stars / 5, full credit while it is not rated yet; a manager-marked partial earns half). N/A when nothing was scored." },
     { header: "Weighted points earned", kind: "decimal", width: 12 }, { header: "Weighted points possible", kind: "int", width: 12 },
   ];
   const rows = byPerson(data).map((id) => {

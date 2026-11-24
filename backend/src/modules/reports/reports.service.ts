@@ -486,6 +486,8 @@ export async function getTeamReport(
   const tasksOf = new Map<string, typeof tasks>();
   for (const t of tasks) { const l = tasksOf.get(t.userId) ?? []; l.push(t); tasksOf.set(t.userId, l); }
   const stars = await starsFor(tasks); // the managers' star ratings (batched)
+  // the weighted score needs each task's stars (a completed task earns weight x stars / 5)
+  const rateAll = (list: typeof tasks) => list.map((t) => ({ ...t, rating: stars.get(t.id) ?? null }));
   for (const t of tasks) {
     const person = byPerson.get(t.userId);
     if (!person) continue;
@@ -535,7 +537,7 @@ export async function getTeamReport(
     person.attainment =
       person.targetSeconds > 0 ? person.productiveSeconds / person.targetSeconds : 0;
     person.taskScore = person.tasksTotal > 0 ? person.tasksDone / person.tasksTotal : 0;
-    person.weighted = weightedPerformance(tasksOf.get(person.userId) ?? []);
+    person.weighted = weightedPerformance(rateAll(tasksOf.get(person.userId) ?? []));
     const counted = person.tasksCompleted + person.tasksPending;
     person.taskCompletion = counted > 0 ? person.tasksCompleted / counted : 0;
     person.avgRating = person.ratedCount > 0 ? Math.round((person.ratingSum / person.ratedCount) * 10) / 10 : null;
@@ -601,7 +603,7 @@ export async function getTeamReport(
   totals.attainment =
     totals.targetSeconds > 0 ? totals.productiveSeconds / totals.targetSeconds : 0;
   totals.taskScore = totals.tasksTotal > 0 ? totals.tasksDone / totals.tasksTotal : 0;
-  totals.weighted = weightedPerformance(people.filter((p) => p.role !== "MANAGER").flatMap((p) => tasksOf.get(p.userId) ?? []));
+  totals.weighted = weightedPerformance(rateAll(people.filter((p) => p.role !== "MANAGER").flatMap((p) => tasksOf.get(p.userId) ?? [])));
   totals.taskCompletion =
     totals.tasksCompleted + totals.tasksPending > 0 ? totals.tasksCompleted / (totals.tasksCompleted + totals.tasksPending) : 0;
 
