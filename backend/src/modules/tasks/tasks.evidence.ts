@@ -90,3 +90,12 @@ export async function readEvidence(taskIds: string[]): Promise<Evidence> {
   for (const a of audits) { const un = a.n - (classified.get(a.id) ?? 0); if (un > 0) out.unclassified.set(a.id, un); }
   return out;
 }
+
+/** The manager-confirmed "reasonable time" per task and WHEN it was set. It is only ever set while rating, i.e. after the work was finished, so it is labelled a post-completion estimate. */
+export async function timeReviewsFor(taskIds: string[]): Promise<Map<string, { expectedSeconds: number; reviewedAt: string }>> {
+  const out = new Map<string, { expectedSeconds: number; reviewedAt: string }>();
+  if (taskIds.length === 0 || !(await evidenceReady())) return out;
+  const rows = await prisma.$queryRaw<{ id: string; s: number; at: string }[]>`select "taskId"::text as id, "expectedSeconds" as s, to_char("reviewedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at from task_time_reviews where "taskId" = any(${taskIds}::uuid[])`.catch(() => []);
+  for (const r of rows) out.set(r.id, { expectedSeconds: r.s, reviewedAt: r.at });
+  return out;
+}

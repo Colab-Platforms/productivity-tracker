@@ -96,9 +96,9 @@ export function RateControl({ initial, initialComment, busy, onSave, saveLabel =
       {showTime && (
         <label className="block text-xs text-slate-500">
           Reasonable time for this work (minutes)
-          <input type="number" min={1} max={1440} value={minutes} disabled={busy} onChange={(e) => setMinutes(e.target.value)} data-testid="expected-minutes" placeholder={timeDefaultMinutes ? "" : "Not tracked: enter your estimate"}
+          <input type="number" min={1} max={1440} value={minutes} disabled={busy} onChange={(e) => setMinutes(e.target.value)} data-testid="expected-minutes" placeholder="Your estimate in minutes"
             className="mt-1 w-full rounded-xl border border-indigo-100 bg-white px-3 py-1.5 text-xs text-slate-800" />
-          <span className="mt-0.5 block text-[11px] text-slate-400">Starts as the time the task actually took; lower it if that was longer than it should have been. Used for the task-time part of the Work Efficiency Index.</span>
+          <span className="mt-0.5 block text-[11px] text-slate-400">Your own assessment of how long this work should reasonably take, not the time the employee worked (that is shown above and cannot be edited). Entered after completion, so it is recorded as a post-completion estimate.</span>
         </label>
       )}
       <div className="flex items-center justify-between gap-2">

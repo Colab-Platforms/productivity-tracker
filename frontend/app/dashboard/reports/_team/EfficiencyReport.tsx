@@ -145,13 +145,13 @@ export default function EfficiencyReport({ filters, ready = true }: { filters?: 
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-slate-500">Final = points earned / weights of the standards that apply x 100. Standards with nothing to measure are marked Not applicable and their weight is shared by the rest; a standard with missing evidence leaves the final blank.</p>
+                <p className="text-xs text-slate-500">Active time is the same tracked figure the manager sees on the task review screen. Reasonable time is the manager's estimate, entered after completion. Final = points earned / weights of the standards that apply x 100. Standards with nothing to measure are marked Not applicable and their weight is shared by the rest; a standard with missing evidence leaves the final blank.</p>
                 <div>
                   <h4 className="mb-1 text-sm font-semibold text-slate-800">Task history ({e.lines.length})</h4>
                   {!detail ? <div className="skeleton h-16" aria-busy="true" /> : (
                     <div className="max-h-72 overflow-auto rounded-xl border border-indigo-50">
                       <table className="min-w-full text-xs">
-                        <thead className="sticky top-0 bg-slate-50"><tr><th className={th}>Task</th><th className={th}>Date</th><th className={th}>Outcome</th><th className={`${th} text-right`}>Rating</th><th className={`${th} text-right`}>Active</th><th className={`${th} text-right`}>Expected</th><th className={`${th} text-right`}>Time credit</th></tr></thead>
+                        <thead className="sticky top-0 bg-slate-50"><tr><th className={th}>Task</th><th className={th}>Date</th><th className={th}>Outcome</th><th className={`${th} text-right`}>Rating</th><th className={`${th} text-right`}>Active</th><th className={`${th} text-right`} title="The reasonable time the manager confirmed after the work was completed">Reasonable (post-completion)</th><th className={`${th} text-right`}>Time credit</th></tr></thead>
                         <tbody className="divide-y divide-indigo-50">
                           {e.lines.map((l) => (
                             <tr key={l.id}>

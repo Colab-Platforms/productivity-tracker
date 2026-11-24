@@ -26,7 +26,7 @@ import { REVERT_LABEL, REVERT_MARK_PREFIX, REVERT_TYPES, checkRemark, encodeReve
 import { checkComment, creditOf, parseRating } from "./tasks.rating.logic.js";
 import { isRated, ratingReady, ratingsFor, withRatings } from "./tasks.rating.js";
 import { editInfoFor } from "./tasks.edit.js";
-import { clearPartialProgress, evidenceReady, parseExpectedMinutes, parsePartialProgress, parseRevertKind, recordRevertAttempt, savePartialProgress, saveTimeReview } from "./tasks.evidence.js";
+import { clearPartialProgress, evidenceReady, parseExpectedMinutes, parsePartialProgress, parseRevertKind, recordRevertAttempt, savePartialProgress, saveTimeReview, timeReviewsFor } from "./tasks.evidence.js";
 import { editView } from "./tasks.edit.logic.js";
 import { detectAfterSubmit } from "./repetition.detect.js";
 
@@ -922,6 +922,7 @@ export async function listForApproval(
   const rows = rawRows.filter((r) => !selfIds.has(r.id));
 
   const [entries, acting, ratedRows, lates, edits] = await Promise.all([entryDetailsFor(rows.map((r) => r.id)), actingUserIds(actor), withRatedTimers(rows), lateDetailsFor(rows.map((r) => r.id)), editInfoFor(rows.map((r) => r.id))]);
+  const timeReviews = await timeReviewsFor(rows.map((r) => r.id));
   const deciderIds = [...new Set(ratedRows.map((t) => t.approvedById).filter((x): x is string => !!x))];
   const deciders = new Map(
     (deciderIds.length ? await prisma.user.findMany({ where: { id: { in: deciderIds } }, select: { id: true, firstName: true, lastName: true } }) : []).map((u) => [u.id, `${u.firstName} ${u.lastName}`.trim()])
@@ -936,6 +937,8 @@ export async function listForApproval(
       ...editView(t, d?.updatedAt, edits.get(t.id)),
       // Set when this was submitted for an earlier day: how late, the reason, and the real submission time (`createdAt`); `date` is the original task day.
       late: lates.get(t.id) ?? null,
+      // The reasonable time the manager confirmed (always set while rating, i.e. AFTER the work: a post-completion estimate, never a pre-approved target).
+      timeReview: timeReviews.get(t.id) ? { ...timeReviews.get(t.id)!, afterCompletion: true } : null,
       // HR and Admin see every task but only the manager it belongs to can act on it.
       // Approval history: who decided and when (the Admin monitors this; HR sees it once a task is approved).
       decidedBy: t.approvedById ? deciders.get(t.approvedById) ?? null : null,

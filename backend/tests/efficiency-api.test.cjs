@@ -114,6 +114,22 @@ const MIN = 60;
     ok("attempt recorded", (await q(`select kind from task_review_attempts where "taskId"=$1`, [await idOf("EFF done 2")]))[0]?.kind === "REQUIREMENT_CHANGE");
     ok("revert (quality) accepted", (await call("POST", `/tasks/review/${await idOf("EFF done 3")}/revert`, MGR.tok, { type: "PARTIAL", remark: "bad output", reason: "QUALITY" })).s < 300);
 
+    console.log("## manager review screen shows the tracked time");
+    {
+      const q = (await call("GET", "/tasks/review/queue", MGR.tok)).b;
+      const rows = [...(q.completed ?? []), ...(q.recent ?? []), ...(q.all ?? [])];
+      const flat = Object.values(q).flat().filter((x) => x && typeof x === "object" && x.id);
+      const row = flat.find((x) => x.title === "EFF done 4");
+      ok("queue row carries the timer", !!row && row.timer && typeof row.timer.tracked === "boolean", row && Object.keys(row).slice(0, 40));
+      ok("queue row carries the confirmed reasonable time (set after completion)", row?.timeReview?.expectedSeconds === 3600 && row.timeReview.afterCompletion === true, row?.timeReview);
+      const untracked = flat.find((x) => x.title === "EFF a0");
+      ok("a task with no confirmed time has none", untracked && untracked.timeReview == null);
+      // the time on the manager screen equals the time the efficiency report uses
+      const e2 = (await eff(MGR.tok, "&userId=" + E1.id)).b.people[0].efficiency;
+      const line = e2.lines.find((l) => l.title === "EFF done 4");
+      ok("efficiency uses the same actual time as the review row", line && (row.timer.tracked ? Math.abs(line.actualSeconds - row.timer.activeSeconds) <= 3 : line.actualSeconds === null), { line, t: row?.timer });
+      ok("efficiency expected time equals the manager's confirmed time", line?.expectedSeconds === 3600, line);
+    }
     console.log("## the endpoint");
     const r = await eff(MGR.tok, `&userId=${E1.id}`);
     ok("manager reads it", r.s === 200 && r.b.version === "EFFICIENCY_V1", r);

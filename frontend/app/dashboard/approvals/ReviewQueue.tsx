@@ -18,6 +18,8 @@ import { plural } from "@/lib/plural";
 import { useMe } from "../layout";
 import { RevertModal } from "./RevertModal";
 import { RateControl, Stars } from "../_ratings/Stars";
+import { TimeReviewBox, type TimeReviewData } from "./TimeReviewBox";
+import type { TaskTimerData } from "../_timer/TaskTimer";
 import { EmployeePicker } from "./EmployeePicker";
 import FilterBar from "../_filters/FilterBar";
 import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
@@ -50,6 +52,8 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<T>
 
 type Task = {
   id: string;
+  timer?: TaskTimerData;
+  timeReview?: TimeReviewData | null;
   title: string;
   description: string | null;
   weight: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
@@ -717,6 +721,7 @@ export default function ReviewQueue() {
                     Their note: {t.completionNote}
                   </p>
                 )}
+                {t.status === "COMPLETED" && <TimeReviewBox timer={t.timer} timeReview={t.timeReview} />}
               </div>
 
               <span
@@ -769,7 +774,7 @@ export default function ReviewQueue() {
                   busy={busy}
                   saveLabel={t.rating != null ? "Update rating" : "Save rating"}
                   showTime
-                  timeDefaultMinutes={(t as { timer?: { tracked?: boolean; activeSeconds?: number } }).timer?.tracked ? Math.max(1, Math.round(((t as { timer?: { activeSeconds?: number } }).timer?.activeSeconds ?? 0) / 60)) : null}
+                  timeDefaultMinutes={t.timeReview ? Math.round(t.timeReview.expectedSeconds / 60) : null}
                   onSave={(rating, comment, expectedMinutes) =>
                     run(() => call<Queue>(`/tasks/review/${t.id}/rating`, "POST", { rating, comment: comment || undefined, expectedMinutes })).then(() => setRatingEdit(null))
                   }
