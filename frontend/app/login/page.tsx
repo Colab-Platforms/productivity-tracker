@@ -16,6 +16,8 @@ import { homeFor } from "@/lib/roleHome";
 import { useRouter } from "next/navigation";
 import { apiGet, apiPost, getToken, setToken, LOGIN_NOTICE_KEY } from "@/lib/api";
 
+const WRONG = "Email or password is incorrect";
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -23,6 +25,9 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false); // hidden by default; only changes how it is displayed
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [failures, setFailures] = useState(0); // wrong-password answers in this visit, only to decide how much help to show
+  const [capsOn, setCapsOn] = useState(false);
+  const [help, setHelp] = useState(false);
 
   // Already signed in? Don't make them log in again.
   useEffect(() => {
@@ -46,8 +51,9 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      // The ID or email is trimmed (a pasted trailing space is never meant). The password is sent EXACTLY as typed: it may legitimately contain spaces.
       const result = await apiPost<{ token: string }>("/auth/login", {
-        email,
+        email: email.trim(),
         password,
       });
       setToken(result.token);
@@ -61,6 +67,8 @@ export default function LoginPage() {
       }
       router.push(home);
     } catch (err) {
+      const wrong = err instanceof Error && err.message === WRONG;
+      if (wrong) setFailures((n) => n + 1);
       setError(err instanceof Error ? err.message : "Could not sign in");
       setLoading(false);
     }
@@ -117,7 +125,8 @@ export default function LoginPage() {
               autoComplete="username"
               autoCapitalize="off"
               spellCheck={false}
-              placeholder="yourname_avatar"
+              autoCorrect="off"
+              placeholder="AWL-03, yourname_avatar or name@company.com"
               className="w-full rounded-xl border border-indigo-200 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
             />
             <p className="mt-1.5 text-xs text-slate-400">
@@ -140,6 +149,13 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
+                // phones must not capitalise or "correct" a password
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                onKeyUp={(e) => setCapsOn(e.getModifierState?.("CapsLock") ?? false)}
+                onBlur={() => setCapsOn(false)}
+                aria-describedby={capsOn ? "caps-warning" : undefined}
                 className="w-full rounded-xl border border-indigo-200 py-2.5 pl-3 pr-11 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
               />
               <button
@@ -167,11 +183,21 @@ export default function LoginPage() {
                 )}
               </button>
             </div>
+            {capsOn && (
+              <p id="caps-warning" className="mt-1.5 text-xs font-medium text-amber-700">Caps Lock is on.</p>
+            )}
           </div>
 
           {error && (
-            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+            <div role="alert" aria-live="assertive" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
               {error}
+              {error === WRONG && (
+                <span className="mt-1 block text-xs text-rose-600">
+                  Check your employee ID and password. If you changed your temporary password, use the new one.
+                  {password !== password.trim() ? " Your password has a space at the start or end: remove it." : ""}
+                  {failures >= 2 ? " Still stuck? Ask HR to reset your password." : ""}
+                </span>
+              )}
             </div>
           )}
 
@@ -184,9 +210,22 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-xs text-slate-400">
-          Trouble signing in? Raise it with HR.
-        </p>
+        <div className="mt-6 text-center text-xs text-slate-500">
+          <button type="button" onClick={() => setHelp((v) => !v)} aria-expanded={help} className="font-medium text-indigo-600 hover:underline">
+            Forgot your password or can&apos;t sign in?
+          </button>
+          {help && (
+            <div className="mt-3 rounded-xl bg-white p-4 text-left shadow-[var(--shadow-card)]" data-testid="signin-help">
+              <p className="font-medium text-slate-700">How to get back in</p>
+              <ul className="mt-2 list-disc space-y-1 pl-4">
+                <li>Type your employee ID exactly as HR gave it (for example AWL-03). Capitals and spaces around it do not matter.</li>
+                <li>If HR gave you a temporary password and you already changed it, use the NEW one: the temporary one stops working.</li>
+                <li>Passwords are case-sensitive. Use the eye icon to check what you typed.</li>
+                <li>Forgotten it? Ask HR to reset your password. You will be asked to choose a new one when you sign in.</li>
+              </ul>
+            </div>
+          )}
+        </div>
       </div>
     </main>
   );

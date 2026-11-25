@@ -7,6 +7,7 @@ import { isSupervisor } from "../lib/supervisor.js";
 import { check, recordBlockedSession } from "../lib/securityLog.js";
 import { stampActivity } from "../modules/login-activity/loginEvents.js";
 import { ACCESS_DENIED_MESSAGE } from "../lib/ipPolicy.js";
+import { logAuthFailure, reasonOf } from "../lib/session.js";
 
 // Every route past /auth/login runs through requireAuth. It reads the bearer
 // token, verifies it, and hangs the result on req.user — which is what every
@@ -19,6 +20,10 @@ export type AuthUser = {
   role: string;
   /** the sign-in this token belongs to (absent on tokens issued before login tracking) */
   sid?: string;
+  /** when this sign-in first happened (seconds); carried through every refresh so a session cannot be renewed forever */
+  sst?: number;
+  /** when this particular token was issued (seconds) */
+  iat?: number;
 };
 
 declare global {
@@ -38,7 +43,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
 
   if (!token) {
-    res.status(401).json({ error: "NOT_AUTHENTICATED" });
+    res.status(401).json({ error: "NOT_AUTHENTICATED", code: "NO_TOKEN" });
     return;
   }
 
@@ -49,7 +54,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     ) as Partial<AuthUser>;
 
     if (!payload?.userId || !payload?.platformId) {
-      res.status(401).json({ error: "INVALID_TOKEN" });
+      logAuthFailure("TOKEN_PAYLOAD", token, req.method, req.originalUrl.split("?")[0]);
+      res.status(401).json({ error: "INVALID_TOKEN", code: "TOKEN_PAYLOAD" });
       return;
     }
 
@@ -60,7 +66,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     });
 
     if (!live || isBlockedStatus(live.status)) {
-      res.status(401).json({ error: "ACCOUNT_INACTIVE" });
+      logAuthFailure("ACCOUNT_INACTIVE", token, req.method, req.originalUrl.split("?")[0]);
+      res.status(401).json({ error: "ACCOUNT_INACTIVE", code: "ACCOUNT_INACTIVE" });
       return;
     }
 
@@ -96,6 +103,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       platformId: live.platformId,
       role: String(live.role),
       ...(sid ? { sid } : {}),
+      ...(typeof (payload as { sst?: unknown }).sst === "number" ? { sst: (payload as { sst: number }).sst } : {}),
+      ...(typeof (payload as { iat?: unknown }).iat === "number" ? { iat: (payload as { iat: number }).iat } : {}),
     };
     // Last activity of this sign-in (at most one small update a minute). Never slows or fails the request.
     if (sid) stampActivity(sid);
@@ -103,8 +112,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
-      // Expired and tampered tokens look identical to the caller on purpose.
-      res.status(401).json({ error: "INVALID_TOKEN" });
+      // "error" stays INVALID_TOKEN for older clients. "code" says why (expired / malformed / signature), so the screen can word it and the
+      // server log records the reason. Neither ever contains the token.
+      const reason = reasonOf(error);
+      logAuthFailure(reason, token, req.method, req.originalUrl.split("?")[0]);
+      res.status(401).json({ error: "INVALID_TOKEN", code: reason });
       return;
     }
     if (error instanceof Error && error.message === "PINNED_COMPANY_MISSING") {

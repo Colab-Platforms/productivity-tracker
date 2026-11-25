@@ -51,15 +51,21 @@ export const REASON_TEXT: Record<string, string> = {
   OTHER: "Sign-in failed",
 };
 
+import { findLooseUserId } from "../../lib/employeeIdMatch.js";
+
 const clean = (v: unknown, max: number) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
 
 async function findAccount(username: string) {
   if (!username) return null;
   try {
-    return await prisma.user.findFirst({
+    const exact = await prisma.user.findFirst({
       where: { OR: [{ employeeCode: { equals: username, mode: "insensitive" } }, { email: { equals: username, mode: "insensitive" } }] },
       select: { id: true, platformId: true, employeeCode: true },
     });
+    if (exact || username.includes("@")) return exact;
+    // the same loose ID the sign-in accepts, so a failed attempt is filed under the right person
+    const looseId = await findLooseUserId(username);
+    return looseId ? await prisma.user.findUnique({ where: { id: looseId }, select: { id: true, platformId: true, employeeCode: true } }) : null;
   } catch {
     return null;
   }

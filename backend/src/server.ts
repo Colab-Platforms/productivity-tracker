@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { policyFromEnv, trustedProxyCheck } from "./lib/ipPolicy.js";
+import { checkSecret } from "./lib/session.js";
 import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
@@ -63,6 +64,17 @@ if (process.env.TRUST_PROXY_HOPS) console.warn("[network policy] TRUST_PROXY_HOP
   const p = policyFromEnv();
   console.log(`[network policy] sign-in IP restriction: ${p.mode.toUpperCase()}${p.mode === "off" ? " (nothing is checked: set LOGIN_IP_MODE=enforce and LOGIN_ALLOWED_IPS to restrict)" : `, ${p.rules.length} allowed address(es)`}`);
   if (p.problem) console.error(`[network policy] ${p.problem}`);
+}
+{
+  // Sessions are signed with JWT_SECRET. If it is missing nobody can sign in or stay signed in, so stop loudly instead of failing request by request.
+  // Changing it later signs EVERYONE out (every token was made with the old one), so it must be the same on every server instance.
+  const s = checkSecret();
+  if (!s.ok) {
+    console.error("[auth] JWT_SECRET is not set. Set the same value on every backend instance. Not starting.");
+    process.exit(1);
+  }
+  if (s.warning) console.warn(`[auth] ${s.warning}`);
+  console.log(`[auth] sign-in tokens last ${process.env.JWT_EXPIRES_IN ?? "1d"}; a session can be refreshed while valid, for at most ${process.env.JWT_MAX_SESSION_DAYS ?? 30} days from sign-in`);
 }
 
 const allowedOrigins = [

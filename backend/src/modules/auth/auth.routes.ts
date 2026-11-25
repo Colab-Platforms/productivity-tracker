@@ -13,6 +13,7 @@ import jwt from "jsonwebtoken";
 import { check } from "../../lib/securityLog.js";
 import { markLogout, recordAuthAttempt } from "../login-activity/loginEvents.js";
 import { ACCESS_DENIED_MESSAGE } from "../../lib/ipPolicy.js";
+import { canRefresh, signSession } from "../../lib/session.js";
 
 const router = Router();
 
@@ -79,6 +80,22 @@ router.post("/logout", requireAuth, async (req, res) => {
   const sid = req.user!.sid;
   if (sid) await markLogout(sid, req.user!.userId);
   return res.json({ ok: true });
+});
+
+// Renew a session that is still valid: the caller must already hold a VALID token (an expired or tampered one never reaches this point, because
+// requireAuth refuses it first). The new token has the same sign-in id and original sign-in time, role and company come from the live record,
+// and a sign-in older than JWT_MAX_SESSION_DAYS (default 30) is refused so a session can never become permanent. The old token is not revoked
+// (tokens are stateless), so several tabs refreshing at once cannot invalidate each other.
+router.post("/refresh", requireAuth, (req, res) => {
+  const u = req.user!;
+  if (!canRefresh(u.sst, u.iat)) {
+    console.warn(`[auth] REFRESH_REFUSED session_too_old user=${u.userId}`);
+    return res.status(401).json({ error: "INVALID_TOKEN", code: "SESSION_TOO_OLD" });
+  }
+  const token = signSession({ userId: u.userId, platformId: u.platformId, role: u.role, ...(u.sid ? { sid: u.sid } : {}), sst: u.sst ?? u.iat });
+  const exp = (jwt.decode(token) as { exp?: number } | null)?.exp ?? null;
+  console.log(`[auth] REFRESH_OK user=${u.userId} sid=${u.sid ?? "none"} newExpiry=${exp ? new Date(exp * 1000).toISOString() : "n/a"}`);
+  return res.json({ token, expiresAt: exp ? exp * 1000 : null });
 });
 
 router.get("/me", requireAuth, async (req, res) => {

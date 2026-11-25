@@ -2,7 +2,8 @@ import bcrypt from "bcryptjs";
 import { isBlockedStatus } from "../../lib/userStatus.js";
 import { isOwnerAdmin } from "../../lib/owner.js";
 import { isSupervisor } from "../../lib/supervisor.js";
-import jwt from "jsonwebtoken";
+import { signSession } from "../../lib/session.js";
+import { findLooseUserId } from "../../lib/employeeIdMatch.js";
 import { prisma } from "../../lib/prisma.js";
 import { photoStamps } from "../photos/photos.service.js";
 import { getPinnedCompany } from "../../lib/deployment.js";
@@ -57,6 +58,14 @@ async function findByIdentifier(identifier: string) {
   } catch {
     /* table not there yet */
   }
+
+  // Last resort, after an exact ID, an email and a username found nothing. Typing slips ("AWL -03", "Avance07"): accepted only when exactly one person matches (lib/employeeIdMatch.ts); the password is still required.
+  const looseId = await findLooseUserId(id);
+  if (looseId) {
+    const one = await prisma.user.findUnique({ where: { id: looseId }, include: { platform: true } });
+    if (one) return [one];
+  }
+
   return matches;
 }
 
@@ -81,12 +90,8 @@ export async function login(identifier: string, password: string, sessionId?: st
     throw new Error("ACCOUNT_INACTIVE");
   }
 
-  const token = jwt.sign(
-    // sid: this sign-in's own id. It lets the login history follow the session to its last activity and its logout. An older token without it keeps working.
-    { userId: user.id, platformId: user.platformId, role: user.role, ...(sessionId ? { sid: sessionId } : {}) },
-    process.env.JWT_SECRET as string,
-    { expiresIn: process.env.JWT_EXPIRES_IN ?? "1d" } as jwt.SignOptions
-  );
+  // sid: this sign-in's own id (login history follows it to the last activity and logout). sst: when the sign-in happened, kept through refreshes.
+  const token = signSession({ userId: user.id, platformId: user.platformId, role: user.role, ...(sessionId ? { sid: sessionId } : {}) });
 
   await prisma.user.update({
     where: { id: user.id },
