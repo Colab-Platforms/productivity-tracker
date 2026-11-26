@@ -22,6 +22,7 @@ export type MeInfo = {
   durationSeconds?: number | null;
   late?: boolean;
   source?: string;
+  endedBy?: "SELF" | "MANAGER" | null;
   stillActivePastEnd?: boolean;
 };
 export type InviteStatus = "INVITED" | "ACCEPTED" | "DECLINED" | "JOINED" | "COMPLETED" | "NOT_JOINED";
@@ -154,6 +155,7 @@ export function JoinControl({ meetingId, endsAt, tz, f, onChanged, compact = fal
   if (me.state === "ENDED") {
     return (
       <div className={`${box} bg-emerald-50 text-sm text-emerald-900`}>
+        {me.endedBy === "MANAGER" && <p data-testid="ended-by-manager" role="status" className="mb-1.5 rounded-lg bg-amber-100 px-2.5 py-1.5 text-sm font-medium text-amber-900">The Manager has ended the Team Huddle.</p>}
         <p className="font-medium">Your participation is recorded</p>
         <p className="mt-0.5">
           Joined {timeFmt(me.joinedAt, tz)} · Left {timeFmt(me.leftAt, tz)} · <b>{dur(me.durationSeconds)}</b>

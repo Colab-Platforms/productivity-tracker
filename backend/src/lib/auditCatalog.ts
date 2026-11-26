@@ -63,6 +63,9 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/tracker\/alerts\/:id\/ack$/, module: "Attendance", action: "UPDATE", summary: "Acknowledged an alert", recordType: "Alert" },
 
   { method: "POST", re: /^\/api\/tasks$/, module: "Tasks", action: "CREATE", summary: "Proposed a task" },
+  { method: "POST", re: /^\/api\/tasks\/previous$/, module: "Tasks", action: "CREATE", summary: "Added a previous task", recordType: "PreviousTask" },
+  { method: "PATCH", re: /^\/api\/tasks\/previous\/:id$/, module: "Tasks", action: "UPDATE", summary: "Edited a previous task", recordType: "PreviousTask" },
+  { method: "DELETE", re: /^\/api\/tasks\/previous\/:id$/, module: "Tasks", action: "DELETE", summary: "Deleted a previous task", recordType: "PreviousTask" },
   { method: "POST", re: /^\/api\/tasks\/bulk$/, module: "Tasks", action: "CREATE", summary: "Sent several tasks for approval (Quick Add)" },
   { method: "PUT", re: /^\/api\/tasks\/late-policy$/, module: "Tasks", action: "UPDATE", summary: "Changed the previous-day task window" },
   { method: "POST", re: /^\/api\/tasks\/:id\/edit$/, module: "Tasks", action: "UPDATE", summary: "Edited a task", recordType: "Task" },

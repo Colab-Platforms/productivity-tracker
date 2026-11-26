@@ -1328,8 +1328,9 @@ export async function deleteTaskAsManager(managerId: string, taskId: string, inp
   if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
 
+  // carryCount >= 0: a manager's personal "previous tasks" (carryCount -1) are not tasks anyone else can review or delete: they read as not found.
   const task = await prisma.dailyTask.findUnique({
-    where: { id: taskId },
+    where: { id: taskId, carryCount: { gte: 0 } },
     include: { team: { select: { name: true } }, user: { select: { firstName: true, lastName: true, employeeCode: true } } },
   });
   if (!task) throw new Error("NOT_FOUND");

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
 import { labelOf, POPUP_TYPES, type Inbox, type Item } from "./types";
+import { alarm, ping } from "@/lib/chatAlert";
+import { categoryOf, claimToast, popupsEnabled, POPUPS_KEY, SEVERITY_STYLE, severityOf, soundFor, toastMs } from "./popup";
 
 // ---------------------------------------------------------------------------
 // ONE inbox for the whole app.
@@ -14,13 +16,16 @@ import { labelOf, POPUP_TYPES, type Inbox, type Item } from "./types";
 // whenever the window regains focus. Notifications live in the database: if you were away, they are waiting.
 // ---------------------------------------------------------------------------
 
-type Toast = { id: string; type: string; title: string; body: string; link: string | null };
+type Toast = { id: string; type: string; title: string; body: string; link: string | null; createdAt: string };
 type Value = {
   inbox: Inbox;
   connected: boolean;
   reload: () => void;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
+  /** pop-ups on/off for THIS browser (the bell and history always keep everything) */
+  popups: boolean;
+  setPopups: (on: boolean) => void;
 };
 
 const Ctx = createContext<Value | null>(null);
@@ -31,12 +36,31 @@ export const useNotifications = () => {
 };
 
 const MAX_TOASTS = 3;
-const TOAST_MS = 8000;
+const TAB_ID = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Math.random());
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [inbox, setInbox] = useState<Inbox>({ unread: 0, items: [] });
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [popups, setPopupsState] = useState(true);
+  const popupsRef = useRef(true);
+  useEffect(() => {
+    const on = popupsEnabled(window.localStorage);
+    popupsRef.current = on;
+    setPopupsState(on);
+    // tidy the small "which tab showed it" markers left by earlier notifications
+    try {
+      for (let i = window.localStorage.length - 1; i >= 0; i--) {
+        const k = window.localStorage.key(i);
+        if (k?.startsWith("hrms-toast:") && Date.now() - Number((window.localStorage.getItem(k) ?? "").split("|")[1]) > 600_000) window.localStorage.removeItem(k);
+      }
+    } catch { /* storage blocked */ }
+  }, []);
+  const setPopups = useCallback((on: boolean) => {
+    popupsRef.current = on;
+    setPopupsState(on);
+    try { window.localStorage.setItem(POPUPS_KEY, on ? "on" : "off"); } catch { /* not remembered */ }
+  }, []);
   const known = useRef<Set<string> | null>(null); // ids already seen: null until the first load, so old ones never pop up
   // Bumped whenever the person reads something. A fetch that started BEFORE that must not overwrite the screen, or the item
   // they just read would flash back into the list until the next refresh.
@@ -52,8 +76,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         } else {
           const fresh = next.items.filter((i) => !known.current!.has(i.id) && !i.readAt && POPUP_TYPES.has(i.type));
           next.items.forEach((i) => known.current!.add(i.id));
-          if (fresh.length > 0) {
-            setToasts((cur) => [...cur, ...fresh.map((i) => ({ id: i.id, type: i.type, title: i.title, body: i.body, link: i.link }))].slice(-MAX_TOASTS));
+          // pop-ups can be switched off per browser, and when several tabs are open only the first one that claims a notification shows it
+          const show = popupsRef.current ? fresh.filter((i) => claimToast(window.localStorage, i.id, TAB_ID)) : [];
+          // a sound for the pop-ups that appear (the alarm for urgent ones, a soft ping for the rest); the existing sound switch decides whether it plays
+          const sound = soundFor(show);
+          if (sound === "alarm") alarm();
+          else if (sound === "ping") ping();
+          if (show.length > 0) {
+            setToasts((cur) => [...cur, ...show.map((i) => ({ id: i.id, type: i.type, title: i.title, body: i.body, link: i.link, createdAt: i.createdAt }))].slice(-MAX_TOASTS));
           }
         }
         setInbox(next);
@@ -116,7 +146,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     [dismiss, markRead, router]
   );
 
-  const value = useMemo(() => ({ inbox, connected, reload: load, markRead, markAllRead }), [inbox, connected, load, markRead, markAllRead]);
+  const value = useMemo(() => ({ inbox, connected, reload: load, markRead, markAllRead, popups, setPopups }), [inbox, connected, load, markRead, markAllRead, popups, setPopups]);
 
   return (
     <Ctx.Provider value={value}>
@@ -138,18 +168,21 @@ function ToastStack({ toasts, onOpen, onClose }: { toasts: Toast[]; onOpen: (t: 
 }
 
 function ToastCard({ t, onOpen, onClose }: { t: Toast; onOpen: (t: Toast) => void; onClose: (id: string) => void }) {
+  const sev = severityOf(t.type, t.body);
+  const st = SEVERITY_STYLE[sev];
   useEffect(() => {
-    const timer = setTimeout(() => onClose(t.id), TOAST_MS);
+    const timer = setTimeout(() => onClose(t.id), toastMs(sev, t.type));
     return () => clearTimeout(timer);
-  }, [t.id, onClose]);
+  }, [t.id, t.type, sev, onClose]);
+  const time = new Intl.DateTimeFormat("en-GB", { hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(t.createdAt));
   return (
-    <div className="pointer-events-auto animate-in rounded-2xl bg-white p-4 shadow-[var(--shadow-lift)] ring-1 ring-indigo-100">
+    <div data-testid="toast" data-severity={sev} data-type={t.type} className={`pointer-events-auto animate-in rounded-2xl bg-white p-4 shadow-[var(--shadow-lift)] ring-1 ${st.ring}`}>
       <div className="flex items-start gap-3">
-        <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-indigo-600" />
+        <span aria-hidden="true" className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${st.dot}`}>{st.icon}</span>
         <button onClick={() => onOpen(t)} className="min-w-0 flex-1 text-left">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-indigo-600">{labelOf(t.type)}</p>
+          <p className={`text-[11px] font-medium uppercase tracking-wide ${st.label}`}>{categoryOf(t.type)} · {labelOf(t.type)} · {time}</p>
           <p className="mt-0.5 text-sm font-semibold text-slate-900">{t.title}</p>
-          <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{t.body}</p>
+          <p className={`mt-0.5 text-xs text-slate-500 ${t.type === "BREAK_LIMIT_EXCEEDED" ? "" : "line-clamp-2"}`}>{t.body}</p>
         </button>
         <button onClick={() => onClose(t.id)} aria-label="Dismiss" className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M5 5l10 10M15 5L5 15" /></svg>

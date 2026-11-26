@@ -1,0 +1,32 @@
+// Pure rules: break pauses derived from break rows. npx tsx tests/task-break-pause.test.mts
+import { breakPauses } from "../src/modules/tasks/tasks.timer.logic.ts";
+let pass = 0, fail = 0;
+const ok = (n: string, c: boolean, x?: unknown) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n + (c ? "" : "  -> " + JSON.stringify(x))); };
+const M = 60_000, T0 = 1_000_000_000_000, now = T0 + 300 * M;
+const run = (s: number, e: number | null) => ({ startedAt: T0 + s * M, endedAt: e === null ? null : T0 + e * M });
+const away = (s: number, e: number, open = false, kind: "BREAK" | "WASHROOM" = "BREAK") => ({ start: T0 + s * M, end: T0 + e * M, open, kind });
+
+let p = breakPauses([run(0, null)], [away(60, 90)], now);
+ok("a break during a running task = one pause with exact paused and resumed moments", p.length === 1 && p[0].pausedAt === T0 + 60 * M && p[0].resumedAt === T0 + 90 * M && p[0].seconds === 1800, p);
+p = breakPauses([run(0, null)], [away(60, 90), away(150, 165), away(200, 230, false, "WASHROOM")], now);
+ok("several breaks = several pauses in time order, washroom kept apart", p.length === 3 && p.map((x) => x.kind).join() === "BREAK,BREAK,WASHROOM" && p[1].seconds === 900, p);
+p = breakPauses([run(0, null)], [away(250, 300, true)], now);
+ok("a break still running = paused, not resumed yet", p.length === 1 && p[0].resumedAt === null && p[0].pausedAt === T0 + 250 * M, p);
+p = breakPauses([run(100, null)], [away(60, 90)], now);
+ok("a break BEFORE the task started never pauses it", p.length === 0, p);
+p = breakPauses([run(0, 50)], [away(60, 90)], now);
+ok("a break AFTER the task was completed never pauses it", p.length === 0, p);
+p = breakPauses([run(0, 70)], [away(60, 90)], now);
+ok("a task finished in the middle of a break: paused at break start, resumed = when it ended", p.length === 1 && p[0].resumedAt === T0 + 70 * M && p[0].seconds === 600, p);
+p = breakPauses([run(80, null)], [away(60, 90)], now);
+ok("a task started during a break is paused from its own start", p.length === 1 && p[0].pausedAt === T0 + 80 * M && p[0].seconds === 600, p);
+p = breakPauses([run(0, 100), run(120, null)], [away(60, 130)], now);
+ok("a task that was In Progress, left and came back: one pause per running stretch, none while it was not running", p.length === 2 && p[0].seconds === 2400 && p[1].pausedAt === T0 + 120 * M && p[1].seconds === 600, p);
+p = breakPauses([run(0, null)], [away(60, 90), away(60, 90)], now);
+ok("the same break twice never makes a duplicate pause", p.length === 1, p);
+p = breakPauses([], [away(60, 90)], now);
+ok("a task with no running sessions has no pauses", p.length === 0);
+p = breakPauses([run(0, null)], Array.from({ length: 50 }, (_, i) => away(i * 5, i * 5 + 2)), now, 30);
+ok("only the latest 30 are kept", p.length === 30);
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

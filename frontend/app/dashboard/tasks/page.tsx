@@ -33,6 +33,7 @@ import AssignedByMe from "../_assigned/AssignedByMe";
 import AssignTasks from "../_assigned/AssignTasks";
 import { TaskTimer, type TaskTimerData } from "../_timer/TaskTimer";
 import ReviewQueue from "../approvals/ReviewQueue";
+import PreviousTasks from "./_previous/PreviousTasks";
 import { type Weighted } from "../_weighted/Weighted";
 import EmployeeRepetitionAlert from "./_repetition/EmployeeRepetitionAlert";
 
@@ -182,7 +183,7 @@ function TasksPageInner() {
   const [latePolicy, setLatePolicy] = useState<{ ready: boolean; allowedDays: number; maxDays: number } | null>(null);
   // Which part of Daily Tasks is open. Employee: "main" (my submitted tasks) or "assigned". Manager: "own", "submitted" (the approval queue) or "assigned".
   // Same page, no sidebar item: the switch sits at the top.
-  const view = pickedView ?? (tabParam === "submitted" || tabParam === "assigned" || tabParam === "assign" || tabParam === "received" ? tabParam : "main");
+  const view = pickedView ?? (tabParam === "submitted" || tabParam === "assigned" || tabParam === "assign" || tabParam === "received" || tabParam === "previous" ? tabParam : "main");
   const setView = setPickedView;
   // HR and Admin may open the same queue of employee-submitted tasks (they only act on tasks tagged to them; the rest is view only).
   const canReview = me?.role === "HR" || me?.role === "ADMIN";
@@ -322,18 +323,19 @@ function TasksPageInner() {
 
   // A manager's own work: self-managed, no approval. Employees (and everyone else) keep the screen below.
   if (data?.selfManagedMode) {
-    const mgrView = view === "submitted" || view === "assigned" || view === "received" ? view : "own";
+    const mgrView = view === "submitted" || view === "assigned" || view === "received" || view === "previous" ? view : "own";
     return (
       <div className="space-y-5">
         <ViewTabs
           value={mgrView}
           onChange={setView}
-          tabs={[{ key: "own", label: "My own tasks" }, { key: "submitted", label: "Employee submitted tasks" }, { key: "assigned", label: "Assigned by me" }, { key: "received", label: "Assigned to me", badge: assignedOpen }]}
+          tabs={[{ key: "own", label: "My own tasks" }, { key: "submitted", label: "Employee submitted tasks" }, { key: "assigned", label: "Assigned by me" }, { key: "received", label: "Assigned to me", badge: assignedOpen }, { key: "previous", label: "Previous tasks" }]}
         />
         {mgrView === "own" && <SelfManagedTasks data={data as unknown as SelfPayload} onData={(p) => setData(p as unknown as Payload)} error={error} setError={setError} />}
         {mgrView === "submitted" && <ReviewQueue />}
         {mgrView === "assigned" && <AssignedByMe />}
         {mgrView === "received" && <AssignedToMe onCount={setAssignedOpen} />}
+        {mgrView === "previous" && <PreviousTasks />}
       </div>
     );
   }

@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useNotifications } from "./NotificationsContext";
 import { ago, labelOf, type Item } from "./types";
+import { ping, setSound, soundOn } from "@/lib/chatAlert";
 
 // ---------------------------------------------------------------------------
 // NOTIFICATION BELL
@@ -15,7 +16,9 @@ import { ago, labelOf, type Item } from "./types";
 
 export default function Bell() {
   const router = useRouter();
-  const { inbox, markRead, markAllRead, reload } = useNotifications();
+  const { inbox, markRead, markAllRead, reload, popups, setPopups } = useNotifications();
+  const [sound, setSoundOn] = useState(true);
+  useEffect(() => { setSoundOn(soundOn()); }, []);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number; wide: boolean }>({ top: 64, left: 16, wide: true });
   const button = useRef<HTMLButtonElement>(null);
@@ -106,6 +109,14 @@ export default function Bell() {
                   ))
                 )}
               </div>
+              <label className="flex cursor-pointer items-center justify-between gap-3 border-t border-indigo-100 px-4 py-2.5 text-xs text-slate-600">
+                <span>Show pop-ups on this device <span className="text-slate-400">(history always keeps everything)</span></span>
+                <input type="checkbox" checked={popups} onChange={(e) => setPopups(e.target.checked)} data-testid="popups-toggle" className="h-4 w-4 accent-indigo-600" />
+              </label>
+              <label className="flex cursor-pointer items-center justify-between gap-3 border-t border-indigo-50 px-4 py-2.5 text-xs text-slate-600">
+                <span>Play a sound with alerts <span className="text-slate-400">(also used for chat)</span></span>
+                <input type="checkbox" checked={sound} onChange={(e) => { setSoundOn(e.target.checked); setSound(e.target.checked); if (e.target.checked) ping(); }} data-testid="sound-toggle" className="h-4 w-4 accent-indigo-600" />
+              </label>
               <Link href="/dashboard/notifications" onClick={() => setOpen(false)} className="block border-t border-indigo-100 px-4 py-3 text-center text-sm font-medium text-indigo-600 hover:bg-indigo-50/50">
                 View all notifications
               </Link>

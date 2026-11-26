@@ -5,6 +5,10 @@ import { requireAuth, requireRole } from "../../middlewares/auth.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import { LateRemarkRequired } from "./lateRemarks.js";
 import { liveHuddle } from "../meetings/participation.service.js";
+import { selfNotice } from "./tracker.notify.js";
+import { emitTaskChange } from "../../lib/realtime.js";
+import { prisma } from "../../lib/prisma.js";
+import { isDiscussion } from "./activityClass.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -88,7 +92,9 @@ router.get("/session", async (req, res) => {
 
 router.post("/clock-in", async (req, res) => {
   try {
-    res.json(await tracker.clockIn(req.user!.userId, typeof req.body?.teamId === "string" ? req.body.teamId : null, req.body?.lateRemark));
+    const out = await tracker.clockIn(req.user!.userId, typeof req.body?.teamId === "string" ? req.body.teamId : null, req.body?.lateRemark);
+    void selfNotice("CLOCK_IN", req.user!.userId);
+    res.json(out);
   } catch (error) {
     fail(res, error);
   }
@@ -96,7 +102,10 @@ router.post("/clock-in", async (req, res) => {
 
 router.post("/clock-out", async (req, res) => {
   try {
-    res.json(await tracker.clockOut(req.user!.userId));
+    const out = await tracker.clockOut(req.user!.userId);
+    void selfNotice("CLOCK_OUT", req.user!.userId);
+    emitTaskChange({ taskId: "clock", ownerId: req.user!.userId, action: "status" }); // task timers show "paused due to clock-out"
+    res.json(out);
   } catch (error) {
     fail(res, error);
   }
@@ -118,7 +127,11 @@ router.post("/break/start", async (req, res) => {
   }
 
   try {
-    res.json(await tracker.startBreak(req.user!.userId, breakType, remark));
+    const out = await tracker.startBreak(req.user!.userId, breakType, remark);
+    // A "Meeting / Team Huddle" discussion is productive time, not a break: no break notice and no task pause for it.
+    if (breakType !== "DISCUSSION") emitTaskChange({ taskId: "break", ownerId: req.user!.userId, action: "status" });
+    if (breakType !== "DISCUSSION") void selfNotice("BREAK_STARTED", req.user!.userId, ({ LUNCH: "Lunch", PERSONAL: "Personal", OTHER: "Break", DISCUSSION: "Discussion" } as Record<string, string>)[breakType]);
+    res.json(out);
   } catch (error) {
     fail(res, error);
   }
@@ -126,7 +139,15 @@ router.post("/break/start", async (req, res) => {
 
 router.post("/break/end", async (req, res) => {
   try {
-    res.json(await tracker.endBreak(req.user!.userId));
+    // what is being ended: a discussion is not a break, so it gets no "Break ended" notice
+    const running = await prisma.trackerBreak.findFirst({ where: { endedAt: null, workSession: { userId: req.user!.userId, logoutAt: null } }, select: { breakType: true, reason: true } }).catch(() => null);
+    const out = await tracker.endBreak(req.user!.userId);
+    if (!(running && isDiscussion(running as never))) {
+      void selfNotice("BREAK_ENDED", req.user!.userId);
+      // running tasks resume with the break: task cards (the employee's and their manager's) re-read the timers at once
+      emitTaskChange({ taskId: "break", ownerId: req.user!.userId, action: "status" });
+    }
+    res.json(out);
   } catch (error) {
     fail(res, error);
   }

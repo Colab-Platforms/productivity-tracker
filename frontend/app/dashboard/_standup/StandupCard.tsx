@@ -6,6 +6,7 @@ import { apiGet } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
 import { Modal } from "../_employees/Modal";
 import { InviteResponse, JoinControl, type TrackedFields } from "../meetings/_participation/Participation";
+import EndHuddle from "../meetings/_participation/EndHuddle";
 
 // ---------------------------------------------------------------------------
 // STAND-UP CARD on the dashboard
@@ -22,6 +23,7 @@ export type StandupMeeting = TrackedFields & {
   endsAt: string;
   organizer: string;
   isOrganizer: boolean;
+  canEnd?: boolean;
   state: "upcoming" | "ongoing" | "past" | "cancelled";
 };
 
@@ -37,7 +39,9 @@ export function relevant(meetings: StandupMeeting[], now: number): StandupMeetin
       // Meetings you organize count too: the organizer can mark himself in and out like everyone else.
       // A finished meeting is hidden, EXCEPT while you are still marked as in it: you must always be able to press End Huddle.
       if (m.state === "cancelled") return false;
-      if (m.state === "past" && m.me?.state !== "IN_MEETING") return false;
+      // ...and a huddle the manager just ended for everyone stays for 30 minutes so the person is told ("The Manager has ended the Team Huddle.")
+      const endedByManagerLately = m.me?.state === "ENDED" && m.me.endedBy === "MANAGER" && !!m.me.leftAt && now - new Date(m.me.leftAt).getTime() < 30 * 60_000;
+      if (m.state === "past" && m.me?.state !== "IN_MEETING" && !endedByManagerLately) return false;
       // An invitation waiting for your answer is always shown, tracked or not.
       if (m.canRespond && m.myResponse !== "DECLINED") return true;
       if (!m.tracked || !m.me) return false;
@@ -59,7 +63,7 @@ export function StandupItem({ m, tz, onChanged }: { m: StandupMeeting; tz: strin
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-indigo-600">
             {inMeeting && <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden />}
-            {inMeeting ? (m.tracked ? "Team Huddle in Progress" : "You are in a meeting") : m.tracked ? "Team Huddle invitation" : "Meeting invitation"}
+            {inMeeting ? (m.tracked ? "Team Huddle in Progress" : "You are in a meeting") : m.me?.state === "ENDED" && m.me.endedBy === "MANAGER" ? "Team Huddle ended" : m.tracked ? "Team Huddle invitation" : "Meeting invitation"}
           </p>
           <p className="mt-0.5 truncate text-base font-semibold text-slate-900">{m.title}</p>
           <p className="text-sm text-slate-500">
@@ -72,6 +76,9 @@ export function StandupItem({ m, tz, onChanged }: { m: StandupMeeting; tz: strin
       <div className={m.myStatus ? "mt-3" : ""}>
         <JoinControl meetingId={m.id} endsAt={m.endsAt} tz={tz} f={m} onChanged={onChanged} />
       </div>
+      {m.isOrganizer && m.canEnd && m.tracked && (
+        <div className="mt-3 flex justify-end"><EndHuddle id={m.id} title={m.title} onDone={onChanged} /></div>
+      )}
     </section>
   );
 }

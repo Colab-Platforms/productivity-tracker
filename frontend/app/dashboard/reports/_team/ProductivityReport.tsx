@@ -13,6 +13,7 @@ import ExportButtons from "./ExportButtons";
 import { useMe } from "../../layout";
 import { PRESETS, rangeFor, type Preset } from "./ranges";
 import TargetsPanel from "./TargetsPanel";
+import EvaluationModal, { type Evaluation } from "./EvaluationModal";
 import PersonTasks, { REASON_TEXT, type Reason, type TaskSummary } from "./ProductivityPersonTasks";
 import { PROGRESS_LABEL } from "../../_progress/progress";
 
@@ -28,6 +29,8 @@ type Person = {
   projects?: string[]; reportingManager?: string | null; // added for the Excel export
   targetPerDay: number | null; targetSource: "PERSON" | "TEAM" | "COMPANY" | null;
   daysWithData: number; completedTotal: number | null; targetTotal: number | null; overallPercent: number | null; days: Day[];
+  evalState?: { state: "NOT_EVALUATED" | "EVALUATED" | "UPDATED"; count: number; lastAt: string | null; lastByName: string | null }; // has a manager saved an evaluation for this exact period (once = Evaluated, again = Updated)
+  evaluation?: Evaluation; // a manager's adjustment for this exact period (the values above are then the EFFECTIVE ones; the system values are inside)
   weighted?: Weighted; // the Overall Performance Score (60% completion + 40% manager rating) from the server
   // why a figure is missing and the task counts behind the row (added 2026-11-22; older answers do not have them)
   tasks?: TaskSummary; reason?: Reason; targetState?: "CONFIGURED" | "NOT_CONFIGURED" | "ZERO"; mappedToTeam?: boolean;
@@ -72,6 +75,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<string | null>(null);
+  const [evalFor, setEvalFor] = useState<string | null>(null); // the person whose Manager evaluation window is open
   const [breakdown, setBreakdown] = useState<string | null>(null); // the person whose score breakdown is open
   const [reloadTargets, setReloadTargets] = useState(0);
 
@@ -143,8 +147,8 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
     if (!data) return;
     downloadCsv(
       `task-productivity-${data.from}_to_${data.to}.csv`,
-      ["Employee", "Employee ID", "Team", "Total eligible tasks", "Completed tasks", "Pending / incomplete tasks", "Completion %", "Average manager rating (of 5)", "Rated tasks", "Pending evaluation", "Overall Performance Score %", "Evaluation status", "Daily target", "Target level", "Days with data", "Tasks finished in period", "Productivity %"],
-      data.people.map((p) => { const w = p.weighted; return [p.name, p.employeeCode, p.teamName, w?.tasks ?? "", w?.completed ?? "", w?.notCompleted ?? "", w?.completionPercent ?? "N/A", w?.averageRating ?? "Awaiting evaluation", w?.ratedTasks ?? "", w?.awaitingRating ?? "", w ? (w.percent ?? (w.status === "AWAITING_EVALUATION" ? "Awaiting evaluation" : "N/A")) : "N/A", w ? STATUS_LABEL[w.status] : "", p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : "", p.daysWithData, p.completedTotal ?? (p.reason ? REASON_TEXT[p.reason] : "No task data available"), p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : p.targetPerDay === 0 ? "Target is 0" : p.reason ? REASON_TEXT[p.reason] || "" : "No task data available")]; })
+      ["Employee", "Employee ID", "Team", "Total eligible tasks", "Completed tasks", "Pending / incomplete tasks", "Completion %", "Average manager rating (of 5)", "Rated tasks", "Pending evaluation", "Overall Performance Score %", "Evaluation status", "Daily target", "Target level", "Days with data", "Tasks finished in period", "Productivity %", "Manager Evaluated"],
+      data.people.map((p) => { const w = p.weighted; return [p.name, p.employeeCode, p.teamName, w?.tasks ?? "", w?.completed ?? "", w?.notCompleted ?? "", w?.completionPercent ?? "N/A", w?.averageRating ?? "Awaiting evaluation", w?.ratedTasks ?? "", w?.awaitingRating ?? "", w ? (w.percent ?? (w.status === "AWAITING_EVALUATION" ? "Awaiting evaluation" : "N/A")) : "N/A", w ? STATUS_LABEL[w.status] : "", p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : "", p.daysWithData, p.completedTotal ?? (p.reason ? REASON_TEXT[p.reason] : "No task data available"), p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : p.targetPerDay === 0 ? "Target is 0" : p.reason ? REASON_TEXT[p.reason] || "" : "No task data available"), ({ NOT_EVALUATED: "Not Evaluated", EVALUATED: "Evaluated", UPDATED: "Updated" } as const)[p.evalState?.state ?? "NOT_EVALUATED"]]; })
     );
   }
 
@@ -169,14 +173,14 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
       { header: "Overall Performance Score %", kind: "percent", width: 16, note: "Completion % x 0.60 + manager rating % x 0.40. Task priority is not used. Blank = N/A or awaiting evaluation (see Evaluation status). Provisional = some ratings are still outstanding." },
       { header: "Evaluation status", width: 18 }, { header: "Eligible tasks (sample size)", kind: "int", width: 14 },
       { header: "Daily target", kind: "int", width: 12 }, { header: "Target level", width: 13 }, { header: "Days with data", kind: "int", width: 13 },
-      { header: "Tasks finished in period", kind: "int", width: 14, note: "Counted in the day each task was finished (used only for the daily-target productivity below)." }, { header: "Productivity %", kind: "percent", width: 14, note: "Tasks finished divided by the daily target on the days with task data. Text means there is nothing to calculate (target not set, or no task data); it is never shown as 0%." },
+      { header: "Tasks finished in period", kind: "int", width: 14, note: "Counted in the day each task was finished (used only for the daily-target productivity below)." }, { header: "Productivity %", kind: "percent", width: 14, note: "Tasks finished divided by the daily target on the days with task data. Text means there is nothing to calculate (target not set, or no task data); it is never shown as 0%." }, { header: "Manager Evaluated", width: 15, note: "Not Evaluated, Evaluated (the manager reviewed and saved once) or Updated (saved again). When a manager adjusted the score, status or productivity, the adjusted values are the ones shown in this report." },
     ];
     const peopleRows = data.people.map((p) => { const w = p.weighted; return [
       p.employeeCode, p.name, p.teamName, (p.projects ?? []).join(", ") || null, p.reportingManager ?? null,
       w?.tasks ?? null, w?.completed ?? null, w?.notCompleted ?? null, w?.completionPercent ?? "N/A", w?.averageRating ?? null, w?.ratedTasks ?? null, w?.awaitingRating ?? null,
       w ? (w.percent ?? (w.status === "AWAITING_EVALUATION" ? "Awaiting evaluation" : "N/A")) : "N/A", w ? STATUS_LABEL[w.status] : null, w?.tasks ?? null,
       p.targetPerDay ?? "Target not configured", p.targetSource ? SOURCE[p.targetSource] : null, p.daysWithData,
-      p.completedTotal ?? (p.reason ? REASON_TEXT[p.reason] : "No task data available"), p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : p.targetPerDay === 0 ? "Target is 0" : p.reason ? REASON_TEXT[p.reason] || "" : "No task data available"),
+      p.completedTotal ?? (p.reason ? REASON_TEXT[p.reason] : "No task data available"), p.overallPercent ?? (p.targetPerDay === null ? "Target not configured" : p.targetPerDay === 0 ? "Target is 0" : p.reason ? REASON_TEXT[p.reason] || "" : "No task data available"), ({ NOT_EVALUATED: "Not Evaluated", EVALUATED: "Evaluated", UPDATED: "Updated" } as const)[p.evalState?.state ?? "NOT_EVALUATED"],
     ]; });
 
     const daily: Col[] = [
@@ -273,7 +277,7 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
                   <th className={th}>Evaluation status</th>
                   <th className={`${th} text-right`} title="Working time recorded automatically while tasks were In Progress and the person was clocked in and not on a break. Tasks running at the same time are counted once. It is shown for information and never changes the score.">Task time</th>
                   <th className={`${th} text-right`}>Daily target</th>
-                  <th className={`${th} text-right`} title="Tasks finished in the period divided by the daily target (needs a target)">Productivity</th>
+                  <th className={th} title="Whether the manager has reviewed and saved this person's evaluation for these dates. A manager can adjust the score, status and productivity of the people who report to them; the calculated values are kept and every change is recorded.">Manager Evaluated</th>
                 </tr>
               </thead>
               <tbody>
@@ -310,8 +314,20 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
                           <span className="text-xs text-slate-400">Not set{canSetTargets && !self ? <button type="button" onClick={(e) => { e.stopPropagation(); document.getElementById("task-targets")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} className="ml-1 font-medium text-indigo-700 hover:underline">Set</button> : null}</span>
                         )}
                       </td>
-                      <td className={`px-3 py-2.5 text-right tabular-nums font-semibold ${pctClass(p.overallPercent)}`}>
-                        {p.overallPercent !== null ? `${p.overallPercent}%` : <span className="text-xs font-normal text-slate-400">{p.targetPerDay === null ? "Target not configured" : p.targetPerDay === 0 ? "Target is 0" : p.reason ? REASON_TEXT[p.reason] || "—" : "No task data available"}</span>}
+                      <td className="px-3 py-2.5 whitespace-nowrap" data-testid="eval-cell" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-1.5">
+                          {(() => {
+                            const st = p.evalState?.state ?? "NOT_EVALUATED";
+                            const chip = { NOT_EVALUATED: "bg-slate-100 text-slate-600", EVALUATED: "bg-emerald-50 text-emerald-700", UPDATED: "bg-sky-50 text-sky-700" }[st];
+                            const text = { NOT_EVALUATED: "Not Evaluated", EVALUATED: "Evaluated", UPDATED: "Updated" }[st];
+                            const when = p.evalState?.lastAt ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(p.evalState.lastAt)) : null;
+                            const tip = st === "NOT_EVALUATED" ? "The manager has not reviewed this evaluation yet." : `${text} by ${p.evalState?.lastByName ?? "a manager"}${when ? ` on ${when}` : ""} (saved ${p.evalState?.count} time${p.evalState?.count === 1 ? "" : "s"}).${p.evaluation ? ` Adjusted values are shown; system values: score ${p.evaluation.original.score ?? "N/A"}%, ${p.evaluation.original.status ? STATUS_LABEL[p.evaluation.original.status as keyof typeof STATUS_LABEL] : "n/a"}, productivity ${p.evaluation.original.productivity ?? "n/a"}%. Reason: ${p.evaluation.reason}` : " The system values are used."} Click to see the history.`;
+                            return <button type="button" onClick={() => setEvalFor(p.userId)} data-testid="eval-state" data-state={st} title={tip} className={`rounded-full px-2 py-0.5 text-[11px] font-medium hover:opacity-80 ${chip}`}>{text}{p.evaluation ? " · adjusted" : ""}</button>;
+                          })()}
+                          {!self && me?.role === "MANAGER" && p.userId !== me.id && (
+                            <button type="button" onClick={() => setEvalFor(p.userId)} data-testid="eval-edit" aria-label={`Edit evaluation for ${p.name}`} className="rounded-lg border border-indigo-100 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50">Edit</button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     {open === p.userId && (
@@ -345,6 +361,10 @@ export default function ProductivityReport({ canSetTargets, filters, ready = tru
         </p>
       </section>
 
+      {evalFor && data && (() => {
+        const person = data.people.find((x) => x.userId === evalFor);
+        return person ? <EvaluationModal person={person} from={data.from} to={data.to} canEdit={!self && me?.role === "MANAGER" && person.userId !== me.id} onClose={() => setEvalFor(null)} onSaved={() => { setEvalFor(null); void load(); }} /> : null;
+      })()}
       {breakdown && data && (() => {
         const person = data.people.find((x) => x.userId === breakdown);
         return person?.weighted ? <ScoreBreakdown userId={person.userId} name={person.name} from={data.from} to={data.to} w={person.weighted} base={base} hrQuery={hrQuery} timezone={data.timezone} onClose={() => setBreakdown(null)} /> : null;

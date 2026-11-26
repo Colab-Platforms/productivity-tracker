@@ -29,7 +29,7 @@ const name = (u: { firstName: string; lastName: string } | null | undefined) => 
 const clip = (s: string | null | undefined, n = 140) => (s ? ` — ${s.trim().slice(0, n)}` : "");
 
 // People above this employee: whoever assigned the task, their reporting manager, and the managers of their teams.
-async function managersOf(ownerId: string, assignedById: string | null, exclude: string[]): Promise<string[]> {
+export async function managersOf(ownerId: string, assignedById: string | null, exclude: string[]): Promise<string[]> {
   const owner = await prisma.user.findUnique({
     where: { id: ownerId },
     select: { reportsToId: true, teamMemberships: { where: { isActive: true, team: { isActive: true } }, select: { teamId: true } } },
@@ -64,7 +64,7 @@ async function reviewersOf(taskId: string, ownerId: string, assignedById: string
 }
 
 // A recipient's notification belongs to THEIR company (a manager can sit in another company than the employee).
-async function send(recipients: string[], base: { type: string; title: string; body: string; link: string; dedupeKey: string; data: Record<string, unknown> }) {
+export async function send(recipients: string[], base: { type: string; title: string; body: string; link: string; dedupeKey: string; data: Record<string, unknown> }) {
   if (recipients.length === 0) return;
   const people = await prisma.user.findMany({ where: { id: { in: recipients } }, select: { id: true, platformId: true } });
   const byPlatform = new Map<string, string[]>();

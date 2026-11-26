@@ -16,6 +16,10 @@ export type TaskTimerData = {
   elapsedSeconds: number;
   pausedSeconds: number;
   sessionCount: number;
+  /** each break pause while the task was running (derived by the server from the break records) */
+  pauses?: { pausedAt: string; resumedAt: string | null; seconds: number; kind: "BREAK" | "WASHROOM" }[];
+  /** when the break the task is paused for right now began */
+  pausedSince?: string | null;
   serverNow: string;
 };
 
@@ -81,7 +85,7 @@ export function TaskTimer({ timer, status, onStale, compact = false }: { timer?:
         <span className="text-slate-500">{done && !timer.running ? "Total time spent" : "Time spent"}</span>
         <span className={`font-mono text-[13px] font-semibold tabular-nums ${timer.running ? "text-emerald-600" : "text-slate-700"}`} data-testid="task-timer-value" data-running={timer.running ? "1" : "0"}>{durationText(live)}</span>
         {timer.running && <span className="inline-flex items-center gap-1 text-emerald-600"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden />running</span>}
-        {timer.pausedReason === "BREAK" && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700" data-testid="task-timer-paused">Paused due to break</span>}
+        {timer.pausedReason === "BREAK" && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700" data-testid="task-timer-paused">Paused – On Break{timer.pausedSince ? ` since ${clock(timer.pausedSince, tz)}` : ""}</span>}
         {timer.pausedReason === "CLOCKED_OUT" && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700" data-testid="task-timer-paused">Paused due to clock-out</span>}
       </p>
       <p className="mt-0.5 text-slate-400">
@@ -90,6 +94,18 @@ export function TaskTimer({ timer, status, onStale, compact = false }: { timer?:
         {timer.elapsedSeconds > 0 && !compact ? ` · Elapsed ${durationShort(timer.elapsedSeconds)}` : ""}
         {timer.pausedSeconds > 0 && !compact ? ` · Paused ${durationShort(timer.pausedSeconds)}` : ""}
       </p>
+      {timer.pauses && timer.pauses.length > 0 && (
+        <details className="mt-0.5 text-slate-500" data-testid="task-pauses">
+          <summary className="cursor-pointer select-none text-slate-400 hover:text-slate-600">{timer.pauses.length === 1 ? "1 break pause" : `${timer.pauses.length} break pauses`}</summary>
+          <ul className="mt-1 space-y-0.5 pl-3">
+            {timer.pauses.map((p, i) => (
+              <li key={i} data-testid="task-pause-row">
+                Paused {clock(p.pausedAt, tz)} · {p.resumedAt ? `Resumed ${clock(p.resumedAt, tz)} (${durationShort(p.seconds)})` : "not resumed yet (still on break)"}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }

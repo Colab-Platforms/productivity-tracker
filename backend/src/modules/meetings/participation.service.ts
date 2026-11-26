@@ -175,6 +175,8 @@ export async function extrasFor(items: Item[], viewerId: string, now: Date) {
             durationSeconds: p.durationSeconds,
             late: L.isLate(p.joinedAt, it.startsAt, t.lateAfterMinutes),
             source: p.source,
+            // who closed this record: SELF (they pressed End Huddle) or MANAGER (the organizer ended the huddle for everyone)
+            endedBy: p.endedBy,
             stillActivePastEnd: L.isStillActivePastEnd(p, it.endsAt, now),
           }
         : { state: "NOT_JOINED" as const },
@@ -846,6 +848,16 @@ export async function openMeetingIds(userId: string): Promise<string[]> {
   if (!(await participationReady())) return [];
   const rows = await prisma.meetingParticipation.findMany({
     where: { userId, leftAt: null, joinedAt: { gte: new Date(Date.now() - 2 * 86_400_000) } },
+    select: { meetingId: true },
+  });
+  return rows.map((r) => r.meetingId);
+}
+
+/** Huddles the manager ended for everyone in the last 30 minutes while this person was in them: kept in the person's list so their screen can say so (also after a reconnect). */
+export async function recentlyEndedByManagerIds(userId: string): Promise<string[]> {
+  if (!(await participationReady())) return [];
+  const rows = await prisma.meetingParticipation.findMany({
+    where: { userId, endedBy: "MANAGER", leftAt: { gte: new Date(Date.now() - 30 * 60_000) } },
     select: { meetingId: true },
   });
   return rows.map((r) => r.meetingId);

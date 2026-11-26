@@ -5,7 +5,7 @@
 // Before the migration the table does not exist: nothing is timed, every task reads "Not tracked" and the rest of the app is unaffected.
 import { prisma } from "../../lib/prisma.js";
 import { breakRowSeconds, classOfRow } from "../tracker/activityClass.js";
-import { computeTimer, unionSeconds, type Interval } from "./tasks.timer.logic.js";
+import { breakPauses, computeTimer, unionSeconds, type AwayRow, type Interval } from "./tasks.timer.logic.js";
 
 let ready: boolean | null = null;
 let checkedAt = 0;
@@ -38,11 +38,15 @@ export type TaskTimer = {
   elapsedSeconds: number;
   pausedSeconds: number;
   sessionCount: number;
+  /** each break / washroom pause while this task was running: when it paused and when it resumed (null = still on that break). Derived from the break rows. */
+  pauses: { pausedAt: string; resumedAt: string | null; seconds: number; kind: "BREAK" | "WASHROOM" }[];
+  /** the start of the break the task is paused for right now (null when it is not paused for a break) */
+  pausedSince: string | null;
   /** the server's clock when this was worked out, so a screen can tick from a trustworthy base */
   serverNow: string;
 };
 
-export const notTracked = (now = new Date()): TaskTimer => ({ tracked: false, running: false, pausedReason: null, firstStartedAt: null, lastSubmittedAt: null, activeSeconds: 0, elapsedSeconds: 0, pausedSeconds: 0, sessionCount: 0, serverNow: now.toISOString() });
+export const notTracked = (now = new Date()): TaskTimer => ({ tracked: false, running: false, pausedReason: null, firstStartedAt: null, lastSubmittedAt: null, activeSeconds: 0, elapsedSeconds: 0, pausedSeconds: 0, sessionCount: 0, pauses: [], pausedSince: null, serverNow: now.toISOString() });
 
 type Row = { id: string; userId: string; status: unknown; completedAt?: Date | null };
 
@@ -62,6 +66,7 @@ async function compute(rows: Row[], now: Date): Promise<{ byTask: Map<string, Ta
   const users = [...new Set(rows.filter((r) => sessionsOf.has(r.id)).map((r) => r.userId))];
   const clockedIn = new Map<string, Interval[]>();
   const away = new Map<string, Interval[]>();
+  const awayRows = new Map<string, AwayRow[]>();
   if (users.length > 0) {
     const first = Math.min(...sess.map((s) => s.startedAt.getTime())) - 36 * 3600_000;
     const works = await prisma.workSession.findMany({
@@ -75,6 +80,7 @@ async function compute(rows: Row[], now: Date): Promise<{ byTask: Map<string, Ta
         const start = b.startedAt.getTime();
         const end = b.endedAt ? start + breakRowSeconds(b, now) * 1000 : now.getTime();
         away.set(w.userId, [...(away.get(w.userId) ?? []), [start, end]]);
+        awayRows.set(w.userId, [...(awayRows.get(w.userId) ?? []), { start, end, open: !b.endedAt, kind: classOfRow(b) === "NEUTRAL" ? "WASHROOM" : "BREAK" }]);
       }
     }
   }
@@ -89,11 +95,15 @@ async function compute(rows: Row[], now: Date): Promise<{ byTask: Map<string, Ta
       status: String(r.status),
     });
     intervals.set(r.id, f.intervals);
+    const pauses = breakPauses(sessionsOf.get(r.id) ?? [], awayRows.get(r.userId) ?? [], now.getTime());
+    const openPause = pauses.find((p) => p.resumedAt === null);
     byTask.set(r.id, {
       tracked: f.tracked, running: f.running, pausedReason: f.pausedReason,
       firstStartedAt: f.firstStartedAt === null ? null : new Date(f.firstStartedAt).toISOString(),
       lastSubmittedAt: f.lastSubmittedAt === null ? null : new Date(f.lastSubmittedAt).toISOString(),
       activeSeconds: f.activeSeconds, elapsedSeconds: f.elapsedSeconds, pausedSeconds: f.pausedSeconds, sessionCount: f.sessionCount, serverNow: now.toISOString(),
+      pauses: pauses.map((p) => ({ pausedAt: new Date(p.pausedAt).toISOString(), resumedAt: p.resumedAt === null ? null : new Date(p.resumedAt).toISOString(), seconds: p.seconds, kind: p.kind })),
+      pausedSince: f.pausedReason === "BREAK" && openPause ? new Date(openPause.pausedAt).toISOString() : null,
     });
   }
   return { byTask, intervals };

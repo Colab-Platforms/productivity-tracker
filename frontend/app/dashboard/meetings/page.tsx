@@ -11,6 +11,7 @@ import { HistoryModal, InviteResponse, JoinControl, ParticipationPanel, PastReco
 import HuddleOverview from "../_standup/HuddleOverview";
 import MinutesSection from "./_minutes/Minutes";
 import { forTab, tabCounts, tabFromUrl, tabsFor, type TabKey } from "./tabs";
+import EndHuddle from "./_participation/EndHuddle";
 
 // ---------------------------------------------------------------------------
 // TEAM HUDDLE (the Meetings page, one section for everything)
@@ -169,7 +170,7 @@ function MeetingsInner() {
                   {m.meetingUrl && (m.state === "upcoming" || m.state === "ongoing") && (
                     <a href={m.meetingUrl} target="_blank" rel="noopener noreferrer" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Join meeting</a>
                   )}
-                  {m.canEnd && <EndInline id={m.id} onDone={() => { setNotice("Meeting ended. It now shows under History."); setReload((n) => n + 1); }} />}
+                  {m.canEnd && <EndHuddle id={m.id} title={m.title} huddle={!!m.tracked} onDone={() => { setNotice(m.tracked ? "Team Huddle ended for everyone. It now shows under History." : "Meeting ended. It now shows under History."); setReload((n) => n + 1); }} />}
                   <button onClick={() => setOpenId(m.id)} className="rounded-lg border border-indigo-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Details</button>
                 </div>
                 {m.myStatus && m.state !== "cancelled" && m.state !== "past" && (
@@ -241,22 +242,6 @@ function MeetingsInner() {
   );
 }
 
-// Closes a meeting that is happening now for everyone (it moves to Past; people still in it are ended). Asks once, so a stray click does not end it.
-function EndInline({ id, onDone }: { id: string; onDone: () => void }) {
-  const [asking, setAsking] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  if (!asking) return <button onClick={() => setAsking(true)} className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50">End meeting</button>;
-  return (
-    <span className="inline-flex flex-wrap items-center justify-end gap-2">
-      <span className="text-xs text-slate-500">End it now for everyone? Anyone still in the meeting is ended too.</span>
-      <button disabled={busy} onClick={async () => { setBusy(true); setErr(""); try { await apiPost(`/meetings/${id}/end`); onDone(); } catch (e) { setErr((e as Error).message); setBusy(false); } }} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50">Yes, end</button>
-      <button onClick={() => setAsking(false)} className="text-xs text-slate-500">Back</button>
-      {err && <span className="w-full text-xs text-red-600">{err}</span>}
-    </span>
-  );
-}
-
 function CancelInline({ id, onDone }: { id: string; onDone: () => void }) {
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState("");
@@ -316,7 +301,7 @@ function DetailsModal({ id, tz, onClose, onEdit, onChanged }: { id: string; tz: 
           <MinutesSection meetingId={m.id} state={m.state} isOrganizer={m.isOrganizer} tz={tz} />
           <div className="flex flex-wrap items-center justify-end gap-2">
             {m.canEdit && <button onClick={() => onEdit(m)} className="rounded-xl border border-indigo-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit</button>}
-            {m.canEnd && <EndInline id={m.id} onDone={() => onChanged("Meeting ended. It now shows under Past.")} />}
+            {m.canEnd && <EndHuddle id={m.id} title={m.title} huddle={!!m.tracked} onDone={() => onChanged(m.tracked ? "Team Huddle ended for everyone. It now shows under Past." : "Meeting ended. It now shows under Past.")} />}
             {m.canCancel && !m.canEnd && <CancelInline id={m.id} onDone={() => onChanged("Meeting cancelled. The people invited were notified.")} />}
             {m.meetingUrl && (m.state === "upcoming" || m.state === "ongoing") && <a href={m.meetingUrl} target="_blank" rel="noopener noreferrer" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Join meeting</a>}
           </div>

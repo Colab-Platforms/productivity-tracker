@@ -32,8 +32,10 @@ export async function deletionsReady(): Promise<boolean> {
 /** Spread into a DailyTask `where`: tasks that have NOT been deleted. Empty until the table exists. */
 // ALSO leaves out manager-ASSIGNED tasks (assignedById set): they have their own workflow (tasks.assigned.ts) and must never be approved, rated or counted
 // with employee-submitted tasks. Every reader that spreads this filter (approval queue, ratings, productivity, reports, the employee list) skips them.
-export async function activeTasks(): Promise<{ deletion?: { is: null }; assignedById: null }> {
-  return (await deletionsReady()) ? { deletion: { is: null }, assignedById: null } : { assignedById: null };
+// ALSO leaves out a manager's personal "previous tasks" notebook (carryCount = -1, tasks.previous.ts): they are history the manager typed in, not work
+// that was ever submitted, approved or scored, so no reader may count or list them.
+export async function activeTasks(): Promise<{ deletion?: { is: null }; assignedById: null; carryCount: { gte: number } }> {
+  return (await deletionsReady()) ? { deletion: { is: null }, assignedById: null, carryCount: { gte: 0 } } : { assignedById: null, carryCount: { gte: 0 } };
 }
 
 /** Not deleted, whoever created it: the filter the assigned-task workflow itself uses (only assigned rows). */

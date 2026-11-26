@@ -19,6 +19,7 @@ import { useMe } from "../layout";
 import { RevertModal } from "./RevertModal";
 import { RateControl, Stars } from "../_ratings/Stars";
 import { TimeReviewBox, type TimeReviewData } from "./TimeReviewBox";
+import { TaskTimer } from "../_timer/TaskTimer";
 import type { TaskTimerData } from "../_timer/TaskTimer";
 import { EmployeePicker } from "./EmployeePicker";
 import FilterBar from "../_filters/FilterBar";
@@ -675,6 +676,7 @@ export default function ReviewQueue() {
                 {t.reopened && !t.reopened.resubmitted && (
                   <p className="mt-1 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-900"><span className="font-medium">Reopened · {t.reopened.label}:</span> {t.reopened.remark}</p>
                 )}
+                {t.status === "IN_PROGRESS" && <TaskTimer timer={t.timer} status="IN_PROGRESS" compact />}
               </div>
             </li>
           ))}

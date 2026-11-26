@@ -33,6 +33,7 @@ import { lateDetailsFor } from "../tasks/tasks.late.js";
 import { EFFICIENCY_POLICY_VERSION, efficiencyIndex, type EfficiencyTask } from "../tasks/efficiency.logic.js";
 import { readEvidence } from "../tasks/tasks.evidence.js";
 import { deletionsReady } from "../tasks/tasks.deleted.js";
+import { adjustmentsFor, evaluationStatesFor, overlayWeighted } from "../tasks/evaluation.adjust.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
 import { notTracked, timersFor, trackedSecondsByUser } from "../tasks/tasks.timer.js";
 
@@ -199,7 +200,7 @@ async function summariesFor(viewer: { id: string; role: unknown }, ids: string[]
 // ---------------------------------------------------------------------------------------------
 // PRODUCTIVITY OVER A RANGE (per person, per day)
 // ---------------------------------------------------------------------------------------------
-export async function getProductivity(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters; self?: boolean }) {
+export async function getProductivity(viewerId: string, q: { from?: string; to?: string; userId?: string; teamId?: string; filters?: HrFilters; self?: boolean; raw?: boolean }) {
   const viewer = await getViewer(viewerId, q.self === true);
   const tz = viewer.platform.timezone;
   const today = platformToday(tz).toISOString().slice(0, 10);
@@ -298,7 +299,25 @@ export async function getProductivity(viewerId: string, q: { from?: string; to?:
     };
   });
 
-  return { ...base, scope, targetsReady: targets.ready, weightedTotal: weightedPerformance(weightedRated, { cutoff: endUtc }), people: out };
+  // A manager's adjustments (evaluation.adjust.ts) are laid over the calculated figures for exactly this period; the calculated ones are kept beside them.
+  const adj = q.raw ? new Map() : await adjustmentsFor(out.map((p) => p.userId), base.from, base.to);
+  // Not Evaluated / Evaluated / Updated: has a manager saved an evaluation for this exact period, and more than once (raw = the calculation view, no overlay)
+  const states = q.raw ? new Map() : await evaluationStatesFor(out.map((p) => p.userId), base.from, base.to);
+  const noState = { state: "NOT_EVALUATED" as const, count: 0, lastAt: null, lastById: null, lastByName: null };
+  const people2 = out.map((p) => {
+    const a = adj.get(p.userId);
+    const evalState = states.get(p.userId) ?? noState;
+    if (!a) return { ...p, evaluation: null, evalState };
+    return {
+      ...p,
+      evalState,
+      weighted: overlayWeighted(p.weighted, a),
+      overallPercent: a.productivity ?? p.overallPercent,
+      evaluation: { adjusted: true, by: a.byId, at: a.at, reason: a.reason, original: { score: p.weighted.percent, status: p.weighted.status, productivity: p.overallPercent }, adjustedFields: { score: a.score !== null, status: a.status !== null, productivity: a.productivity !== null } },
+    };
+  });
+
+  return { ...base, scope, targetsReady: targets.ready, weightedTotal: weightedPerformance(weightedRated, { cutoff: endUtc }), people: people2 };
 }
 
 // ---------------------------------------------------------------------------------------------

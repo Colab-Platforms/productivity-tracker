@@ -13,6 +13,7 @@ import { creditOf } from "../tasks/tasks.rating.logic.js";
 import { calendarStatus, minutesAfterLimit } from "../team-attendance/arrival.logic.js";
 import { DISCUSSION_PREFIX, REMARK_MAX, REMARK_MIN, awayOf, awayRows, isCountedBreak, isDiscussion, isWashroom, recordedRowSeconds, splitAwayTime } from "./activityClass.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
+import { adjustmentsFor, overlayWeighted } from "../tasks/evaluation.adjust.js";
 
 const DEFAULTS = {
   dailyWorkHours: 9,
@@ -1003,7 +1004,7 @@ export async function getHistory(userId: string, fromStr?: string, toStr?: strin
     breakBudget: ctx.config.breakBudgetMinutes * 60,
     rows,
     summary: {
-      weighted: weightedPerformance(rateAll(tasks), { cutoff: cutoffOf(key(to)) }),
+      weighted: overlayWeighted(weightedPerformance(rateAll(tasks), { cutoff: cutoffOf(key(to)) }), (await adjustmentsFor([userId], key(from), key(to))).get(userId)),
       daysWorked: worked.length,
       daysOnLeave: rows.filter((r) => r.onLeave).length,
       daysLate: worked.filter((r) => r.wasLateLogin).length,

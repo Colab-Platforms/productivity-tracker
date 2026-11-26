@@ -123,3 +123,31 @@ export function formatDuration(totalSeconds: number): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(h)}h ${p(m)}m ${p(sec)}s`;
 }
+
+// ---------------------------------------------------------------------------
+// BREAK PAUSES (derived, nothing is stored): each break or washroom row that overlaps a time the task was running is one pause. "Paused" = the later of the
+// break start and the task session start; "Resumed" = the earlier of the break end and the session end (null while the break is still running).
+// Discussions are productive time, so they never appear here. The break rows are the source of truth, so a break correction, a refresh or a second tab can never
+// make the pause list disagree with attendance, and a pause can never be duplicated or overlap another.
+// ---------------------------------------------------------------------------
+export type AwayRow = { start: number; end: number; open: boolean; kind: "BREAK" | "WASHROOM" };
+export type Pause = { pausedAt: number; resumedAt: number | null; seconds: number; kind: "BREAK" | "WASHROOM" };
+
+export function breakPauses(sessions: { startedAt: number; endedAt: number | null }[], away: AwayRow[], now: number, max = 30): Pause[] {
+  const out: Pause[] = [];
+  const seen = new Set<string>();
+  for (const a of away) {
+    for (const s of sessions) {
+      const sEnd = s.endedAt ?? now;
+      const start = Math.max(a.start, s.startedAt);
+      const end = Math.min(a.end, sEnd);
+      if (end <= start) continue; // the task was not running during this break
+      const resumed = a.open && sEnd >= now ? null : end; // still on break and the task is still running = not resumed yet
+      const key = `${start}|${resumed ?? "open"}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ pausedAt: start, resumedAt: resumed, seconds: Math.round((end - start) / 1000), kind: a.kind });
+    }
+  }
+  return out.sort((x, y) => x.pausedAt - y.pausedAt).slice(-max);
+}

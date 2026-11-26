@@ -1,0 +1,94 @@
+// 50-minutes-over break alarm: who is told, once per break, never ends the break. Throwaway DB + test backend (5012) only.
+import "dotenv/config";
+if (!(process.env.DATABASE_URL ?? "").includes("127.0.0.1:54329")) throw new Error("refusing: not the throwaway database");
+const { prisma } = await import("../src/lib/prisma.js");
+const bcrypt = (await import("bcryptjs")).default;
+const N = await import("../src/modules/tracker/tracker.notify.js");
+const API = process.env.TEST_API || "http://localhost:5012/api";
+const PW = "Lbk@12345678";
+let pass = 0, fail = 0;
+const ok = (n: string, c: boolean, x?: unknown) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n + (c ? "" : "  -> " + JSON.stringify(x)?.slice(0, 250))); };
+const call = async (m: string, p: string, t?: string, b?: unknown) => { const r = await fetch(API + p, { method: m, headers: { "content-type": "application/json", ...(t ? { authorization: "Bearer " + t } : {}) }, body: b !== undefined ? JSON.stringify(b) : undefined }); return { s: r.status, b: await r.json().catch(() => ({})) as any }; };
+const sql = (s: TemplateStringsArray, ...v: unknown[]) => prisma.$queryRaw<any[]>(s, ...v);
+const A = (await prisma.platform.findUnique({ where: { slug: "avatar" } }))!.id;
+const B = (await prisma.platform.findUnique({ where: { slug: "avance" } }))!.id;
+const hash = await bcrypt.hash(PW, 10);
+const wipe = async () => {
+  const ids = (await sql`select id::text from users where "employeeCode" like 'LBK-%'`).map((r) => r.id);
+  if (!ids.length) return;
+  await prisma.$executeRaw`delete from notifications where "userId" = any(${ids}::uuid[])`;
+  await prisma.$executeRaw`delete from company_access where "userId" = any(${ids}::uuid[])`;
+  await prisma.$executeRaw`delete from alerts where "userId" = any(${ids}::uuid[])`.catch(() => {});
+  await prisma.$executeRaw`update audit_logs set "actorId"=null where "actorId" = any(${ids}::uuid[])`.catch(() => {});
+  await prisma.$executeRaw`delete from login_events where "userId" = any(${ids}::uuid[])`.catch(() => {});
+  await prisma.$executeRaw`delete from users where id = any(${ids}::uuid[])`;
+};
+await wipe();
+const mk = async (code: string, role: string, platformId: string, boss: string | null = null) =>
+  (await prisma.user.create({ data: { platformId, email: code.toLowerCase() + "@lbk.test", passwordHash: hash, firstName: "Lbk", lastName: code, employeeCode: code, role: role as never, status: "ACTIVE", mustChangePassword: false, trackerAccessEnabled: true, onboardingStatus: "ACTIVE" as never, reportsToId: boss } as never })).id;
+const mgr = await mk("LBK-M", "MANAGER", A), otherMgr = await mk("LBK-OM", "MANAGER", A), hrA = await mk("LBK-HR", "HR", A), hrB = await mk("LBK-HRB", "HR", B);
+const adminA = await mk("LBK-AD", "ADMIN", A), adminAll = await mk("LBK-AL", "ADMIN", B);
+await prisma.$executeRaw`insert into company_access (id,"userId","platformId","createdAt") values (gen_random_uuid(), ${adminAll}::uuid, null, now())`;
+const emp = await mk("LBK-E", "EMPLOYEE", A, mgr), emp2 = await mk("LBK-E2", "EMPLOYEE", A, mgr);
+const login = async (c: string) => (await call("POST", "/auth/login", undefined, { email: c, password: PW })).b.token as string;
+const notes = (u: string, type: string) => prisma.notification.findMany({ where: { userId: u, type } });
+const allow = (await sql`select "defaultBreakBudgetMins" m from platforms where id = ${A}::uuid`)[0].m as number;
+
+const tok = await login("LBK-E");
+await call("POST", "/tracker/clock-in", tok, {});
+await prisma.$executeRaw`update work_sessions set "loginAt" = now() - interval '5 hours' where "userId" = ${emp}::uuid and "logoutAt" is null`;
+await call("POST", "/tracker/break/start", tok, { breakType: "LUNCH" });
+const setStart = (minutesAgo: number) => prisma.$executeRaw`update tracker_breaks set "startedAt" = now() - (${minutesAgo} * interval '1 minute') where "endedAt" is null and "workSessionId" in (select id from work_sessions where "userId" = ${emp}::uuid)`;
+
+console.log(`\n## threshold (allowance ${allow} min; alarm at +50)`);
+await setStart(allow + 40);
+await N.watchLongBreaks();
+ok("40 minutes over: nothing yet", (await notes(emp, "BREAK_LIMIT_EXCEEDED")).length === 0);
+await setStart(allow + 49);
+await N.watchLongBreaks();
+ok("49 minutes over: nothing yet", (await notes(emp, "BREAK_LIMIT_EXCEEDED")).length === 0);
+await setStart(allow + 55);
+const sent = await N.watchLongBreaks();
+ok("55 minutes over: the alarm is raised", sent > 0);
+const mine = await notes(emp, "BREAK_LIMIT_EXCEEDED");
+ok("the employee gets the exact warning, with duration, allowance and the amount over", mine.length === 1 && /Your break time has exceeded the permitted limit by 50 minutes\. Please end your break and resume work\./.test(mine[0].body) && new RegExp(`over by 5[45] min`).test(mine[0].body) && /allowed/.test(mine[0].body), mine[0]?.body);
+ok("it is flagged for the alarm sound and links to Today", (mine[0].data as any)?.alarm === true && mine[0].link === "/dashboard/today" && (mine[0].data as any)?.overSeconds >= 54 * 60, mine[0].data);
+const team = async (u: string) => notes(u, "BREAK_LIMIT_EXCEEDED_TEAM");
+ok("the reporting manager is told, naming the employee", (await team(mgr)).length === 1 && /Lbk LBK-E is/.test((await team(mgr))[0].title));
+ok("HR of the company is told", (await team(hrA)).length === 1);
+ok("Admin of the company (own company) and the all-company Admin can monitor it", (await team(adminA)).length === 1 && (await team(adminAll)).length === 1);
+ok("the unrelated manager, the colleague and the other company's HR are NOT told", (await team(otherMgr)).length === 0 && (await team(emp2)).length === 0 && (await team(hrB)).length === 0 && (await notes(emp2, "BREAK_LIMIT_EXCEEDED")).length === 0);
+ok("the staff copy is not an alarm", (await team(hrA))[0] && (((await team(hrA))[0].data as any)?.alarm === false));
+
+console.log("\n## once per break, and the break is left alone");
+await N.watchLongBreaks(); await N.watchLongBreaks();
+await setStart(allow + 80);
+await N.watchLongBreaks();
+ok("later runs, even much further over, send nothing more for the same break", (await notes(emp, "BREAK_LIMIT_EXCEEDED")).length === 1 && (await team(mgr)).length === 1 && (await team(hrA)).length === 1);
+const stillOpen = await sql`select count(*)::int n from tracker_breaks where "endedAt" is null and "workSessionId" in (select id from work_sessions where "userId" = ${emp}::uuid)`;
+const session = await sql`select "logoutAt" from work_sessions where "userId" = ${emp}::uuid order by "createdAt" desc limit 1`;
+ok("the break was NOT ended and the employee was NOT clocked out", stillOpen[0].n === 1 && session[0].logoutAt === null, [stillOpen, session]);
+ok("the persisted notification survives a fresh sign-in", (await call("GET", "/notifications", await login("LBK-E"))).b.items.some((i: any) => i.type === "BREAK_LIMIT_EXCEEDED"));
+
+console.log("\n## a new break is a new alert; closed breaks and other activity are ignored");
+await call("POST", "/tracker/break/end", tok);
+await N.watchLongBreaks();
+ok("an ended break raises nothing", (await notes(emp, "BREAK_LIMIT_EXCEEDED")).length === 1);
+const t2 = await login("LBK-E2");
+await call("POST", "/tracker/clock-in", t2, {});
+await call("POST", "/tracker/break/start", t2, { breakType: "DISCUSSION", remark: "Talking to my manager" });
+await prisma.$executeRaw`update tracker_breaks set "startedAt" = now() - interval '300 minutes' where "endedAt" is null and "workSessionId" in (select id from work_sessions where "userId" = ${emp2}::uuid)`;
+await N.watchLongBreaks();
+ok("a long DISCUSSION (productive time, not a break) never triggers it", (await notes(emp2, "BREAK_LIMIT_EXCEEDED")).length === 0);
+await call("POST", "/tracker/break/end", t2);
+await call("POST", "/tracker/break/start", t2, { breakType: "PERSONAL" });
+await prisma.$executeRaw`update tracker_breaks set "startedAt" = now() - (${allow + 60} * interval '1 minute') where "endedAt" is null and "workSessionId" in (select id from work_sessions where "userId" = ${emp2}::uuid)`;
+await N.watchLongBreaks();
+ok("a second employee's own break gets its own alert (and the first one's is unchanged)", (await notes(emp2, "BREAK_LIMIT_EXCEEDED")).length === 1 && (await notes(emp, "BREAK_LIMIT_EXCEEDED")).length === 1);
+ok("the manager now has two team alerts, one per person", (await team(mgr)).length === 2);
+ok("Admin accounts are never watched as employees", await (async () => { const before = await prisma.notification.count({ where: { type: "BREAK_LIMIT_EXCEEDED" } }); await N.watchLongBreaks(); return (await prisma.notification.count({ where: { type: "BREAK_LIMIT_EXCEEDED" } })) === before; })());
+
+await wipe();
+await prisma.$disconnect();
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

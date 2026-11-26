@@ -5,6 +5,8 @@ import { guardUuidParams, isBadInput } from "../../lib/params.js";
 import * as svc from "./teamAttendance.service.js";
 import * as productivity from "./productivity.service.js";
 import { getTeamReport } from "./teamReport.service.js";
+import * as evaluation from "./evaluation.service.js";
+import { clientIp } from "../../lib/clientIp.js";
 
 const router = Router();
 guardUuidParams(router);
@@ -21,6 +23,14 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   BAD_SCOPE: { status: 400, message: "Choose the company, a team or a person." },
   BAD_TARGET: { status: 400, message: "A daily target must be a whole number from 1 to 1000." },
   NOT_FOUND: { status: 404, message: "Not found." },
+  EVAL_MANAGERS_ONLY: { status: 403, message: "Only a manager can adjust an evaluation. HR and Admin can see the adjustments and their history." },
+  EVAL_SELF: { status: 403, message: "You can't adjust your own evaluation." },
+  EVAL_BAD_PERIOD: { status: 400, message: "The adjustment must be for the exact dates shown in the report." },
+  EVAL_BAD_SCORE: { status: 400, message: "The score must be a number from 0 to 100." },
+  EVAL_BAD_PRODUCTIVITY: { status: 400, message: "The productivity must be a number from 0 to 100." },
+  EVAL_BAD_STATUS: { status: 400, message: "Choose one of the existing evaluation statuses." },
+  EVAL_REASON_REQUIRED: { status: 400, message: "Give a reason for the adjustment (at least 5 characters)." },
+  EVAL_REASON_TOO_LONG: { status: 400, message: "Keep the reason to 300 characters or fewer." },
   TARGETS_NOT_READY: { status: 503, message: "Daily targets are not set up on this server yet. Ask an administrator to finish the database update." },
 };
 
@@ -71,6 +81,24 @@ router.get("/efficiency", async (req, res) => {
       return;
     }
     res.json(await productivity.getEfficiency(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), userId, teamId, filters: parseFilters(req.query as Record<string, unknown>) }));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+// Manager Evaluation: adjust one person's score / status / productivity for the exact period shown (managers only, in their own reporting scope); history for everyone who may see the person.
+router.post("/evaluation", async (req, res) => {
+  try {
+    res.json(await evaluation.saveEvaluation(req.user!.userId, clientIp(req), (req.body ?? {}) as Record<string, unknown>));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+router.get("/evaluation/history", async (req, res) => {
+  try {
+    const userId = text(req.query.userId, 40);
+    if (!userId || !goodIds(userId)) return res.status(400).json({ error: "One of the values sent is not valid." });
+    res.json(await evaluation.evaluationHistory(req.user!.userId, userId, text(req.query.from, 10) ?? "", text(req.query.to, 10) ?? ""));
   } catch (error) {
     fail(res, error);
   }

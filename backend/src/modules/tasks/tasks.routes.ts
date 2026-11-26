@@ -13,6 +13,7 @@ import * as bulk from "./tasks.bulk.js";
 import * as late from "./tasks.late.js";
 import * as edit from "./tasks.edit.service.js";
 import * as assigned from "./tasks.assigned.js";
+import * as previous from "./tasks.previous.js";
 import * as rep from "./repetition.service.js";
 import { guardUuidParams, isBadInput } from "../../lib/params.js";
 
@@ -22,6 +23,14 @@ guardUuidParams(router);
 const MESSAGES: Record<string, { status: number; message: string }> = {
   USER_NOT_FOUND: { status: 404, message: "Not signed in." },
   BAD_DATE: { status: 400, message: "Dates must be in YYYY-MM-DD format." },
+  PREV_TITLE_SHORT: { status: 400, message: "Give the task a title of at least 3 characters." },
+  PREV_TITLE_LONG: { status: 400, message: "Keep the title to 120 characters or fewer." },
+  PREV_DESCRIPTION_LONG: { status: 400, message: "Keep the description to 1000 characters or fewer." },
+  PREV_BAD_DESCRIPTION: { status: 400, message: "The description must be text." },
+  PREV_DATE_REQUIRED: { status: 400, message: "Choose the date the task was completed." },
+  PREV_FUTURE_DATE: { status: 400, message: "A completed task can't have a completion date in the future." },
+  PREV_NOTHING_TO_CHANGE: { status: 400, message: "Nothing to change." },
+  PREV_TOO_MANY: { status: 400, message: "You have reached the limit of 500 previous tasks. Delete some to add more." },
   NOT_FOUND: { status: 404, message: "That task doesn't exist." },
   FORBIDDEN: { status: 403, message: "Only managers can do that." },
   NOT_YOUR_TEAM: { status: 403, message: "That person isn't in your team." },
@@ -388,6 +397,20 @@ router.post("/review/:id/delete", async (req, res) => {
   } catch (e) {
     fail(res, e);
   }
+});
+
+// --- a manager's personal PREVIOUS tasks (their own notebook, kept apart from the live task records; tasks.previous.ts) ---
+router.get("/previous", async (req, res) => {
+  try { res.json(await previous.listPrevious(req.user!.userId)); } catch (e) { fail(res, e); }
+});
+router.post("/previous", async (req, res) => {
+  try { res.status(201).json(await previous.addPrevious(req.user!.userId, req.body ?? {})); } catch (e) { fail(res, e); }
+});
+router.patch("/previous/:id", async (req, res) => {
+  try { res.json(await previous.editPrevious(req.user!.userId, id(req.params.id), req.body ?? {})); } catch (e) { fail(res, e); }
+});
+router.delete("/previous/:id", async (req, res) => {
+  try { res.json(await previous.deletePrevious(req.user!.userId, id(req.params.id))); } catch (e) { fail(res, e); }
 });
 
 // --- manager-ASSIGNED tasks (their own workflow: assign, progress, confirm; no approval and no rating) ---

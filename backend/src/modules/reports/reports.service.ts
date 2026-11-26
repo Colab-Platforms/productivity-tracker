@@ -30,6 +30,7 @@ import { huddleSecondsByDay } from "../meetings/participation.service.js";
 import { awayOf } from "../tracker/activityClass.js";
 import { platformToday, parseIsoDay, zonedToUtc } from "../../lib/dates.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
+import { adjustmentsFor, overlayWeighted } from "../tasks/evaluation.adjust.js";
 import { earlyDayTargetSeconds, isEarlyLogoutDay } from "../attendance/earlyLogout.logic.js";
 import { loadEarlyLogoutPolicy } from "../attendance/earlyLogout.js";
 
@@ -543,6 +544,12 @@ export async function getTeamReport(
     const counted = person.tasksCompleted + person.tasksPending;
     person.taskCompletion = counted > 0 ? person.tasksCompleted / counted : 0;
     person.avgRating = person.ratedCount > 0 ? Math.round((person.ratingSum / person.ratedCount) * 10) / 10 : null;
+  }
+
+  // a manager's adjustments for exactly this period (evaluation.adjust.ts) become the effective score and status; the totals stay the system figure
+  {
+    const adj = await adjustmentsFor([...byPerson.keys()], fromStr, toStr);
+    for (const person of byPerson.values()) { const a = adj.get(person.userId); if (a) person.weighted = overlayWeighted(person.weighted, a); }
   }
 
   const buckets = Array.from(byBucket.values())

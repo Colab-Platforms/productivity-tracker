@@ -7,6 +7,7 @@ import { localMinutes, recompute } from "./tracker.service.js";
 import { platformToday } from "../../lib/dates.js";
 import { earlyDayTargetSeconds, isEarlyLogoutDay } from "../attendance/earlyLogout.logic.js";
 import { loadEarlyLogoutPolicy } from "../attendance/earlyLogout.js";
+import { problemNotice, remindAssignedDue, watchLongBreaks, remindMeetingsSoon, remindMissingClockOut, remindOverdueTasks } from "./tracker.notify.js";
 
 const INTERVAL_MINUTES = 15;
 
@@ -42,6 +43,10 @@ async function raise(
       context: context as any,
     },
   });
+  // The person and their managers hear about these three problems once per day (the dedupe key makes the 15-minute reruns silent).
+  if (alertType === "LATE_LOGIN" || alertType === "NO_LOGIN" || alertType === "BREAK_OVERAGE") {
+    await problemNotice(alertType, userId, date.toISOString().slice(0, 10), message);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +317,8 @@ export function startTrackerScheduler() {
       // Same for a break nobody ended, so it cannot swallow the productive day.
       const breaks = await closeStaleBreaks();
       const raised = await generateAlerts();
+      // Reminders (each notification is deduplicated, so rerunning every 15 minutes never repeats one)
+      await Promise.allSettled([remindMissingClockOut(), remindMeetingsSoon(), remindOverdueTasks(), remindAssignedDue()]);
       if (closed || raised || meetings || breaks) {
         console.log(
           `[scheduler] closed ${closed} stale session(s), ${meetings} stale meeting(s), ${breaks} stale break(s), ${raised} alert(s)`
@@ -325,5 +332,8 @@ export function startTrackerScheduler() {
 
   run();
   setInterval(run, INTERVAL_MINUTES * 60 * 1000);
+  // People on a break are checked every minute, so the long-break alarm is immediate rather than up to 15 minutes late.
+  const watch = () => watchLongBreaks().catch((e) => console.error("[scheduler] long-break watch failed:", e));
+  setInterval(watch, 60 * 1000);
   console.log(`Tracker scheduler started (every ${INTERVAL_MINUTES} minutes)`);
 }

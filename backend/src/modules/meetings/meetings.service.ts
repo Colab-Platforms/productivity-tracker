@@ -198,7 +198,7 @@ export async function listMine(userId: string, f: { scope?: unknown; q?: unknown
   const q = String(f.q ?? "").trim().slice(0, 100);
   const mine = { OR: [{ organizerId: userId }, { attendees: { some: { userId } } }] };
   // A huddle you joined and have not ended stays in "upcoming" after its scheduled end, so the End Huddle button never disappears.
-  const stillIn = scope === "upcoming" ? await part.openMeetingIds(userId) : [];
+  const stillIn = scope === "upcoming" ? [...new Set([...(await part.openMeetingIds(userId)), ...(await part.recentlyEndedByManagerIds(userId))])] : [];
   const where = {
     ...mine, // organizer or invited: the person is the link, so a manager's invitee from another company sees it too
     ...(q ? { title: { contains: q, mode: "insensitive" as const } } : {}),
@@ -422,6 +422,14 @@ export async function end(userId: string, id: string) {
   });
   // every invitee's screen refreshes (their Join / End buttons and status)
   part.signalMeeting([userId, ...m.attendees.map((a) => a.userId)], id);
+  // Everyone invited is told the organizer ended it (the organizer pressed the button, so not them).
+  // Everyone who took part (joined) is told, with the exact wording; people who never joined do not need it.
+  void (async () => {
+    const took = await prisma.meetingParticipation.findMany({ where: { meetingId: id }, select: { userId: true } }).catch(() => []);
+    const ids = [...new Set(took.map((p) => p.userId))].filter((x) => x !== userId);
+    if (ids.length === 0) return;
+    await notifyUsers({ platformId: m.platformId, userIds: ids, type: "MEETING_ENDED", title: `Team Huddle ended: ${m.title}`, body: "The Manager has ended the Team Huddle.", link: `/dashboard/meetings?id=${id}`, dedupeKey: `meeting-ended:${id}`, data: { category: "MEETING", meetingId: id } });
+  })();
   return { ok: true, endedParticipants: closed.length };
 }
 

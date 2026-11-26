@@ -80,3 +80,29 @@ export function testPopup(): string {
     return `The browser refused: ${e instanceof Error ? e.message : "unknown reason"}.`;
   }
 }
+
+/** A louder, repeated alarm (three bursts) for something that needs attention now, e.g. a break far past its limit. Uses the same on/off switch as the chat ping,
+ *  and stays silent (no error) if the browser has not allowed audio yet (it does after the person has clicked anywhere on the page). */
+export function alarm() {
+  if (!soundOn()) return;
+  try {
+    ctx ??= new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    void ctx.resume();
+    const t = ctx.currentTime;
+    for (let burst = 0; burst < 3; burst++) {
+      [[988, 0], [740, 0.18]].forEach(([freq, at]) => {
+        const start = t + burst * 0.8 + at;
+        const osc = ctx!.createOscillator();
+        const gain = ctx!.createGain();
+        osc.type = "square";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+        osc.connect(gain).connect(ctx!.destination);
+        osc.start(start);
+        osc.stop(start + 0.2);
+      });
+    }
+  } catch { /* audio not available */ }
+}
