@@ -221,7 +221,6 @@ export default function AttendancePage() {
   const tiles: [string, number, string, string][] = [
     ["Working", counts.working, "bg-emerald-500", "working"],
     ["On break", counts.onBreak, "bg-amber-500", "onBreak"],
-    ["Washroom", counts.washroom, "bg-sky-400", "washroom"],
     ["In a meeting", counts.meeting, "bg-indigo-500", "meeting"],
     ["Clocked out", counts.out, "bg-slate-400", "out"],
     ["Not clocked in", counts.notIn, "bg-red-500", "notIn"],
@@ -365,7 +364,6 @@ export default function AttendancePage() {
                   <th className={`${th} text-right`}>Clock in</th>
                   <th className={`${th} text-right`}>Clock out</th>
                   <th className={`${th} text-right`}>Break used</th>
-                  <th className={`${th} text-right`} title="Washroom time is tracked on its own. It is not a break and does not use the break allowance.">Washroom</th>
                   <th className={`${th} text-right`}><HuddleWord /></th>
                   <th className={`${th} text-right`}>Working</th>
                   <th className={th}>Attendance status</th>
@@ -375,7 +373,7 @@ export default function AttendancePage() {
                 {groups.map(([group, members]) => (
                   <Fragment key={group}>
                     <tr className="border-t border-indigo-100 bg-[#F3F7F6]">
-                      <td colSpan={15} className="px-4 py-2">
+                      <td colSpan={14} className="px-4 py-2">
                         <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{group}</span>
                         <span className="ml-2 text-xs text-slate-400">{members.length} {members.length === 1 ? "person" : "people"}</span>
                         {members.some(INVITABLE) && (
@@ -388,7 +386,6 @@ export default function AttendancePage() {
                       const running = r.status === "WORKING" || r.status === "MEETING" || IS_BREAK(r.status);
                       const inStatus = r.statusStartedAt && r.status !== "ON_LEAVE" ? (now - new Date(r.statusStartedAt).getTime()) / 1000 : null;
                       const breakSec = r.breakSeconds === null ? null : r.breakSeconds + (IS_COUNTED_BREAK(r.status) ? drift : 0);
-                      const washSec = r.washroomSeconds == null ? null : r.washroomSeconds + (r.status === "BIO" ? drift : 0);
                       const meetSec = r.meetingSeconds === null ? null : r.meetingSeconds + (r.status === "MEETING" ? drift : 0);
                       const prodSec = r.productiveSeconds === null ? null : r.productiveSeconds + (r.status === "WORKING" || r.status === "MEETING" ? drift : 0);
                       const overBudget = breakSec !== null && breakSec > r.breakBudgetSeconds;
@@ -457,9 +454,6 @@ export default function AttendancePage() {
                                 </p>
                               </>
                             )}
-                          </td>
-                          <td className="px-4 py-3 text-right tabular-nums text-slate-600" title="Washroom time. Not a break, not productive time.">
-                            {washSec === null ? <span className="text-slate-400">—</span> : washSec === 0 ? <span className="text-slate-300">—</span> : <>{clock(washSec)}{r.status === "BIO" && <p className="text-[11px] text-sky-600">at the washroom now</p>}</>}
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-slate-900" title="Live meetings plus the time the person actually spent in a Team Huddle (from joining to leaving), counted only while clocked in and outside breaks. 0:00:00 means nothing was recorded.">{clock(meetSec)}</td>
                           <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">{clock(prodSec)}</td>
