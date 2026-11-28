@@ -48,6 +48,23 @@ export async function downloadTemplate() {
   download("employee-import-template.csv", await res.text());
 }
 
+/** The same template as a real Excel file (built from the server's CSV, so the headings always match). */
+export async function downloadTemplateXlsx() {
+  const res = await fetch(`${API_BASE}/admin/employees/template`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
+  if (!res.ok) throw new Error("Could not download the template.");
+  const { buildTemplateWorkbook, readCsv } = await import("./templateXlsx");
+  const [headers, example] = readCsv(await res.text());
+  const buffer = await buildTemplateWorkbook(headers, example ?? []);
+  const url = URL.createObjectURL(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "employee-import-template.xlsx";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // Everything HR needs to fix and re-upload: the original values plus why each
 // row was refused.
 export function errorReportCsv(rows: RowResult[]) {

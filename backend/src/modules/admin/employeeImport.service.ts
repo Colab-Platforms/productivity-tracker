@@ -21,6 +21,7 @@
 // ===========================================================================
 
 import { leftStatuses } from "../../lib/userStatus.js";
+import { PERSONAL_FIELDS, type PersonalField } from "../personal/personal.logic.js";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import readXlsxFile from "read-excel-file/node";
@@ -68,13 +69,13 @@ export const FIELD_META: Record<ImportField, { label: string; required: boolean;
   company: { label: "Company", required: true, synonyms: ["company", "companyname", "entity", "platform", "organisation", "organization"] },
   fullName: { label: "Full name", required: true, synonyms: ["fullname", "name", "employeename", "employee", "staffname"] },
   employeeId: { label: "Employee ID", required: true, synonyms: ["employeeid", "empid", "employeecode", "empcode", "staffid", "code"] },
-  email: { label: "Work email", required: true, synonyms: ["workemail", "email", "emailaddress", "officialemail", "officeemail"] },
+  email: { label: "Work email", required: true, synonyms: ["workemail", "email", "emailid", "emailaddress", "officialemail", "officeemail"] },
   mobile: { label: "Mobile number", required: false, synonyms: ["mobilenumber", "mobile", "mobileno", "phone", "phonenumber", "contactnumber"] },
   designation: { label: "Designation", required: true, synonyms: ["designation", "jobtitle", "position", "title"] },
-  team: { label: "Team or department", required: true, synonyms: ["teamordepartment", "team", "department", "teamdepartment"] },
+  team: { label: "Team or department", required: true, synonyms: ["teamordepartment", "team", "teamname", "department", "teamdepartment"] },
   projects: { label: "Projects", required: false, synonyms: ["projects", "project", "projectassignment", "projectassignments"] },
   role: { label: "System role", required: true, synonyms: ["systemrole", "role", "accessrole", "userrole"] },
-  reportsToName: { label: "Reports to - full name", required: true, synonyms: ["reportstofullname", "reportstoname", "reportsto", "reportingmanager", "reportingmanagername", "managername", "manager"] },
+  reportsToName: { label: "Reports to - full name", required: true, synonyms: ["reportstofullname", "reportstoname", "reportsto", "primarymanager", "reportingmanager", "reportingmanagername", "managername", "manager"] },
   reportsToId: { label: "Reports to - employee ID", required: true, synonyms: ["reportstoemployeeid", "reportstoid", "reportingmanagerid", "reportingmanageremployeeid", "managerid", "manageremployeeid"] },
   dateOfJoining: { label: "Date of joining", required: false, synonyms: ["dateofjoining", "doj", "joiningdate", "joindate", "dateofjoin"] },
   shiftStart: { label: "Shift start", required: false, synonyms: ["shiftstart", "shiftstarttime", "starttime", "shiftin"] },
@@ -86,7 +87,43 @@ export const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z
 
 export type Cell = string | number | boolean | null;
 export type ParsedRow = { rowNumber: number; cells: Cell[]; skip?: "example" | "blank" | "note" };
-export type Mapping = Partial<Record<ImportField, number | null>>;
+// Personal-detail columns are recognised ONLY for "Update employees" (they are suggested in the mapping and read by employeeUpdate.service.ts);
+// Add and Import ignore them, so nothing changes there.
+export const PERSONAL_COLUMNS: Record<PersonalField, string[]> = {
+  gender: ["gender", "sex"],
+  dateOfBirth: ["dateofbirth", "dob", "birthdate", "dobyyyymmdd", "dateofbirthyyyymmdd"],
+  maritalStatus: ["maritalstatus", "marital"],
+  secondaryPhoneCode: ["secondarycontactcode", "secondaryphonecode", "secondarycountrycode", "alternatephonecode"],
+  secondaryPhone: ["secondarycontactnumber", "secondaryphone", "secondarycontact", "alternatenumber", "alternatecontactnumber"],
+  addressLine1: ["addressline1", "address1", "address"],
+  addressLine2: ["addressline2", "address2"],
+  city: ["city", "town"],
+  state: ["state", "province"],
+  country: ["country"],
+  employeeStatusType: ["employeestatus", "employmentstatus", "statustype", "employeestatusfulltimeparttime", "employeestatusfulltimeparttime"],
+  reportingOffice: ["reportingoffice", "officelocation", "worklocation"],
+  grade: ["grade", "level"],
+  vertical: ["vertical", "businessvertical"],
+  phoneCode: ["phonecode", "countrycode", "mobilecode", "mobilecountrycode", "primaryphonecode"],
+  department: ["department", "departmentname"],
+  extraField1: ["extrafield1", "extra1", "additionalfield1"],
+  extraField2: ["extrafield2", "extra2", "additionalfield2"],
+  extraField3: ["extrafield3", "extra3", "additionalfield3"],
+  extraField4: ["extrafield4", "extra4", "additionalfield4"],
+  extraField5: ["extrafield5", "extra5", "additionalfield5"],
+  notes: ["notes", "note", "remarks", "comments"],
+};
+
+// Columns only the Update flow reads that are NOT personal details: employee type (employee_profiles), office timings (read as shift start and end) and a secondary manager
+// (an additional reporting manager, Admin only).
+export const SHEET_ONLY_FIELDS = ["employmentType", "officeTimings", "secondaryManager"] as const;
+export type SheetOnlyField = (typeof SHEET_ONLY_FIELDS)[number];
+export const SHEET_ONLY_COLUMNS: Record<SheetOnlyField, string[]> = {
+  employmentType: ["employeetype", "employmenttype", "typeofemployment"],
+  officeTimings: ["officetimings", "officetiming", "officehours", "worktimings", "timings"],
+  secondaryManager: ["secondarymanager", "additionalmanager", "secondreportingmanager"],
+};
+export type Mapping = Partial<Record<ImportField | PersonalField | SheetOnlyField, number | null>>;
 
 // ---------------------------------------------------------------------------
 // OPTIONS: every interpretation HR must switch on. Off means the affected
@@ -105,7 +142,7 @@ export type ImportOptions = {
 };
 
 export type Issue = {
-  field: ImportField | "row";
+  field: ImportField | PersonalField | "row";
   severity: "error" | "warning";
   code: string;
   message: string;
@@ -206,12 +243,31 @@ export const isBlank = (c: Cell) => c === null || (typeof c === "string" && c.tr
 function guessMapping(headers: Cell[]): Mapping {
   const used = new Set<number>();
   const out: Mapping = {};
+  // When the sheet has BOTH a "Team Name" column and a "Department" column, the team is the Team Name and the department is its own text field
+  // (never guessed which one is the team). A sheet with only "Department" keeps meaning the team, as before.
+  const hasTeamName = headers.some((h) => norm(h) === "teamname");
   for (const field of IMPORT_FIELDS) {
-    const hit = headers.findIndex((h, i) => !used.has(i) && FIELD_META[field].synonyms.includes(norm(h)));
+    const syn = field === "team" && hasTeamName ? ["teamname"] : FIELD_META[field].synonyms;
+    const hit = headers.findIndex((h, i) => !used.has(i) && syn.includes(norm(h)));
     if (hit >= 0) {
       out[field] = hit;
       used.add(hit);
     } else out[field] = null;
+  }
+  for (const f of PERSONAL_FIELDS) {
+    // "Department" is the personal department field only when it is not already the team (see above).
+    const hit = headers.findIndex((h, i) => !used.has(i) && PERSONAL_COLUMNS[f].includes(norm(h)));
+    if (hit >= 0) {
+      out[f] = hit;
+      used.add(hit);
+    } else out[f] = null;
+  }
+  for (const f of SHEET_ONLY_FIELDS) {
+    const hit = headers.findIndex((h, i) => !used.has(i) && SHEET_ONLY_COLUMNS[f].includes(norm(h)));
+    if (hit >= 0) {
+      out[f] = hit;
+      used.add(hit);
+    } else out[f] = null;
   }
   return out;
 }
@@ -322,20 +378,51 @@ export async function parseEmployeeFile(input: { fileName: string; contentBase64
   };
 }
 
-export function importTemplateCsv() {
+// The template: the original columns first (unchanged), then the personal and professional columns of the HR details sheet. The extra columns are read only by
+// "Update employees"; Add and Import ignore them. Headings are exactly the ones the importer recognises (see PERSONAL_COLUMNS / SHEET_ONLY_COLUMNS).
+export const TEMPLATE_EXTRA_COLUMNS: { heading: string; example: string }[] = [
+  { heading: "Phone code", example: "91" },
+  { heading: "Gender", example: "Female" },
+  { heading: "Date of birth (YYYY-MM-DD)", example: "1995-06-15" },
+  { heading: "Marital status", example: "Single" },
+  { heading: "Secondary phone code", example: "91" },
+  { heading: "Secondary contact number", example: "9000000000" },
+  { heading: "Address line 1", example: "12 Example Street" },
+  { heading: "Address line 2", example: "Example Nagar" },
+  { heading: "State", example: "Examplestate" },
+  { heading: "City", example: "Exampleville" },
+  { heading: "Country", example: "India" },
+  { heading: "Department", example: "Operations" },
+  { heading: "Employee type", example: "Permanent" },
+  { heading: "Employee status (Full time / Part time)", example: "Full time" },
+  { heading: "Office timings", example: "10:00 AM - 7:00 PM" },
+  { heading: "Reporting office", example: "Head office" },
+  { heading: "Secondary manager", example: "" },
+  { heading: "Grade", example: "G2" },
+  { heading: "Vertical", example: "Services" },
+  { heading: "Extra field 1", example: "" },
+  { heading: "Extra field 2", example: "" },
+  { heading: "Extra field 3", example: "" },
+  { heading: "Extra field 4", example: "" },
+  { heading: "Extra field 5", example: "" },
+];
+
+export function importTemplateRows(): { headers: string[]; example: string[] } {
   const headers = IMPORT_FIELDS.map((f) => FIELD_META[f].label);
   const example = [
     "Avatar", "Priya Nair", "AVT-0003", "priya@avatarindia.com", "98765 43210", "Associate", "Operations", "",
     "Employee", "Neha Sharma", "AVT-0002", "14-01-2025", "10:00", "19:00", "Mon to Sat",
   ];
+  return {
+    headers: [...headers, ...TEMPLATE_EXTRA_COLUMNS.map((c) => c.heading), "Notes"],
+    example: [...example, ...TEMPLATE_EXTRA_COLUMNS.map((c) => c.example), "<- EXAMPLE ROW: delete it, or leave it, it is never imported"],
+  };
+}
+
+export function importTemplateCsv() {
+  const { headers, example } = importTemplateRows();
   const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-  return (
-    "﻿" +
-    [headers.concat("Notes"), example.concat("<- EXAMPLE ROW: delete it, or leave it, it is never imported")]
-      .map((r) => r.map(esc).join(","))
-      .join("\r\n") +
-    "\r\n"
-  );
+  return "﻿" + [headers, example].map((r) => r.map(esc).join(",")).join("\r\n") + "\r\n";
 }
 
 // ===========================================================================

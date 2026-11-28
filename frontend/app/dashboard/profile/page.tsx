@@ -64,21 +64,33 @@ type Tab = (typeof TABS)[number];
 const TYPE_NAME: Record<string, string> = { PERMANENT: "Permanent", PROBATION: "Probation", CONTRACT: "Contract", INTERN: "Intern" };
 const showDay = (s: string | null) => (s ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${s}T00:00:00Z`)) : null);
 
+// Long values (a full address) take the whole row and wrap; nothing is cut off or overflows on a phone.
+const WIDE = new Set(["Address line 1", "Address line 2", "Address"]);
 function Fields({ rows }: { rows: [string, string | null | undefined][] }) {
   return (
     <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
       {rows.map(([k, v]) => (
-        <div key={k}>
+        <div key={k} className={`min-w-0 ${WIDE.has(k) ? "sm:col-span-2" : ""}`}>
           <dt className="text-xs text-slate-400">{k}</dt>
-          <dd className="mt-0.5 text-sm font-medium text-slate-900">{v && v.trim() ? v : <span className="font-normal text-slate-400">Not provided</span>}</dd>
+          <dd className="mt-0.5 whitespace-pre-wrap break-words text-sm font-medium text-slate-900 [overflow-wrap:anywhere]">{v && v.trim() ? v : <span className="font-normal text-slate-400">Not provided</span>}</dd>
         </div>
       ))}
     </dl>
   );
 }
 
-function NotStored({ what }: { what: string }) {
-  return <p className="rounded-xl bg-[#F3F7F6] px-4 py-6 text-center text-sm text-slate-500">{what} is not recorded in your profile yet. If HR needs it, they will ask you for it.</p>;
+// What HR/Admin entered in "Personal details" (GET /personal-details/me). Shown read-only: only HR / Admin change it.
+type Personal = { ready: boolean; entered: boolean; values: Record<string, string | null> };
+const WORDS: Record<string, Record<string, string>> = {
+  gender: { MALE: "Male", FEMALE: "Female", OTHER: "Other" },
+  maritalStatus: { SINGLE: "Single / unmarried", MARRIED: "Married", DIVORCED: "Divorced", WIDOWED: "Widowed" },
+  employeeStatusType: { FULL_TIME: "Full time", PART_TIME: "Part time" },
+};
+const pv = (p: Personal | null, k: string): string | null => { const v = p?.values?.[k] ?? null; return v ? WORDS[k]?.[v] ?? v : null; };
+const mobileOf = (phone: string | null | undefined, p: Personal | null) => { const c = pv(p, "phoneCode"); return phone ? `${c && !phone.trim().startsWith("+") ? "+" + c + " " : ""}${phone}` : null; };
+const phoneOf = (p: Personal | null) => { const n = pv(p, "secondaryPhone"); return n ? `${pv(p, "secondaryPhoneCode") ? "+" + pv(p, "secondaryPhoneCode") + " " : ""}${n}` : null; };
+function NotEntered({ what }: { what: string }) {
+  return <p className="rounded-xl bg-[#F3F7F6] px-4 py-6 text-center text-sm text-slate-500" data-testid="not-entered">{what} has not been entered yet. HR can add it for you.</p>;
 }
 
 function StaffProfile() {
@@ -89,6 +101,8 @@ function StaffProfile() {
     return TABS.find((t) => t === wanted) ?? "Personal";
   });
   const [details, setDetails] = useState<Details | null>(null);
+  const [personal, setPersonal] = useState<Personal | null>(null);
+  useEffect(() => { apiGet<Personal>("/personal-details/me").then(setPersonal).catch(() => setPersonal(null)); }, []);
   const [photoAtLocal, setPhotoAtLocal] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     apiGet<Details>("/auth/me/profile").then(setDetails).catch(() => setDetails(null));
@@ -224,11 +238,15 @@ function StaffProfile() {
         )}
         {tab === "Personal" && !canEditPhoto && <p className="mb-4 text-xs text-slate-400">Your profile photo is set by HR. Ask them if you want it added or changed.</p>}
         {tab === "Personal" && (
-          <Fields rows={[["First name", me.firstName], ["Last name", me.lastName], ["Employee ID", me.employeeCode], ["Company", details?.company ?? me.platform.name]]} />
+          <Fields rows={[["First name", me.firstName], ["Last name", me.lastName], ["Employee ID", me.employeeCode], ["Company", details?.company ?? me.platform.name], ["Gender", pv(personal, "gender")], ["Date of birth", showDay(personal?.values?.dateOfBirth ?? null)], ["Marital status", pv(personal, "maritalStatus")]]} />
         )}
-        {tab === "Contact" && <Fields rows={[["Work email", me.email], ["Phone", details?.phone], ["Sign in with", me.employeeCode ?? me.email]]} />}
-        {tab === "Address" && <NotStored what="Your address" />}
-        {tab === "Emergency contact" && <NotStored what="Your emergency contact" />}
+        {tab === "Contact" && <Fields rows={[["Work email", me.email], ["Phone", mobileOf(details?.phone, personal)], ["Secondary contact number", phoneOf(personal)], ["Sign in with", me.employeeCode ?? me.email]]} />}
+        {tab === "Address" && (personal?.values && ["addressLine1", "addressLine2", "city", "state", "country"].some((k) => personal.values[k])
+          ? <Fields rows={[["Address line 1", pv(personal, "addressLine1")], ["Address line 2", pv(personal, "addressLine2")], ["City", pv(personal, "city")], ["State", pv(personal, "state")], ["Country", pv(personal, "country")]]} />
+          : <NotEntered what="Your address" />)}
+        {tab === "Emergency contact" && (phoneOf(personal)
+          ? <div><Fields rows={[["Secondary contact number", phoneOf(personal)]]} /><p className="mt-4 text-xs text-slate-400">A name and relationship for an emergency contact are not recorded in the HRMS yet.</p></div>
+          : <NotEntered what="Your emergency contact" />)}
         {tab === "Employment" && (
           <Fields
             rows={[
@@ -240,8 +258,19 @@ function StaffProfile() {
               ["Probation ends", showDay(details?.probationEndDate ?? null)],
               ["Employee type", details?.employmentType ? TYPE_NAME[details.employmentType] ?? details.employmentType : null],
               ["Shift", details?.shift ? `${details.shift.name} (${details.shift.startTime} to ${details.shift.endTime})` : null],
+              ["Employee status", pv(personal, "employeeStatusType")],
+              ["Reporting office", pv(personal, "reportingOffice")],
+              ["Grade", pv(personal, "grade")],
+              ["Vertical", pv(personal, "vertical")],
+              ["Department (as entered by HR)", pv(personal, "department")],
             ]}
           />
+        )}
+        {tab === "Employment" && personal?.values && ["extraField1", "extraField2", "extraField3", "extraField4", "extraField5", "notes"].some((k) => personal.values[k]) && (
+          <div className="mt-5 border-t border-indigo-100 pt-4" data-testid="additional-info">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Additional information</p>
+            <Fields rows={[["Extra field 1", pv(personal, "extraField1")], ["Extra field 2", pv(personal, "extraField2")], ["Extra field 3", pv(personal, "extraField3")], ["Extra field 4", pv(personal, "extraField4")], ["Extra field 5", pv(personal, "extraField5")], ["Notes", pv(personal, "notes")]]} />
+          </div>
         )}
         {tab === "Login Activity" && <LoginActivity mode="mine" />}
         {tab === "My Documents" && !me.documentsExempt && <MyDocuments />}

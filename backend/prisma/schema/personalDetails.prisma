@@ -1,0 +1,38 @@
+// ===========================================================================
+// EMPLOYEE PERSONAL DETAILS - NEW TABLE ONLY, no column added to users. One row per person (no row = nothing entered yet).
+// Sensitive (date of birth, address, personal phone): only the person, and HR/Admin of their company, can read it; only HR/Admin can change it.
+// No relations to existing models; the foreign keys live in the migration.
+// ===========================================================================
+
+model EmployeePersonalDetails {
+  userId             String    @id @db.Uuid
+  platformId         String    @db.Uuid
+  gender             String? // MALE | FEMALE | OTHER
+  dateOfBirth        DateTime? @db.Date
+  maritalStatus      String? // SINGLE | MARRIED | DIVORCED | WIDOWED
+  phoneCode          String? // the primary mobile's country code (the number itself stays in users.phone)
+  secondaryPhoneCode String?
+  secondaryPhone     String?
+  addressLine1       String?
+  addressLine2       String?
+  city               String?
+  state              String?
+  country            String?
+  employeeStatusType String? // FULL_TIME | PART_TIME
+  reportingOffice    String?
+  grade              String?
+  vertical           String?
+  department         String? // the department word from the HR sheet, kept as written (teams are projects, not departments)
+  extraField1        String?
+  extraField2        String?
+  extraField3        String?
+  extraField4        String?
+  extraField5        String?
+  notes              String?
+  updatedById        String?   @db.Uuid
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
+
+  @@index([platformId])
+  @@map("employee_personal_details")
+}

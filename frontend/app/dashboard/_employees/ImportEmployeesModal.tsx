@@ -19,7 +19,7 @@
 import { useMemo, useRef, useState } from "react";
 import { apiPost } from "@/lib/api";
 import { Modal } from "./Modal";
-import { credentialsCsv, download, downloadTemplate, errorReportCsv, readAsBase64, updateErrorReportCsv } from "./files";
+import { credentialsCsv, download, downloadTemplate, downloadTemplateXlsx, errorReportCsv, readAsBase64, updateErrorReportCsv } from "./files";
 import { UPDATE_FILTERS, UpdatePanel, UpdateResult, UpdateTable, updateCount } from "./UpdateReview";
 import {
   FIELDS,
@@ -415,7 +415,14 @@ export default function ImportEmployeesModal({
             onClick={() => void downloadTemplate().catch((e: Error) => setError(e.message))}
             className="rounded-xl border border-indigo-200 px-4 py-2 font-medium text-indigo-700 hover:bg-indigo-50"
           >
-            Download sample template
+            Download CSV template
+          </button>
+          <button
+            data-testid="template-xlsx"
+            onClick={() => void downloadTemplateXlsx().catch((e: Error) => setError(e.message))}
+            className="rounded-xl border border-indigo-200 px-4 py-2 font-medium text-indigo-700 hover:bg-indigo-50"
+          >
+            Download Excel template
           </button>
         </div>
         <ul className="mt-4 space-y-1.5 text-xs leading-relaxed text-slate-500">

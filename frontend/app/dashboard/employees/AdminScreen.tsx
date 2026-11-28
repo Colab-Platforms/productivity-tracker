@@ -26,6 +26,7 @@ import { SearchSelect } from "../_employees/SearchSelect";
 import EmployeeActions from "../_employees/EmployeeActions";
 import Avatar, { PhotoEditor } from "../_photos/Avatar";
 import WarningLettersAdmin from "../_warnings/WarningLettersAdmin";
+import PersonalDetailsForm from "../_employees/PersonalDetailsForm";
 import { AdditionalManagers } from "../_employees/AdditionalManagers";
 import { useMe } from "../layout";
 import LatePolicyCard from "../_late/LatePolicyCard";
@@ -1094,6 +1095,8 @@ function EditPersonDrawer({ person, onClose, onSaved, onError }: { person: Perso
         </button>
         <button onClick={onClose} className="rounded-xl border border-indigo-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:border-slate-400">Cancel</button>
       </div>
+
+      {p.role !== "ADMIN" && <PersonalDetailsForm userId={p.id} name={`${f.firstName} ${f.lastName}`.trim()} />}
 
       {p.role !== "ADMIN" && <WarningLettersAdmin userId={p.id} name={`${f.firstName} ${f.lastName}`.trim()} />}
 

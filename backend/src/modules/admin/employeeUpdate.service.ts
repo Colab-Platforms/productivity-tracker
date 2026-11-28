@@ -41,11 +41,16 @@ import {
   type Viewer,
 } from "./employeeImport.service.js";
 import { canonicalDesignation } from "../../lib/designations.js";
+import { checkPersonal, compare as comparePersonal, LABEL as PERSONAL_LABEL, PERSONAL_FIELDS, SENSITIVE, type PersonalField, type PersonalValues } from "../personal/personal.logic.js";
+import { currentFor, personalReady } from "../personal/personal.service.js";
+import { platformToday } from "../../lib/dates.js";
+import { linkedManagerIdsOf, linksReady } from "../../lib/reportingLinks.js";
 
-export type UpdateField = "email" | "mobile" | "designation" | "role" | "team" | "projects" | "reportsTo" | "dateOfJoining" | "shift";
+export type UpdateField = "employmentType" | "secondaryManager" | "email" | "mobile" | "designation" | "role" | "team" | "projects" | "reportsTo" | "dateOfJoining" | "shift" | PersonalField;
 const LABEL: Record<UpdateField, string> = {
   email: "Work email", mobile: "Mobile number", designation: "Designation", role: "System role", team: "Team",
-  projects: "Projects", reportsTo: "Reports to", dateOfJoining: "Date of joining", shift: "Shift",
+  projects: "Projects", reportsTo: "Reports to", dateOfJoining: "Date of joining", shift: "Shift", employmentType: "Employee type", secondaryManager: "Secondary manager",
+  ...PERSONAL_LABEL,
 };
 
 export type Change = { field: UpdateField; label: string; current: string; proposed: string; kind: "fill" | "conflict"; applied: boolean };
@@ -88,6 +93,9 @@ type Apply = {
   reportsToId?: string | null;
   teamId?: string;
   projectIds?: string[];
+  personal?: PersonalValues;
+  employmentType?: string;
+  secondaryManagerId?: string;
 };
 
 type Work = { row: UpdateRow; userId: string | null; platformId: string | null; platformName: string; apply: Apply; before: Record<string, string> };
@@ -105,6 +113,10 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     return idx === null || idx === undefined ? undefined : r.cells[idx];
   };
 
+  const getX = (r: ParsedRow, f: string): Cell | undefined => {
+    const idx = (mapping as Record<string, number | null | undefined>)[f];
+    return idx === null || idx === undefined ? undefined : r.cells[idx];
+  };
   const live = rows.filter((r) => !r.skip);
   const codes = Array.from(new Set(live.map((r) => text(get(r, "employeeId")).trim()).filter(Boolean)));
 
@@ -115,7 +127,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
         include: {
           shift: { select: { startTime: true, endTime: true, workingDays: true } },
           teamMemberships: { where: { isActive: true }, select: { teamId: true, isPrimary: true } },
-          platform: { select: { name: true } },
+          platform: { select: { name: true, timezone: true } },
         },
       })
     : [];
@@ -124,13 +136,19 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     platformIds.length
       ? prisma.user.findMany({
           where: { platformId: { in: platformIds } },
-          select: { id: true, platformId: true, employeeCode: true, firstName: true, lastName: true, email: true, role: true, reportsToId: true },
+          select: { id: true, platformId: true, employeeCode: true, firstName: true, lastName: true, email: true, role: true, status: true, reportsToId: true },
         })
       : Promise.resolve([]),
     prisma.team.findMany({ where: { isActive: true }, select: { id: true, platformId: true, name: true } }),
     prisma.shift.findMany({ where: { isActive: true }, select: { id: true, platformId: true, startTime: true, endTime: true, workingDays: true } }),
   ]);
 
+  const personalNow = await currentFor(found.map((u) => u.id));
+  const personalIsReady = await personalReady();
+  const typeNow = new Map<string, string>();
+  try { for (const t of await prisma.employeeProfile.findMany({ where: { userId: { in: found.map((u) => u.id) } }, select: { userId: true, employmentType: true } })) typeNow.set(t.userId, String(t.employmentType)); } catch { /* table missing: nobody has a type yet */ }
+  const linksOk = await linksReady();
+  const linksNow = linksOk ? await linkedManagerIdsOf(found.map((u) => u.id)) : new Map<string, string[]>();
   const byCode = new Map(found.map((u) => [String(u.employeeCode ?? "").toLowerCase(), u]));
   const personById = new Map(people.map((p) => [p.id, p]));
   const personByCode = new Map(people.map((p) => [`${p.platformId}|${String(p.employeeCode ?? "").toLowerCase()}`, p]));
@@ -324,10 +342,100 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       propose("dateOfJoining", dmy(isoDay(user.dateOfJoining)), dmy(doj.value), !user.dateOfJoining);
     }
 
+    // --- personal details (gender, date of birth, address, ...) ------------------------------------
+    // Blank = leave as is. A value is checked by the same rules as the profile form; a different value already stored is a CONFLICT (needs the overwrite tick).
+    {
+      const given: Record<string, unknown> = {};
+      for (const f of PERSONAL_FIELDS) {
+        const idx = (mapping as Record<string, number | null | undefined>)[f];
+        const cell = idx === null || idx === undefined ? undefined : r.cells[idx];
+        if (cell !== undefined && cell !== null && String(cell).trim() !== "") given[f] = cell;
+      }
+      if (Object.keys(given).length) {
+        if (!personalIsReady) {
+          err("row", "PERSONAL_NOT_READY", "Personal details cannot be saved on this server yet (the database update has not been applied). Remove those columns or finish the update.");
+        } else {
+          const checked = checkPersonal(given, platformToday(user.platform.timezone ?? "Asia/Kolkata").toISOString().slice(0, 10));
+          for (const e of checked.errors) err(e.field, e.code, e.message);
+          const cur = personalNow.get(user.id) ?? {};
+          const personal: PersonalValues = {};
+          for (const c of comparePersonal(cur, checked.values)) {
+            if (c.kind === "same" || c.kind === "clear") continue;
+            personal[c.field] = checked.values[c.field];
+            propose(c.field, c.current, c.proposed, c.kind === "fill");
+          }
+          if (Object.keys(personal).length) apply.personal = personal;
+        }
+      }
+    }
+
+    // --- employee type (Permanent / Probation / Contract / Intern) --------------------------------------------
+    const typeText = text(getX(r, "employmentType")).trim();
+    if (typeText) {
+      const TYPES: Record<string, string> = { permanent: "PERMANENT", probation: "PROBATION", probationary: "PROBATION", contract: "CONTRACT", contractual: "CONTRACT", intern: "INTERN", internship: "INTERN" };
+      const t = TYPES[typeText.toLowerCase().replace(/[^a-z]/g, "")];
+      const pretty = (v: string) => (v ? v.charAt(0) + v.slice(1).toLowerCase() : "");
+      if (!t) err("row", "BAD_EMPLOYEE_TYPE", `"${typeText}" is not an employee type. Use Permanent, Probation, Contract or Intern.`);
+      else if (t !== (typeNow.get(user.id) ?? "")) {
+        apply.employmentType = t;
+        propose("employmentType", pretty(typeNow.get(user.id) ?? ""), pretty(t), !typeNow.get(user.id));
+      }
+    }
+
+    // --- secondary manager (an ADDITIONAL reporting manager; Admin only, never replaces the main one) ------------------
+    const secText = text(getX(r, "secondaryManager")).trim();
+    if (secText && viewer.role !== "ADMIN") err("row", "ADMIN_ONLY_FIELD", "Only an Admin can add a secondary reporting manager.");
+    else if (secText) {
+      if (!linksOk) err("row", "SECONDARY_NOT_READY", "Secondary managers cannot be saved on this server yet (the database update has not been applied).");
+      else {
+        const codeIn = /\(([^)]+)\)\s*$/.exec(secText)?.[1]?.trim();
+        const nameIn = secText.replace(/\([^)]*\)\s*$/, "").trim();
+        const pool = people.filter((p) => p.platformId === user.platformId && String(p.status) === "ACTIVE" && (p.role === "MANAGER" || p.role === "ADMIN"));
+        const hits = codeIn ? pool.filter((p) => String(p.employeeCode ?? "").toLowerCase() === codeIn.toLowerCase()) : pool.filter((p) => normName(`${p.firstName} ${p.lastName}`) === normName(nameIn));
+        const have = linksNow.get(user.id) ?? [];
+        if (hits.length === 0) err("row", "SECONDARY_NOT_FOUND", `Secondary manager "${secText}" is not an active Manager or Admin in ${user.platform.name}.`);
+        else if (hits.length > 1) err("row", "SECONDARY_AMBIGUOUS", `More than one manager is called "${secText}". Write the name followed by the employee ID, e.g. "Name (ID)".`);
+        else if (hits[0].id === user.id) err("row", "SECONDARY_SELF", "A person cannot be their own secondary manager.");
+        else if (hits[0].id === user.reportsToId) notes.push(`Secondary manager ${secText} is already this person's main reporting manager: not added.`);
+        else if (!have.includes(hits[0].id)) {
+          if (have.length >= 5) err("row", "TOO_MANY_MANAGERS", "A person can have at most 5 additional reporting managers.");
+          else {
+            apply.secondaryManagerId = hits[0].id;
+            propose("secondaryManager", have.map((id) => personName(id)).filter(Boolean).join(", "), personName(hits[0].id), true);
+          }
+        }
+      }
+    }
+
     // --- shift ---------------------------------------------------------------------------
-    const startO = parseTime(get(r, "shiftStart"), options);
-    const endO = parseTime(get(r, "shiftEnd"), options);
-    const daysRaw = text(get(r, "workingDays"));
+    let startO = parseTime(get(r, "shiftStart"), options);
+    let endO = parseTime(get(r, "shiftEnd"), options);
+    let daysRaw = text(get(r, "workingDays"));
+    // "Office timings" (one cell such as "10:00 AM - 7:00 PM") is read as the shift start and end ONLY when the separate Shift start / Shift end columns are empty.
+    // Working days are never invented: they come from the Working days column or the person's current shift; if neither exists the timings are reported, not applied.
+    const timingsText = text(getX(r, "officeTimings")).trim();
+    if (timingsText && "empty" in startO && "empty" in endO) {
+      const parts = timingsText.split(/\s*(?:-|–|—|\bto\b)\s*/i).filter(Boolean);
+      if (parts.length !== 2) err("row", "BAD_OFFICE_TIMINGS", `Office timings "${timingsText}" should look like "10:00 AM - 7:00 PM".`);
+      else {
+        // Words in the cell state AM/PM outright ("morning 9:30", "6:30 evening"), so they need no confirmation tick.
+        const withWords = (s: string) => {
+          const am = /\b(morning|a\.?m\.?)\b/i.test(s), pm = /\b(afternoon|evening|night|p\.?m\.?)\b/i.test(s);
+          const core = s.replace(/\b(morning|afternoon|evening|night|a\.?m\.?|p\.?m\.?)\b/gi, "").replace(/\s+/g, " ").trim();
+          return am !== pm && /^\d{1,2}([:.]\d{2})?$/.test(core) ? `${core.replace(".", ":")} ${am ? "AM" : "PM"}` : s;
+        };
+        startO = parseTime(withWords(parts[0]), options);
+        endO = parseTime(withWords(parts[1]), options);
+        if (daysRaw.trim() === "") {
+          if (user.shift) daysRaw = dayLabel([...user.shift.workingDays].sort((a, b) => a - b));
+          else {
+            // Owner's rule (2026-11-28): the working days are Monday to Saturday when the sheet gives none and the person has no shift yet.
+            daysRaw = "Mon to Sat";
+            notes.push(`Working days were not in the sheet: Monday to Saturday used (company rule), shown here so you can check it.`);
+          }
+        }
+      }
+    }
     const daysO = dayNumbers(daysRaw);
     if (!("empty" in startO) || !("empty" in endO) || daysRaw.trim() !== "") {
       let start: string | null = null;
@@ -514,6 +622,16 @@ export async function commitUpdate(viewerId: string, input: UpdateInput & { conf
           if (on("shift") && a.shift) data.shiftId = a.shift.shiftId ?? newShift.get(`${w.platformId}|${a.shift.start}|${a.shift.end}|${a.shift.days.join()}`) ?? null;
           if (Object.keys(data).length) await tx.user.update({ where: { id: w.userId! }, data });
 
+          if (on("employmentType") && a.employmentType) {
+            await tx.employeeProfile.upsert({ where: { userId: w.userId! }, create: { userId: w.userId!, employmentType: a.employmentType as never }, update: { employmentType: a.employmentType as never } });
+          }
+          if (on("secondaryManager") && a.secondaryManagerId) {
+            await tx.reportingManagerLink.upsert({
+              where: { userId_managerId: { userId: w.userId!, managerId: a.secondaryManagerId } },
+              create: { userId: w.userId!, managerId: a.secondaryManagerId, createdById: viewer.id },
+              update: {},
+            });
+          }
           if (on("team") && a.teamId) {
             await tx.teamMember.upsert({
               where: { teamId_userId: { teamId: a.teamId, userId: w.userId! } },
@@ -533,10 +651,29 @@ export async function commitUpdate(viewerId: string, input: UpdateInput & { conf
             }
           }
 
+          if (a.personal) {
+            const pdata: Record<string, unknown> = {};
+            for (const f of PERSONAL_FIELDS) {
+              if (!on(f) || !(f in a.personal)) continue;
+              const v = a.personal[f] ?? null;
+              pdata[f] = f === "dateOfBirth" && v ? new Date(`${v}T00:00:00.000Z`) : v;
+            }
+            if (Object.keys(pdata).length) {
+              await tx.employeePersonalDetails.upsert({
+                where: { userId: w.userId! },
+                create: { userId: w.userId!, platformId: w.platformId!, updatedById: viewer.id, ...pdata } as never,
+                update: { updatedById: viewer.id, ...pdata } as never,
+              });
+            }
+          }
+
           const done = w.row.changes.filter((c) => c.applied).map((c) => ({ field: c.label, from: c.current, to: c.proposed }));
+          // Sensitive personal values are never written to the audit log: only that the field changed.
+          const sensitive = new Set<string>(SENSITIVE.map((f) => PERSONAL_LABEL[f]));
+          const auditDone = done.map((d) => (sensitive.has(d.field) ? { field: d.field, from: "(not recorded)", to: "(not recorded)" } : d));
           // A permanent before/after record, so "who changed this and from what" is answerable.
           await tx.auditLog.create({
-            data: { actorId: viewer.id, platformId: w.platformId, method: "UPDATE", path: "/api/admin/employees/update/applied", status: 200, detail: { employee: w.row.employeeId, changes: done } as never },
+            data: { actorId: viewer.id, platformId: w.platformId, method: "UPDATE", path: "/api/admin/employees/update/applied", status: 200, detail: { employee: w.row.employeeId, changes: auditDone } as never },
             select: { id: true },
           });
           result.push({ rowNumber: w.row.rowNumber, employeeId: w.row.employeeId, name: w.row.name, applied: done });

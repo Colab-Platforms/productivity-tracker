@@ -90,6 +90,7 @@ const RULES: Rule[] = [
   { method: "POST", re: /^\/api\/admin\/employees\/commit$/, module: "Employees", action: "CREATE", summary: "Imported employees" },
   { method: "POST", re: /^\/api\/admin\/users$/, module: "Employees", action: "CREATE", summary: "Created an employee account" },
   { method: "PATCH", re: /^\/api\/admin\/users\/:id$/, module: "Employees", action: "UPDATE", summary: "Updated an employee", recordType: "User", targetIsId: true },
+  { method: "PUT", re: /^\/api\/personal-details\/:userId$/, module: "Employees", action: "UPDATE", summary: "Updated personal details", recordType: "User", targetIsId: true },
   { method: "PUT", re: /^\/api\/photos\/:userId$/, module: "Employees", action: "UPDATE", summary: "Set a profile photo", recordType: "User", targetIsId: true },
   { method: "POST", re: /^\/api\/photos\/:userId$/, module: "Employees", action: "UPDATE", summary: "Set a profile photo", recordType: "User", targetIsId: true },
   { method: "DELETE", re: /^\/api\/photos\/:userId$/, module: "Employees", action: "UPDATE", summary: "Removed a profile photo", recordType: "User", targetIsId: true },
