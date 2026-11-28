@@ -118,7 +118,45 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     return idx === null || idx === undefined ? undefined : r.cells[idx];
   };
   const live = rows.filter((r) => !r.skip);
-  const codes = Array.from(new Set(live.map((r) => text(get(r, "employeeId")).trim()).filter(Boolean)));
+
+  // A row with a BLANK Employee ID is looked up by work email, or else by exact name, among the people this viewer may act on. Only ONE match is accepted
+  // (two people with the same name, or an email and a name that point at different people, are refused); the existing Employee ID is then used as if it had
+  // been typed, and the preview says how it was found. Nothing is ever created from a name.
+  const loose = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const resolvedCode = new Map<number, string>();
+  const resolveNote = new Map<number, string>();
+  const resolveError = new Map<number, string>();
+  const blankRows = live.filter((r) => text(get(r, "employeeId")).trim() === "");
+  if (blankRows.length) {
+    const pool = await prisma.user.findMany({
+      where: { ...(viewer.access.all ? {} : { platformId: { in: viewer.access.ids } }), role: { not: "ADMIN" }, employeeCode: { not: null } },
+      select: { employeeCode: true, firstName: true, lastName: true, email: true, platformId: true, platform: { select: { name: true } } },
+    });
+    for (const r of blankRows) {
+      const company = text(get(r, "company")).trim();
+      const inCompany = (u: (typeof pool)[number]) => !company || loose(company) === loose(u.platform.name);
+      const email = text(get(r, "email")).trim().toLowerCase();
+      const name = text(get(r, "fullName")).trim();
+      const byEmail = email ? pool.filter((u) => String(u.email).toLowerCase() === email && inCompany(u)) : [];
+      const byName = name ? pool.filter((u) => loose(`${u.firstName}${u.lastName}`) === loose(name) && inCompany(u)) : [];
+      if (!email && !name) { resolveError.set(r.rowNumber, "Employee ID is required: it is how the person is found. (No name or email on this row to look them up by.)"); continue; }
+      if (byEmail.length === 1 && (byName.length === 0 || byName.some((u) => u.employeeCode === byEmail[0].employeeCode))) {
+        resolvedCode.set(r.rowNumber, byEmail[0].employeeCode!);
+        resolveNote.set(r.rowNumber, `Employee ID was blank: found by work email, existing ID ${byEmail[0].employeeCode} used.`);
+      } else if (byEmail.length === 1 && byName.length > 0) {
+        resolveError.set(r.rowNumber, `The email belongs to ${byEmail[0].employeeCode} but the name matches ${byName.map((u) => u.employeeCode).join(", ")}. Fill in the Employee ID to say which person this is.`);
+      } else if (byName.length === 1) {
+        resolvedCode.set(r.rowNumber, byName[0].employeeCode!);
+        resolveNote.set(r.rowNumber, `Employee ID was blank: matched by exact name, existing ID ${byName[0].employeeCode} used. Check it is the right person.`);
+      } else if (byName.length > 1) {
+        resolveError.set(r.rowNumber, `More than one person is called "${name}" (${byName.map((u) => u.employeeCode).join(", ")}). Fill in the Employee ID.`);
+      } else {
+        resolveError.set(r.rowNumber, `Employee ID is blank and no existing employee matches ${email ? `the email ${email}` : `the name "${name}"`}. Fill in the Employee ID (to add a new person use Import Employees).`);
+      }
+    }
+  }
+  const idOf = (r: ParsedRow) => text(get(r, "employeeId")).trim() || resolvedCode.get(r.rowNumber) || "";
+  const codes = Array.from(new Set(live.map((r) => idOf(r)).filter(Boolean)));
 
   // --- one batch of reads, joined in memory --------------------------------------
   const found = codes.length
@@ -169,7 +207,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     const err = (field: Issue["field"], code: string, message: string) => issues.push({ field, severity: "error", code, message });
     const chosen = new Set(input.overwrite?.[String(r.rowNumber)] ?? []);
 
-    const row: UpdateRow = { rowNumber: r.rowNumber, status: "NO_CHANGE", employeeId: text(get(r, "employeeId")).trim(), name: text(get(r, "fullName")).trim(), company: text(get(r, "company")).trim(), changes, issues, notes };
+    const row: UpdateRow = { rowNumber: r.rowNumber, status: "NO_CHANGE", employeeId: idOf(r), name: text(get(r, "fullName")).trim(), company: text(get(r, "company")).trim(), changes, issues, notes };
     const w: Work = { row, userId: null, platformId: null, platformName: "", apply, before };
     work.push(w);
 
@@ -181,7 +219,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
 
     const code = row.employeeId;
     if (!code) {
-      err("employeeId", "REQUIRED", "Employee ID is required: it is how the person is found.");
+      err("employeeId", "REQUIRED", resolveError.get(r.rowNumber) ?? "Employee ID is required: it is how the person is found.");
       row.status = "INVALID";
       continue;
     }
@@ -193,6 +231,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       row.status = "INVALID";
       continue;
     }
+    if (resolveNote.has(r.rowNumber)) notes.push(resolveNote.get(r.rowNumber)!);
     w.userId = user.id;
     w.platformId = user.platformId;
     w.platformName = user.platform.name;

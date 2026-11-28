@@ -235,7 +235,9 @@ export default function ImportEmployeesModal({
 
   const otherCompanyRows = (preview?.rows ?? []).filter((r) => r.issues.some((i) => i.code === "OUTSIDE_YOUR_COMPANY")).length;
   // To UPDATE someone, only the Employee ID is needed: it is how they are found.
-  const mustMap = mode === "update" ? (["employeeId"] as typeof MUST_MAP) : MUST_MAP;
+  // Update: the Employee ID column, or (when the sheet has no IDs) a name or work email column, which find the existing person.
+  const hasIdentity = [mapping.employeeId, mapping.fullName, mapping.email].some((v) => v !== null && v !== undefined);
+  const mustMap = mode === "update" ? ((hasIdentity ? [] : ["employeeId"]) as typeof MUST_MAP) : MUST_MAP;
   const required = mustMap.filter((f) => mapping[f] === null || mapping[f] === undefined);
   const updRows = (updPreview?.rows ?? []).filter(
     (r) =>
