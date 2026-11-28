@@ -20,6 +20,10 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
   const other = await mk("SHE-M2", "Other", "Chief", "MANAGER");
   await mk("SHE-E1", "Eve", "One", "EMPLOYEE", boss);
   await mk("SHE-E2", "Eli", "Two", "EMPLOYEE", boss);
+  const zorbo = await mk("SHE-ZA", "Zorbo", "Ahire", "ADMIN");
+  await mk("SHE-Y1", "Yash", "Alpha", "MANAGER");
+  await mk("SHE-Y2", "Yash", "Beta", "ADMIN");
+  await mk("SHE-AD", "Adam", "Admin", "ADMIN");
   const tok = (await (await fetch(API + "/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "SHE-HR", password: "She@12345678" }) })).json()).token;
   // columns: 0 ID, 1 Primary Manager, 2 Joining Date, 3 Office Timings, 4 Working days
   const mapping = { employeeId: 0, reportsToName: 1, dateOfJoining: 2, officeTimings: 3, workingDays: 4 };
@@ -31,6 +35,22 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
   r = await run(["SHE-E1", "Other Chief", "", "", ""]);
   ok("HR naming a DIFFERENT manager is still refused (Admin only)", r.status === "INVALID" && r.issues.some((i) => i.code === "ADMIN_ONLY_FIELD"), r);
   ok("the refusal says why", /different manager/.test(r.issues[0].message), r.issues);
+
+  console.log("\n## 1b. a form of address after the manager's name (as an Admin, who may change reporting lines)");
+  const admTok = (await (await fetch(API + "/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "SHE-AD", password: "She@12345678" }) })).json()).token;
+  const runA = async (cells) => (await post("/admin/employees/update/preview", admTok, { rows: [{ rowNumber: 2, cells }], mapping, options: {} })).b.rows[0];
+  r = await runA(["SHE-E1", "zorbo sir", "", "", ""]);
+  ok('"zorbo sir" is read as the one Admin called Zorbo, with a note', r.issues.length === 0 && r.changes.some((c) => c.field === "reportsTo" && /Zorbo Ahire/.test(c.proposed)) && r.notes.some((n) => /read as Zorbo Ahire/.test(n)), r);
+  r = await runA(["SHE-E1", "Mr. Zorbo Ahire", "", "", ""]);
+  ok("a title before a FULL name is dropped", r.issues.length === 0 && r.changes.some((c) => c.field === "reportsTo"), r);
+  r = await runA(["SHE-E1", "yash sir", "", "", ""]);
+  ok("two Managers/Admins called Yash: refused, nothing guessed", r.status === "INVALID" && r.issues.some((i) => i.code === "MANAGER_AMBIGUOUS"), r);
+  r = await runA(["SHE-E1", "nobody sir", "", "", ""]);
+  ok("an unknown first name is still not found", r.issues.some((i) => i.code === "MANAGER_NOT_FOUND"), r);
+  r = await runA(["SHE-E1", "eli sir", "", "", ""]);
+  ok("the first name of an ordinary employee is NOT accepted as a manager", r.issues.some((i) => i.code === "MANAGER_NOT_FOUND"), r);
+  r = await run(["SHE-E1", "zorbo sir", "", "", ""]);
+  ok("HR (not Admin) naming a different manager is still refused", r.issues.some((i) => i.code === "ADMIN_ONLY_FIELD"), r);
 
   console.log("\n## 2. dates written in words");
   for (const [txt, iso] of [["05th October 2026", "2026-10-05"], ["5 Oct 2026", "2026-10-05"], ["October 5, 2026", "2026-10-05"], ["1st July 2024", "2024-07-01"], ["22nd Nov 2025", "2025-11-22"], ["3rd March 2025", "2025-03-03"], ["05-Oct-2026", "2026-10-05"]]) {

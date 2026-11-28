@@ -367,9 +367,26 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
           err("reportsToId", "MANAGER_MISMATCH", `Reports-to name "${mName}" and ID ${mId} point to different people (${mId} is ${p.firstName} ${p.lastName}).`.replace("  ", " "));
         } else target = p.id;
       } else {
-        const hits = people.filter((p) => p.platformId === user.platformId && normName(`${p.firstName} ${p.lastName}`) === normName(mName));
+        let hits = people.filter((p) => p.platformId === user.platformId && normName(`${p.firstName} ${p.lastName}`) === normName(mName));
+        // A form of address after the name ("jayesh sir", "Mr Jayesh", "Neha madam") is dropped. When what is left is a SINGLE word, it is accepted only if exactly ONE
+        // active Manager or Admin of this company has that first name; the preview says so. Anything else stays "not found" or "ambiguous".
+        if (hits.length === 0) {
+          const stripped = normName(mName.replace(/\b(sir|ma'?am|mam|madam|mr|mrs|ms|miss|dr|shri|smt)\b\.?/gi, " ").replace(/\./g, " "));
+          if (stripped && stripped !== normName(mName)) hits = people.filter((p) => p.platformId === user.platformId && normName(`${p.firstName} ${p.lastName}`) === stripped);
+          if (hits.length === 0 && stripped && !stripped.includes(" ")) {
+            const firstNameOnly = people.filter((p) => p.platformId === user.platformId && String(p.status) === "ACTIVE" && (p.role === "MANAGER" || p.role === "ADMIN") && normName(p.firstName) === stripped);
+            if (firstNameOnly.length === 1) {
+              hits = firstNameOnly;
+              notes.push(`Reporting manager "${mName}" was read as ${firstNameOnly[0].firstName} ${firstNameOnly[0].lastName} (${firstNameOnly[0].employeeCode}): the only active Manager or Admin here with that first name. Check it is right.`);
+            } else if (firstNameOnly.length > 1) {
+              err("reportsToId", "MANAGER_AMBIGUOUS", `More than one Manager or Admin here is called "${mName}" (${firstNameOnly.map((p) => p.employeeCode).join(", ")}). Write the full name or the manager's employee ID.`);
+              hits = firstNameOnly;
+            }
+          }
+        }
         if (hits.length === 0) err("reportsToId", "MANAGER_NOT_FOUND", `Reporting manager "${mName}" was not found in ${user.platform.name}.`);
-        else if (hits.length > 1) err("reportsToId", "MANAGER_AMBIGUOUS", `More than one person is called "${mName}". Add the manager's employee ID.`);
+        else if (hits.length > 1 && !issues.some((i) => i.code === "MANAGER_AMBIGUOUS")) err("reportsToId", "MANAGER_AMBIGUOUS", `More than one person is called "${mName}". Add the manager's employee ID.`);
+        else if (hits.length > 1) { /* already reported above */ }
         else target = hits[0].id;
       }
       if (target === user.id) {
