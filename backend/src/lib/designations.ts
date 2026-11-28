@@ -16,6 +16,9 @@
 export const DESIGNATIONS = [
   "Accountant",
   "Administrator",
+  "AI Developer",
+  "AI Senior Developer",
+  "AI Team Lead",
   "AI/ML Developer",
   "Associate",
   "BDE",
@@ -28,6 +31,7 @@ export const DESIGNATIONS = [
   "DME",
   "Finance Analyst",
   "Formulation Expert",
+  "Fullstack Developer Intern",
   "Graphic Designer",
   "HR Generalist",
   "HR Intern",
@@ -37,6 +41,7 @@ export const DESIGNATIONS = [
   "Motion Graphics",
   "NDR Calling",
   "Operations Manager",
+  "Performance Marketing Executive",
   "PME",
   "Project Manager",
   "Senior Graphic Designer",
@@ -60,6 +65,7 @@ const norm = (s: string) =>
   s
     .toLowerCase()
     .replace(/\s*\/\s*/g, "/") // "AI/ ML" = "AI/ML"
+    .replace(/\s*-\s*/g, " ") // "AI- Team Lead" / "AI-Team Lead" = "AI Team Lead"
     .replace(/\s+/g, " ")
     .trim();
 

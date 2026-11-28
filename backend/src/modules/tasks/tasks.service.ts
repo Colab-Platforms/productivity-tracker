@@ -1110,8 +1110,10 @@ export async function approveTask(
     throw new Error("ALREADY_ANSWERED");
   }
 
-  await prisma.dailyTask.update({
-    where: { id: taskId },
+  // The write itself is conditional ("still PENDING"), so two clicks or two tabs at the same moment record ONE decision: the loser changes nothing and
+  // sends nothing (the check above is only a fast, friendly refusal).
+  const decided = await prisma.dailyTask.updateMany({
+    where: { id: taskId, approvalStatus: "PENDING" as never },
     data: {
       approvalStatus: (approve ? "APPROVED" : "REJECTED") as never,
       approvedById: managerId,
@@ -1123,6 +1125,7 @@ export async function approveTask(
         : null,
     },
   });
+  if (decided.count === 0) throw new Error("ALREADY_ANSWERED");
   if (approve && note && String(note).trim() && (await entryReady())) {
     const comment = String(note).trim().slice(0, 1000);
     await prisma.taskEntryDetail

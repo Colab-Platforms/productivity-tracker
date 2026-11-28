@@ -21,7 +21,7 @@ import { awayRows, isDiscussion, splitAwayTime } from "../tracker/activityClass.
 import { photoStamps } from "../photos/photos.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
 import { accessFor, scopeWhere } from "../../lib/companyAccess.js";
-import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
+import { ARRIVAL_RULES, calendarStatus, lateStreakHalfDays, minutesAfterLimit, STREAK_LOOKBACK_DAYS } from "./arrival.logic.js";
 import { getMonthAttendanceBulk } from "../attendance/attendance.service.js";
 import { scheduledEndMinutes } from "../attendance/earlyLogout.logic.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
@@ -434,10 +434,11 @@ export async function getAttendanceReport(
     return { ...base, kpis: { employees: 0, present: 0, halfDay: 0, absent: 0, notYet: 0, workingDays: 0, attendancePct: null as number | null, totalWorkedHours: 0, avgWorkedHours: null as number | null }, rows: [] as unknown[] };
   }
 
-  // Months the range touches.
+  // Months the range touches (plus the lookback the late-streak rule needs).
   const months: [number, number][] = [];
-  let y = from.getUTCFullYear();
-  let m = from.getUTCMonth() + 1;
+  const lookFrom = new Date(from.getTime() - STREAK_LOOKBACK_DAYS * 86_400_000);
+  let y = lookFrom.getUTCFullYear();
+  let m = lookFrom.getUTCMonth() + 1;
   while (y < to.getUTCFullYear() || (y === to.getUTCFullYear() && m <= to.getUTCMonth() + 1)) {
     months.push([y, m]);
     m++;
@@ -502,6 +503,21 @@ export async function getAttendanceReport(
       : [];
   const runningBy = new Map(running.map((r) => [r.userId, r]));
 
+  // 3 late working days in a row: the 3rd is a half day in the arrival view (Late Remark). Per person over the window and the lookback.
+  const streakHalf = new Set<string>();
+  {
+    const byUser = new Map<string, { date: string; code: string | null }[]>();
+    for (const month of monthly.flat()) {
+      const who = byId.get(month.userId);
+      if (!who) continue;
+      for (const d of month.days) {
+        if (d.date > toIso) continue;
+        const code = calendarStatus({ engineStatus: d.status, loginAt: d.loginAt ? new Date(d.loginAt) : null, isToday: d.date === todayIso, timezone: who.tz, halfDayLeave: d.leaveHalfDay !== null });
+        byUser.set(month.userId, [...(byUser.get(month.userId) ?? []), { date: d.date, code }]);
+      }
+    }
+    for (const [uid, series] of byUser) for (const date of lateStreakHalfDays(series)) streakHalf.add(`${uid}|${date}`);
+  }
   const rows: Array<Record<string, unknown>> = [];
   const diagnostic: Array<Record<string, unknown>> = [];
   for (const month of monthly.flat()) {
@@ -549,7 +565,8 @@ export async function getAttendanceReport(
       // the existing Status and Late columns above keep their own rules. Absent only after the day is over; today is "Not in yet".
       const arrivalAt = d.loginAt ? new Date(d.loginAt) : null;
       const arrivalCode = calendarStatus({ engineStatus: d.status, loginAt: arrivalAt, isToday: d.date === todayIso, timezone: who.tz, halfDayLeave: d.leaveHalfDay !== null });
-      const arrival = arrivalCode === "PRESENT" ? "ON_TIME" : arrivalCode;
+      const arrivalStreak = arrivalCode === "LATE" && streakHalf.has(`${month.userId}|${d.date}`);
+      const arrival = arrivalStreak ? "HALF_DAY" : arrivalCode === "PRESENT" ? "ON_TIME" : arrivalCode;
       if (q.arrival) {
         const want = q.arrival === "LATE_OR_HALF" ? arrival === "LATE" || arrival === "HALF_DAY" : arrival === q.arrival;
         if (!want) continue;
@@ -596,6 +613,7 @@ export async function getAttendanceReport(
         breakRecordedHours: hasWork && d.breakCorrected ? d.breakRecordedHours : null,
         breakCorrected: hasWork && d.breakCorrected,
         washroomHours: hasWork ? washroomH : null,
+        arrivalStreak, // true = a LATE turned into a half day by the 3rd-late-in-a-row rule
         arrival, // ON_TIME | LATE | HALF_DAY | ABSENT | LEAVE | HOLIDAY | WEEK_OFF | NOT_TRACKED | NOT_CLOCKED_IN
         arrivalMinutes: arrivalAt ? minutesAfterLimit(arrivalAt, who.tz) : null, // minutes after the Present limit
         arrivalLimit: ARRIVAL_RULES.presentUntil,

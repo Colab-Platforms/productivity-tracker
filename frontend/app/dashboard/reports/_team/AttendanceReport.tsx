@@ -24,7 +24,7 @@ type Row = {
   status: string; statusLabel: string; leaveType: string | null; holidayName: string | null;
   lateMinutes: number | null; earlyDepartureMinutes: number | null; tasksCompleted: number;
   tasksPlanned: number | null; tasksApproved: number | null; // null = no tasks that day (exported blank)
-  // Late Remark: the first check-in against the 09:45 / 10:15 arrival rule, the late duration, and the reason the person gave
+  // Late Remark: the first check-in against the 09:45 / 10:00 arrival rule, the late duration, and the reason the person gave
   projects: string[]; reportingManager: string | null; huddleHours: number | null; // added for the Excel export
   earlyLogoutDay?: boolean; earlyLogoutLabel?: string | null; // 2nd/4th Saturday early-logout policy
   arrival?: string; arrivalMinutes?: number | null; arrivalLimit?: string; lateReason?: string | null; correctedBy?: string | null;
@@ -308,7 +308,7 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
               {STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </label>
-          <label className="block w-52 text-xs text-slate-500" title="Check-in up to 09:45 is on time, up to 10:15 is Late, after that is Half Day">
+          <label className="block w-52 text-xs text-slate-500" title="Check-in up to 09:45 is on time, up to 10:00 is Late, after that is Half Day">
             Late remark
             <select value={draft.arrival} onChange={(e) => setDraft({ ...draft, arrival: e.target.value })} className={`${select} mt-1`}>
               <option value="">All</option>
@@ -385,7 +385,7 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
                     <th className={`${th} text-right`}>Productive</th>
                     <th className={`${th} text-right`}>Break</th>
                     <th className={`${th} text-right`} title="Washroom time is tracked on its own. It is not break time and does not use the break allowance.">Washroom</th>
-                    <th className={th} title="First check-in against the 09:45 / 10:15 arrival rule">Late remark</th>
+                    <th className={th} title="First check-in against the 09:45 / 10:00 arrival rule">Late remark</th>
                     <th className={th}>Status</th>
                     <th className={th}>Remarks</th>
                   </tr>

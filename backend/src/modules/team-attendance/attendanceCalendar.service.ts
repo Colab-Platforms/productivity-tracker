@@ -8,7 +8,7 @@ import { loadEarlyLogoutPolicy } from "../attendance/earlyLogout.js";
 import { visibleUserIds } from "../tracker/tracker.service.js";
 import { remarksBySession } from "../tracker/lateRemarks.js";
 import { DISCUSSION_PREFIX } from "../tracker/activityClass.js";
-import { ARRIVAL_RULES, calendarStatus, minutesAfterLimit } from "./arrival.logic.js";
+import { ARRIVAL_RULES, calendarStatus, lateStreakHalfDays, minutesAfterLimit, STREAK_LOOKBACK_DAYS } from "./arrival.logic.js";
 import { resolvePeople } from "../hr-filters/hrFilters.service.js";
 import { isFiltering, NO_FILTERS, type HrFilters } from "../hr-filters/hrFilters.logic.js";
 import { activeTasks } from "../tasks/tasks.deleted.js";
@@ -94,8 +94,10 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
 
   // Every month the window touches, batched (one call per month, never one per person).
   const months: [number, number][] = [];
-  let y = from.getUTCFullYear();
-  let m = from.getUTCMonth() + 1;
+  // the streak rule needs the days BEFORE the window too (a run of late days may have started earlier)
+  const lookFrom = new Date(from.getTime() - STREAK_LOOKBACK_DAYS * 86_400_000);
+  let y = lookFrom.getUTCFullYear();
+  let m = lookFrom.getUTCMonth() + 1;
   while (y < to.getUTCFullYear() || (y === to.getUTCFullYear() && m <= to.getUTCMonth() + 1)) {
     months.push([y, m]);
     if (++m > 12) {
@@ -165,6 +167,22 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
     tasksOf.set(k, cur);
   }
 
+  // 3 late working days in a row: the 3rd is a half day (see lateStreakHalfDays). Worked out per person over the window and the lookback.
+  const streakHalf = new Set<string>();
+  {
+    const byUser = new Map<string, { date: string; code: string | null }[]>();
+    for (const month of monthly) {
+      const who = byId.get(month.userId);
+      if (!who) continue;
+      for (const d of month.days) {
+        if (d.date > toIso) continue;
+        const code = calendarStatus({ engineStatus: d.status, loginAt: d.loginAt ? new Date(d.loginAt) : null, isToday: d.date === todayIso, timezone: who.timezone, halfDayLeave: d.leaveHalfDay !== null });
+        byUser.set(month.userId, [...(byUser.get(month.userId) ?? []), { date: d.date, code }]);
+      }
+    }
+    for (const [uid, series] of byUser) for (const date of lateStreakHalfDays(series)) streakHalf.add(`${uid}|${date}`);
+  }
+
   const rows: Array<Record<string, unknown>> = [];
   const counts = emptyCounts();
   for (const month of monthly) {
@@ -173,8 +191,10 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
     for (const d of month.days) {
       if (d.date < fromIso || d.date > toIso) continue;
       const loginAt = d.loginAt ? new Date(d.loginAt) : null;
-      const status = calendarStatus({ engineStatus: d.status, loginAt, isToday: d.date === todayIso, timezone: who.timezone, halfDayLeave: d.leaveHalfDay !== null });
-      if (!status) continue;
+      const plain = calendarStatus({ engineStatus: d.status, loginAt, isToday: d.date === todayIso, timezone: who.timezone, halfDayLeave: d.leaveHalfDay !== null });
+      if (!plain) continue;
+      const lateStreak = plain === "LATE" && streakHalf.has(`${month.userId}|${d.date}`);
+      const status = lateStreak ? "HALF_DAY" : plain;
       counts[status] = (counts[status] ?? 0) + 1;
       const key = `${month.userId}|${d.date}`;
       const session = sessionOf.get(key);
@@ -192,6 +212,7 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
       if (d.note && (status === "LEAVE" || status === "HOLIDAY" || status === "WEEK_OFF") && /^Worked /.test(d.note)) remarkParts.push(d.note);
       if (status === "HOLIDAY" && d.holidayName) remarkParts.push(d.holidayName);
       if (lateBy > 0) remarkParts.push(`Arrived ${lateBy} min after ${ARRIVAL_RULES.presentUntil}`);
+      if (lateStreak) remarkParts.push(`3rd late working day in a row: counted as a half day`);
       if (lateText) remarkParts.push(`Reason: ${lateText}`);
       if (fixedBy) remarkParts.push(`Corrected by ${fixedBy}`);
       if (task && task.completed > 0) remarkParts.push(`${task.completed} task${task.completed === 1 ? "" : "s"} done`);
@@ -199,6 +220,7 @@ export async function getAttendanceCalendar(viewerId: string, q: { from?: string
         userId: month.userId,
         date: d.date,
         status,
+        lateStreakHalfDay: lateStreak,
         // The original stamps, untouched. The page formats them in the company timezone.
         firstCheckIn: d.loginAt,
         lastCheckOut: d.logoutAt,

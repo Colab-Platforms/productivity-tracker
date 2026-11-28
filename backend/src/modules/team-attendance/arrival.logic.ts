@@ -5,7 +5,8 @@
 // ---------------------------------------------------------------------------
 
 /** One place for the two limits. A per-team override would need a schema change, so these are defaults in code for now. */
-export const ARRIVAL_RULES = { presentUntil: "09:45", lateUntil: "10:15" } as const;
+// 2026-11-28 (owner): shift 9:30, a 15 minute buffer (on time until 9:45), late until 10:00, a half day after 10:00 (the half-day limit was 10:15).
+export const ARRIVAL_RULES = { presentUntil: "09:45", lateUntil: "10:00" } as const;
 
 export type ArrivalRules = { presentUntil: string; lateUntil: string };
 export type ArrivalStatus = "PRESENT" | "LATE" | "HALF_DAY";
@@ -61,4 +62,32 @@ export function calendarStatus(input: { engineStatus: string; loginAt: Date | nu
     default: // ABSENT, or the engine's hours-based verdicts for a day with no check-in
       return isToday ? "NOT_CLOCKED_IN" : "ABSENT";
   }
+}
+
+// ---------------------------------------------------------------------------
+// THE LATE STREAK: 3 late WORKING days in a row make the 3rd one a half day, and the count then starts again from zero (owner's rule, 2026-11-28).
+// Only LATE days count. An on-time day, a half-day arrival or an absence BREAKS the run. Days that are not working days for this person (approved leave,
+// half-day leave, holiday, week-off, "not tracked", today before a check-in) are skipped: they neither count nor break it. This is part of the arrival VIEW only
+// (calendar and the attendance report's Late Remark); payroll and Reports keep their own rules.
+// ---------------------------------------------------------------------------
+export const LATE_STREAK = 3;
+export const STREAK_LOOKBACK_DAYS = 31; // earlier days read so a run that began before the window still counts
+
+const SKIPPED = new Set<string>(["LEAVE", "HALF_DAY_LEAVE", "HOLIDAY", "WEEK_OFF", "NOT_TRACKED", "NOT_CLOCKED_IN"]);
+
+/** For ONE person: the dates whose LATE is turned into a half day because it is the 3rd (6th, 9th...) late working day in a row. */
+export function lateStreakHalfDays(series: { date: string; code: string | null }[], length = LATE_STREAK): Set<string> {
+  const out = new Set<string>();
+  let run = 0;
+  for (const d of [...series].sort((a, b) => a.date.localeCompare(b.date))) {
+    if (d.code === null || SKIPPED.has(d.code)) continue;
+    if (d.code === "LATE") {
+      run++;
+      if (run >= length) {
+        out.add(d.date);
+        run = 0;
+      }
+    } else run = 0;
+  }
+  return out;
 }

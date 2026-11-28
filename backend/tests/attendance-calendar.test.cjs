@@ -47,7 +47,7 @@ const PW = "Cal@12345678";
   const M = await mk2("CAL-M", "MANAGER", AV);
   const P1 = await mk2("CAL-P1", "EMPLOYEE", AV, M.id); // 9:45  -> Present
   const P2 = await mk2("CAL-P2", "EMPLOYEE", AV, M.id); // 9:46  -> Late
-  const P3 = await mk2("CAL-P3", "EMPLOYEE", AV, M.id); // 10:15 -> Late
+  const P3 = await mk2("CAL-P3", "EMPLOYEE", AV, M.id); // 10:00 -> Late
   const P4 = await mk2("CAL-P4", "EMPLOYEE", AV, M.id); // 10:16 -> Half Day
   const P5 = await mk2("CAL-P5", "EMPLOYEE", AV, M.id); // no check-in, others did -> Absent
   const X = await mk2("CAL-X", "EMPLOYEE", AV);         // not M's report
@@ -71,8 +71,8 @@ const PW = "Cal@12345678";
   await q(`insert into late_remarks (id,"platformId","userId","sessionId",remark,"lateByMinutes","createdAt") values (gen_random_uuid(),$1,$2,$3,'Bus broke down',1,now())`, [AV, P2.id, s2]);
   const lr = (await q(`insert into leave_requests (id,"platformId","userId","fromDate","toDate","leaveType","isHalfDay","isFirstHalf","dayCount",reason,status,"createdAt","updatedAt") values (gen_random_uuid(),$1,$2,'2026-10-29','2026-10-29','SICK',false,true,1,'Fever and a doctor visit','APPROVED',now(),now()) returning id`, [AV, P5.id]))[0].id;
   await q(`insert into leave_days (id,"platformId","userId",date,"leaveType","isHalfDay","isFirstHalf","leaveRequestId","markedById","createdAt") values (gen_random_uuid(),$1,$2,'2026-10-29','SICK',false,true,$3,$4,now())`, [AV, P5.id, lr, HR.id]);
-  await seed(P3, "10:15", "18:00", 7 * 3600, 1800);
-  await seed(P4, "10:16", "13:30", 3 * 3600, 600);
+  await seed(P3, "10:00", "18:00", 7 * 3600, 1800);
+  await seed(P4, "10:01", "13:30", 3 * 3600, 600);
 
   const cal = (t, extra = "") => call("GET", `/attendance-calendar?from=${DAY}&to=${DAY}${extra}`, t);
   const status = (res, u) => res.b.rows?.find((r) => r.userId === u.id)?.status;
@@ -82,8 +82,8 @@ const PW = "Cal@12345678";
   ok("the manager's calendar loads (200)", m.s === 200, m);
   ok("9:45 AM = Present", status(m, P1) === "PRESENT", m.b.rows);
   ok("9:46 AM = Late", status(m, P2) === "LATE");
-  ok("10:15 AM = Late", status(m, P3) === "LATE");
-  ok("10:16 AM = Half Day", status(m, P4) === "HALF_DAY");
+  ok("10:00 AM = Late", status(m, P3) === "LATE");
+  ok("10:01 AM = Half Day", status(m, P4) === "HALF_DAY");
   ok("no check-in on a day the company was tracking = Absent", status(m, P5) === "ABSENT", m.b.rows?.find((r) => r.userId === P5.id));
 
   console.log("\n## 2. The record behind a day");

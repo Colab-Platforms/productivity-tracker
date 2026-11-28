@@ -1,4 +1,4 @@
-// "Late Remark": how a day's first check-in sits against the arrival rule (on time up to 09:45, Late up to 10:15, Half Day after), with the late
+// "Late Remark": how a day's first check-in sits against the arrival rule (on time up to 09:45, Late up to 10:00, Half Day after), with the late
 // duration and the reason the person gave. The classification and the numbers come from the server (the same rule as the Attendance Calendar);
 // this only words them. Nothing is invented: when no reason was typed it says "No remark provided".
 import { clockTime } from "./format";
@@ -22,6 +22,8 @@ export type ArrivalFields = {
   loginAt: string | null;
   arrivalMinutes?: number | null;
   arrivalLimit?: string | null;
+  /** a Late turned into a Half Day by the 3rd-late-working-day-in-a-row rule */
+  arrivalStreak?: boolean;
   lateReason?: string | null;
   correctedBy?: string | null;
 };
@@ -52,6 +54,7 @@ export function lateDetail(r: ArrivalFields, tz: string): string {
   if (r.arrival !== "LATE" && r.arrival !== "HALF_DAY") return "";
   const parts = [`checked in ${clockTime(r.loginAt, tz)}`];
   if (r.arrivalMinutes && r.arrivalMinutes > 0) parts.push(`${minutesText(r.arrivalMinutes)} after ${r.arrivalLimit ?? "09:45"}`);
+  if (r.arrivalStreak) parts.push("3rd late working day in a row: counted as a half day");
   parts.push(r.lateReason ? `Reason: ${r.lateReason}` : NO_REMARK);
   return parts.join(" · ");
 }

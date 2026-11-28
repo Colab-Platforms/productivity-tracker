@@ -12,12 +12,12 @@ ok("9:40 = Present", classifyArrival(ist("09:40"), IST) === "PRESENT");
 ok("9:45 = Present (at or before)", classifyArrival(ist("09:45"), IST) === "PRESENT");
 ok("9:46 = Late", classifyArrival(ist("09:46"), IST) === "LATE");
 ok("9:50 = Late", classifyArrival(ist("09:50"), IST) === "LATE");
-ok("10:15 = Late (at or before)", classifyArrival(ist("10:15"), IST) === "LATE");
-ok("10:16 = Half Day", classifyArrival(ist("10:16"), IST) === "HALF_DAY");
+ok("10:00 = Late (at or before)", classifyArrival(ist("10:00"), IST) === "LATE");
+ok("10:01 = Half Day", classifyArrival(ist("10:01"), IST) === "HALF_DAY");
 ok("early morning 6:00 = Present", classifyArrival(ist("06:00"), IST) === "PRESENT");
 ok("1:00 PM = Half Day", classifyArrival(ist("13:00"), IST) === "HALF_DAY");
 ok("seconds do not move the minute: 9:45:59 = Present, same precision as the existing late rule", classifyArrival(ist("09:45", 59), IST) === "PRESENT");
-ok("10:15:59 = Late", classifyArrival(ist("10:15", 59), IST) === "LATE");
+ok("10:00:59 = Late", classifyArrival(ist("10:00", 59), IST) === "LATE");
 
 console.log("\n## the company's timezone decides, not the server's");
 const at = ist("09:40"); // 9:40 in India = 04:10 UTC
@@ -30,7 +30,7 @@ ok("minute of day is read in the given zone", localMinuteOfDay(ist("09:46"), IST
 console.log("\n## late indicator");
 ok("on time = 0 minutes", minutesAfterLimit(ist("09:30"), IST) === 0 && minutesAfterLimit(ist("09:45"), IST) === 0);
 ok("9:46 = 1 minute after the limit", minutesAfterLimit(ist("09:46"), IST) === 1);
-ok("10:16 = 31 minutes after the limit", minutesAfterLimit(ist("10:16"), IST) === 31);
+ok("10:01 = 16 minutes after the limit", minutesAfterLimit(ist("10:01"), IST) === 16);
 
 console.log("\n## which status the calendar shows for a day");
 const s = (engineStatus: string, loginAt: Date | null, isToday = false) => calendarStatus({ engineStatus, loginAt, isToday, timezone: IST });

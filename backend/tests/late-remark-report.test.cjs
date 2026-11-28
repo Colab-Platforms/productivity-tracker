@@ -40,7 +40,7 @@ const PW = "Lat@12345678";
   const M = await mk("LAT-M", "MANAGER", AV);
   const P1 = await mk("LAT-P1", "EMPLOYEE", AV, M.id); // 09:45 on time
   const P2 = await mk("LAT-P2", "EMPLOYEE", AV, M.id); // 09:46 late, with a reason
-  const P3 = await mk("LAT-P3", "EMPLOYEE", AV, M.id); // 10:15 late, NO reason
+  const P3 = await mk("LAT-P3", "EMPLOYEE", AV, M.id); // 10:00 late, NO reason
   const P4 = await mk("LAT-P4", "EMPLOYEE", AV, M.id); // 10:16 half day
   const P5 = await mk("LAT-P5", "EMPLOYEE", AV, M.id); // never checked in: absent
   const X = await mk("LAT-X", "EMPLOYEE", AV);         // not M's report
@@ -54,8 +54,8 @@ const PW = "Lat@12345678";
   const seed = async (u, plat, inAt, outAt) => (await q(`insert into work_sessions (id,"platformId","userId",date,"loginAt","logoutAt",status,"productiveSeconds","breakSeconds","meetingSeconds","wasLateLogin","lateByMinutes","autoClosed","createdAt","updatedAt") values (gen_random_uuid(),$1,$2,$3::date,$4,$5,'COMPLETED',$6,0,0,false,0,false,now(),now()) returning id`, [plat, u.id, DAY, ist(inAt), ist(outAt), 8 * 3600]))[0].id;
   await seed(P1, AV, "09:45", "18:00");
   const s2 = await seed(P2, AV, "09:46", "18:00");
-  await seed(P3, AV, "10:15", "18:00");
-  await seed(P4, AV, "10:16", "18:00");
+  await seed(P3, AV, "10:00", "18:00");
+  await seed(P4, AV, "10:01", "18:00");
   await seed(EB, AVN, "09:50", "18:00");
   await seed(EBB, AVN, "09:40", "18:00");
   await q(`insert into late_remarks (id,"platformId","userId","sessionId",remark,"lateByMinutes","createdAt") values (gen_random_uuid(),$1,$2,$3,'Bus broke down',1,now())`, [AV, P2.id, s2]);
@@ -68,8 +68,8 @@ const PW = "Lat@12345678";
   ok("the manager's report loads (200)", m.s === 200, m);
   ok("09:45 = On time", row(m, P1)?.arrival === "ON_TIME", row(m, P1));
   ok("09:46 = Late, 1 minute after 09:45", row(m, P2)?.arrival === "LATE" && row(m, P2).arrivalMinutes === 1, row(m, P2));
-  ok("10:15 = Late, 30 minutes after 09:45", row(m, P3)?.arrival === "LATE" && row(m, P3).arrivalMinutes === 30, row(m, P3));
-  ok("10:16 = Half Day, 31 minutes after 09:45", row(m, P4)?.arrival === "HALF_DAY" && row(m, P4).arrivalMinutes === 31, row(m, P4));
+  ok("10:00 = Late, 15 minutes after 09:45", row(m, P3)?.arrival === "LATE" && row(m, P3).arrivalMinutes === 15, row(m, P3));
+  ok("10:01 = Half Day, 16 minutes after 09:45", row(m, P4)?.arrival === "HALF_DAY" && row(m, P4).arrivalMinutes === 16, row(m, P4));
   ok("no check-in on a day the company was tracking = Absent", row(m, P5)?.arrival === "ABSENT" && row(m, P5).arrivalMinutes === null, row(m, P5));
   ok("the original check-in time is on the row, unchanged", row(m, P2).loginAt === ist("09:46") || new Date(row(m, P2).loginAt).getTime() === new Date(ist("09:46")).getTime(), row(m, P2).loginAt);
 
@@ -115,8 +115,8 @@ const PW = "Lat@12345678";
   const h2 = await hist(P2.tok), h3 = await hist(P3.tok), h4 = await hist(P4.tok), h1 = await hist(P1.tok);
   ok("on time: classified On time", h1?.arrival === "ON_TIME", h1);
   ok("late with a reason: Late, 1 minute, the reason they typed", h2?.arrival === "LATE" && h2.arrivalMinutes === 1 && h2.lateRemark === "Bus broke down", h2);
-  ok("late without a reason: Late and no reason (the page shows 'No remark provided')", h3?.arrival === "LATE" && h3.arrivalMinutes === 30 && !h3.lateRemark, h3);
-  ok("half day: Half Day, 31 minutes", h4?.arrival === "HALF_DAY" && h4.arrivalMinutes === 31, h4);
+  ok("late without a reason: Late and no reason (the page shows 'No remark provided')", h3?.arrival === "LATE" && h3.arrivalMinutes === 15 && !h3.lateRemark, h3);
+  ok("half day: Half Day, 16 minutes", h4?.arrival === "HALF_DAY" && h4.arrivalMinutes === 16, h4);
   ok("an employee's history has only their own days", (await call("GET", `/tracker/history?from=${DAY}&to=${DAY}`, P2.tok)).b.rows.every((r) => r.date === DAY));
 
   console.log("\n## 7. Today: nobody is Absent while the day is still going");

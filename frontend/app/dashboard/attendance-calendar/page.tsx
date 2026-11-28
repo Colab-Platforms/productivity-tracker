@@ -8,7 +8,7 @@ import FilterBar from "../_filters/FilterBar";
 import { filterQuery, useFilterOptions, useHrFilters } from "../_filters/useHrFilters";
 
 // ATTENDANCE CALENDAR: one coloured status per person per day, from the person's FIRST check-in of the day (company timezone):
-// at or before 9:45 = Present, up to 10:15 = Late, after 10:15 = Half day. Leave, holidays, week-offs, "not tracked" days and Absent
+// at or before 9:45 = Present, up to 10:00 = Late, after 10:00 = Half day (and the 3rd late working day in a row is a half day). Leave, holidays, week-offs, "not tracked" days and Absent
 // come from the existing attendance engine, and nobody is Absent while the day is still going.
 // Data: GET /attendance-calendar. Working and break time are the stored values (same as Reports); the stamps are shown exactly as recorded.
 // This view does not change Reports or payroll, which keep their own late and half-day rules.
@@ -136,7 +136,7 @@ export default function AttendanceCalendarPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{isStaff ? "Attendance calendar" : "My attendance calendar"}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Each day is marked from the first check-in: Present up to {data?.rules.presentUntil ?? "09:45"}, Late up to {data?.rules.lateUntil ?? "10:15"}, Half day after that (company time).
+            Each day is marked from the first check-in: Present up to {data?.rules.presentUntil ?? "09:45"}, Late up to {data?.rules.lateUntil ?? "10:00"}, Half day after that. The 3rd late working day in a row also counts as a half day, then the count starts again (company time).
           </p>
         </div>
       </div>
