@@ -221,6 +221,21 @@ router.get("/attendance", async (req, res) => {
   }
 });
 
+// "Show your working": for every eligible person and date the clock-in record, status and the reason it was or was not counted, plus people the viewer may
+// see who are left out of the report altogether (and why). Same people and filters as the report. Names, IDs, dates and statuses only.
+router.get("/attendance/diagnostic", async (req, res) => {
+  try {
+    const userId = text(req.query.userId, 40);
+    if (userId && !UUID.test(userId)) {
+      res.status(400).json({ error: "One of the values sent is not valid." });
+      return;
+    }
+    res.json(await svc.getAttendanceDiagnostic(req.user!.userId, { from: text(req.query.from, 10), to: text(req.query.to, 10), userId, filters: parseFilters(req.query as Record<string, unknown>) }));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 // The complete team productivity report for one period (every sheet of the Manager download comes from this one answer). Same people and
 // filters as the other reports; a manager gets only the people who report to them, an employee is refused by the router guard.
 router.get("/team-report", async (req, res) => {

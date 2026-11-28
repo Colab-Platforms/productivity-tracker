@@ -107,7 +107,7 @@ export function summaryOf(data: TeamReportData, ix: Index, id: string): Summary 
   const lv = ix.leave.get(id) ?? [];
   return {
     daysInPeriod: data.days,
-    present: att.filter((r) => r.status === "PRESENT").length, halfDays: att.filter((r) => r.status === "HALF_DAY").length, absent: att.filter((r) => r.status === "ABSENT").length,
+    present: att.filter((r) => r.status === "PRESENT").length, halfDays: att.filter((r) => r.status === "HALF_DAY").length, absent: att.filter((r) => r.status === "ABSENT" || r.status === "NOT_CLOCKED_IN").length,
     leaveDays: att.filter((r) => r.status === "LEAVE").length, holidays: att.filter((r) => r.status === "HOLIDAY").length, weekOffs: att.filter((r) => r.status === "WEEK_OFF").length,
     notTracked: att.filter((r) => r.status === "NOT_TRACKED").length,
     lateLogins: att.filter(isLateArrival).length, lateRemarks: att.filter(hasTypedRemark).length,

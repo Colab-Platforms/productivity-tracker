@@ -350,6 +350,7 @@ const STATUS_VALUES = new Set(["PRESENT", "HALF_DAY", "ABSENT", "LEAVE", "HOLIDA
 const IST_OFFSET_MS = 330 * 60 * 1000;
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
+const round2 = (n: number) => Math.round(n * 100) / 100;
 function minutesToHHMM(m: number | null): string | null {
   return m === null ? null : `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
@@ -364,7 +365,7 @@ function istInstant(dateIso: string, hhmm: string): Date | null {
 
 export async function getAttendanceReport(
   viewerId: string,
-  q: { from?: string; to?: string; userId?: string; teamId?: string; shift?: string; status?: string; arrival?: string; filters?: HrFilters; self?: boolean }
+  q: { from?: string; to?: string; userId?: string; teamId?: string; shift?: string; status?: string; arrival?: string; filters?: HrFilters; self?: boolean; diagnostic?: boolean }
 ) {
   const viewer = await getViewer(viewerId, q.self === true);
   const timezone = viewer.platform.timezone;
@@ -396,6 +397,8 @@ export async function getAttendanceReport(
           firstName: true,
           lastName: true,
           employeeCode: true,
+          dateOfJoining: true,
+          status: true,
           platform: { select: { timezone: true } },
           shift: { select: { name: true, startTime: true, endTime: true, spansMidnight: true } },
           teamMemberships: {
@@ -412,7 +415,7 @@ export async function getAttendanceReport(
   const meta = people.map((p) => {
     const team = p.teamMemberships[0]?.team ?? null;
     const shift = p.shift ?? team?.shift ?? null;
-    return { id: p.id, tz: p.platform.timezone, name: `${p.firstName} ${p.lastName}`.trim(), code: p.employeeCode, teamId: team?.id ?? null, teamName: team?.name ?? null, shift, breakBudgetSeconds: (team?.config?.breakBudgetMinutes ?? DEFAULT_BREAK_BUDGET_MINUTES) * 60 };
+    return { id: p.id, joined: p.dateOfJoining ? p.dateOfJoining.toISOString().slice(0, 10) : null, tz: p.platform.timezone, name: `${p.firstName} ${p.lastName}`.trim(), code: p.employeeCode, teamId: team?.id ?? null, teamName: team?.name ?? null, shift, breakBudgetSeconds: (team?.config?.breakBudgetMinutes ?? DEFAULT_BREAK_BUDGET_MINUTES) * 60 };
   });
   const options = {
     people: meta.map((m) => ({ id: m.id, name: m.name, code: m.code })),
@@ -500,12 +503,16 @@ export async function getAttendanceReport(
   const runningBy = new Map(running.map((r) => [r.userId, r]));
 
   const rows: Array<Record<string, unknown>> = [];
+  const diagnostic: Array<Record<string, unknown>> = [];
   for (const month of monthly.flat()) {
     const who = byId.get(month.userId);
     if (!who) continue;
     for (const d of month.days) {
       if (d.date < fromIso || d.date > toIso) continue;
-      if (d.status === "FUTURE" || d.status === "NOT_EMPLOYED") continue;
+      if (d.status === "FUTURE" || d.status === "NOT_EMPLOYED") {
+        if (q.diagnostic) diagnostic.push({ employeeCode: who.code, name: who.name, joiningDate: who.joined, date: d.date, clockIn: null, hasClockIn: false, status: d.status, statusLabel: d.label, countedInTotals: false, reason: d.status === "FUTURE" ? "A day that has not happened yet" : d.note ?? "Outside the employment period" });
+        continue;
+      }
 
       // What this row shows. Finished days keep the engine's answer (so this report agrees with payroll); two
       // cases about TODAY are shown honestly instead of as a provisional hours-based verdict.
@@ -532,10 +539,11 @@ export async function getAttendanceReport(
       } else if (d.date === todayIso && status === "ABSENT" && d.loginAt === null) {
         // Nobody can be called absent while the day is still going: a later clock-in makes them present.
         status = "NOT_CLOCKED_IN";
-        label = "Not clocked in yet";
+        label = "Absent (not clocked in yet)";
         note = null;
       }
-      if (q.status && status !== q.status) continue;
+      // "Absent" means eligible with no clock-in, so the filter finds the not-in-yet rows too (they are counted as absent in the totals).
+      if (q.status && status !== q.status && !(q.status === "ABSENT" && status === "NOT_CLOCKED_IN")) continue;
 
       // "Late Remark": the first check-in against the 09:45 / 10:15 arrival rule (the calendar's rule), in the person's company time. A view only:
       // the existing Status and Late columns above keep their own rules. Absent only after the day is over; today is "Not in yet".
@@ -557,6 +565,15 @@ export async function getAttendanceReport(
         if (end) earlyMinutes = Math.max(0, Math.round((end.getTime() - new Date(d.logoutAt).getTime()) / 60000));
       }
       const hasWork = d.loginAt !== null;
+      if (q.diagnostic) {
+        const counted = status === "PRESENT" || status === "HALF_DAY" || status === "ABSENT" || status === "NOT_CLOCKED_IN";
+        diagnostic.push({
+          employeeCode: who.code, name: who.name, joiningDate: who.joined, date: d.date, clockIn: d.loginAt ?? null, hasClockIn: d.loginAt !== null,
+          status, statusLabel: label, countedInTotals: counted,
+          reason: counted ? (status === "NOT_CLOCKED_IN" ? "Eligible today, no clock-in yet: counted as absent" : status === "ABSENT" ? (d.loginAt ? "Clocked in but under the half-day hours: counted as absent" : "Eligible working day with no clock-in: absent") : null)
+            : status === "LEAVE" ? "Approved leave" : status === "HOLIDAY" ? "Holiday" : status === "WEEK_OFF" ? "Weekly off (not a working day for this person)" : status === "NOT_TRACKED" ? "Nobody in the company clocked in this day, so the tracker was not in use" : "Not counted",
+        });
+      }
       rows.push({
         userId: month.userId,
         name: who.name,
@@ -605,7 +622,10 @@ export async function getAttendanceReport(
 
   const present = rows.filter((r) => r.status === "PRESENT").length;
   const halfDay = rows.filter((r) => r.status === "HALF_DAY").length;
-  const absent = rows.filter((r) => r.status === "ABSENT").length;
+  // Eligible people with no clock-in are ABSENT. Today (a day still going) they are shown as "Absent (not clocked in yet)" and counted here too, otherwise the
+  // Absent card read 0 and the percentage was worked out over only the people who had clocked in.
+  const notYetIn = rows.filter((r) => r.status === "NOT_CLOCKED_IN").length;
+  const absent = rows.filter((r) => r.status === "ABSENT").length + notYetIn;
   const counted = present + halfDay + absent; // working days only: leave, holidays and week-offs are not "attendance"
   const workedRows = rows.filter((r) => r.status === "PRESENT" || r.status === "HALF_DAY");
   const totalWorked = workedRows.reduce((sum, r) => sum + Number(r.workedHours ?? 0), 0);
@@ -617,12 +637,27 @@ export async function getAttendanceReport(
       present,
       halfDay,
       absent,
-      notYet: rows.filter((r) => r.status === "NOT_CLOCKED_IN").length,
+      notYet: notYetIn, // already inside `absent`: shown as a footnote, never added on top
       workingDays: counted,
-      attendancePct: counted > 0 ? round1(((present + halfDay * 0.5) / counted) * 100) : null,
+      attendancePct: counted > 0 ? round2(((present + halfDay * 0.5) / counted) * 100) : null,
       totalWorkedHours: round1(totalWorked),
       avgWorkedHours: workedRows.length > 0 ? round1(totalWorked / workedRows.length) : null,
     },
     rows,
+    ...(q.diagnostic ? { diagnostic, excludedPeople: await excludedPeople(allowed, new Set(chosen.map((c) => c.id))) } : {}),
   };
+}
+
+/** People the viewer may see who never reach the report, and why (a status such as Terminated, Absconded or Exited is not an active employee). Names and IDs only. */
+async function excludedPeople(allowed: string[], inReport: Set<string>) {
+  const out = allowed.filter((id) => !inReport.has(id));
+  if (out.length === 0) return [];
+  const rows = await prisma.user.findMany({ where: { id: { in: out } }, select: { employeeCode: true, firstName: true, lastName: true, status: true, dateOfJoining: true } });
+  return rows.map((u) => ({ employeeCode: u.employeeCode, name: `${u.firstName} ${u.lastName}`.trim(), joiningDate: u.dateOfJoining ? u.dateOfJoining.toISOString().slice(0, 10) : null, status: String(u.status), reason: `Account status is ${String(u.status)}: not an active employee, so not part of the attendance totals` }));
+}
+
+/** The "show your working" view: for every eligible person and date, the clock-in record, the status and why it was or was not counted. HR/Admin and managers only (the same people as the report). */
+export async function getAttendanceDiagnostic(viewerId: string, q: { from?: string; to?: string; userId?: string; filters?: HrFilters }) {
+  const r = (await getAttendanceReport(viewerId, { ...q, diagnostic: true })) as { from: string; to: string; kpis: unknown; diagnostic: unknown[]; excludedPeople: unknown[] };
+  return { from: r.from, to: r.to, kpis: r.kpis, employees: r.diagnostic, notInReport: r.excludedPeople };
 }

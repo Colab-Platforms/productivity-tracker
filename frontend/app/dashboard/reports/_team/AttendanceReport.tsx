@@ -14,7 +14,7 @@ import { ARRIVAL_CHIP, ARRIVAL_LABEL, lateDetail, lateRemarkText } from "./lateR
 // Attendance report: one row per person per day for a date range.
 // Data: GET /team-attendance/attendance. Finished days use the same attendance engine as salary and Reports, so the
 // figures agree with those screens. Today is shown honestly: people still working are Present, and people who have
-// not clocked in yet are "Not clocked in yet", not absent (a later clock-in would make them present).
+// not clocked in yet are "Absent (not clocked in yet)": eligible with no clock-in, so counted as absent; a later clock-in turns them Present.
 
 type Row = {
   userId: string; name: string; employeeCode: string | null; teamName: string | null; date: string;
@@ -183,6 +183,17 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
       r.tasksPlanned, r.tasksApproved, r.tasksPlanned === null ? null : r.tasksPlanned - r.tasksCompleted, r.tasksCompleted, remarks(r),
     ]);
   }
+  // "Show your working": one row per eligible person and date with the clock-in record, the status and why it was or was not counted (same filters as the report).
+  async function exportDiagnostic() {
+    if (!report) return;
+    const qs = new URLSearchParams({ from: report.from, to: report.to });
+    if (applied.userId) qs.set("userId", applied.userId);
+    const d = await apiGet<{ employees: Record<string, unknown>[]; notInReport: Record<string, unknown>[] }>(`/team-attendance/attendance/diagnostic?${qs.toString()}${hrQuery ? `&${hrQuery}` : ""}`);
+    const header = ["Employee ID", "Name", "Joining date", "Date", "Clock-in", "Has clock-in", "Status", "Counted in totals", "Reason"];
+    const rows = d.employees.map((e) => [e.employeeCode, e.name, e.joiningDate ?? "", e.date, e.clockIn ? clockTime(String(e.clockIn), tz) : "", e.hasClockIn ? "Yes" : "No", e.statusLabel, e.countedInTotals ? "Yes" : "No", e.reason ?? ""]);
+    const left = d.notInReport.map((e) => [e.employeeCode, e.name, e.joiningDate ?? "", "", "", "", String(e.status), "No", e.reason ?? ""]);
+    downloadCsv(`attendance-diagnostic-${report.from}_to_${report.to}.csv`, header, [...rows, ...left]);
+  }
   function exportCsv() {
     if (!report) return;
     downloadCsv(`attendance-${report.from}_to_${report.to}.csv`, EXPORT_HEADER, exportRows());
@@ -316,6 +327,7 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
 
           <div className="ml-auto">
             <ExportButtons onCsv={exportCsv} onExcel={exportXlsx} disabled={!report || rows.length === 0} />
+            {!self && <button type="button" onClick={() => void exportDiagnostic().catch(() => undefined)} disabled={!report} data-testid="att-diagnostic" title="One row per person and date: the clock-in record, the status and why it was or was not counted" className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">Diagnostic CSV</button>}
           </div>
         </div>
 
@@ -332,7 +344,7 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
             icon={<Icon><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M17 11a3 3 0 100-6M21 20c0-2.5-1.5-4.6-3.7-5.5" /></Icon>} />
           <Kpi tone="green" label="Present" value={k ? String(k.present) : "—"} sub={unit}
             icon={<Icon><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3.3 2.7-6 6-6M16 17l2 2 4-4" /></Icon>} />
-          <Kpi tone="red" label="Absent" value={k ? String(k.absent) : "—"} sub={unit}
+          <Kpi tone="red" label="Absent" value={k ? String(k.absent) : "—"} sub={k && k.notYet > 0 ? `${unit} · ${k.notYet} not clocked in yet` : unit}
             icon={<Icon><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3.3 2.7-6 6-6M16 14l5 5M21 14l-5 5" /></Icon>} />
           <Kpi tone="purple" label="Attendance %" value={k?.attendancePct == null ? "—" : `${k.attendancePct}%`}
             sub={k ? (k.workingDays > 0 ? `${k.present + k.halfDay} of ${k.workingDays} working ${unit}` : "no working days counted yet") : " "}
@@ -341,15 +353,15 @@ export default function AttendanceReport({ filters, ready = true, onScope, self 
 
         {k && (
           <p className="text-sm text-slate-600">
-            <b className="font-semibold text-slate-900">{k.halfDay}</b> half day · <b className="font-semibold text-slate-900">{k.notYet}</b> not clocked in yet · total{" "}
+            <b className="font-semibold text-slate-900">{k.halfDay}</b> half day · <b className="font-semibold text-slate-900">{k.notYet}</b> of the absent have not clocked in yet today · total{" "}
             <b className="font-semibold text-slate-900">{hmFromHours(k.totalWorkedHours)}</b> worked · average{" "}
             <b className="font-semibold text-slate-900">{hmFromHours(k.avgWorkedHours)}</b> per day worked
           </p>
         )}
 
         <p className="text-xs leading-relaxed text-slate-500">
-          For finished days: present = a full day worked, half day = under the full-day hours, absent = no clock-in (or too few hours) on a working day; leave, holidays and week-offs are not counted. Today shows people still working as
-          Present, and anyone who has not clocked in yet as &ldquo;Not clocked in yet&rdquo; rather than absent, because a later clock-in makes them present. Days before a person joined or before attendance tracking began are left out.
+          For finished days: present = a full day worked, half day = under the full-day hours, absent = no clock-in (or too few hours) on a working day; leave, holidays and week-offs are not counted. Attendance % = (present + half days × 0.5) ÷ everyone expected to work. Today shows people still working as
+          Present, and anyone who has not clocked in yet as &ldquo;Absent (not clocked in yet)&rdquo;: they count as absent until they clock in. Days before a person joined or before attendance tracking began are left out.
         </p>
 
         {/* table */}
