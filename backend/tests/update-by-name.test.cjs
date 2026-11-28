@@ -29,6 +29,7 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
   await mk("NBN-4", "Sam", "Same", "EMPLOYEE");
   await mk("NBN-5", "Foreign", "Person", "EMPLOYEE", OTHER);
   const e6 = await mk("NBN-6", "Quinn", "Mailer", "EMPLOYEE", A, "quinn.real@nbn.test");
+  await mk("NBN-7", "Vera", "Oldname", "EMPLOYEE");
   await mk("NBN-AD", "Ada", "Boss", "ADMIN");
   const tok = (await (await fetch(API + "/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "NBN-HR", password: "Nbn@12345678" }) })).json()).token;
   // columns: 0 ID (blank), 1 full name, 2 email, 3 gender, 4 city
@@ -42,6 +43,9 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
     ["", "Foreign Person", "", "Male", "Rome"],
     ["", "Ada Boss", "", "Male", "Oslo"],
     ["", "", "", "Male", "Nowhere"],
+    ["vera_old", "Vera Oldname", "", "Male", "Unknown-ID-row"],
+    ["nobody_old", "Zed Nobody", "", "Male", "Nowhere"],
+    ["NBN-3", "Anything Typed", "", "Male", "Exists-row"],
   ].map((cells, i) => ({ rowNumber: i + 2, cells }));
   const pv = (await post("/admin/employees/update/preview", tok, { rows, mapping })).b;
   const R = (n) => pv.rows[n];
@@ -53,6 +57,9 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
   ok("another company's person is not reachable by name", R(5).status === "INVALID", R(5));
   ok("Admin accounts are never matched by name", R(6).status === "INVALID", R(6));
   ok("a row with no ID, name or email says what is missing", R(7).status === "INVALID" && /No name or email/.test(R(7).issues[0].message), R(7));
+  ok("an ID that no account has (old username) is looked up by name; the real ID is used and the note says so", R(8).employeeId === "NBN-7" && R(8).notes.some((n) => /The ID "vera_old" in the sheet is not an HRMS ID: matched by exact name, existing ID NBN-7/.test(n)), R(8));
+  ok("an unknown ID whose name matches nobody is refused and says what was tried", R(9).status === "INVALID" && /nobody_old/.test(R(9).issues[0].message) && /no existing employee matches/.test(R(9).issues[0].message), R(9));
+  ok("an ID that EXISTS is used as typed, never second-guessed", R(10).employeeId === "NBN-3" && !R(10).notes.some((n) => /not an HRMS ID/.test(n)), R(10));
   ok("nothing was written by the preview", (await q(`select count(*)::int c from employee_personal_details where "userId" in ($1,$2)`, [f, r1]))[0].c === 0);
   const cm = await post("/admin/employees/update/commit", tok, { rows, mapping, confirm: true });
   ok("commit saves the matched people only", cm.s === 200 && cm.b.summary.updated >= 2, cm);
@@ -60,8 +67,8 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
   ok("Faizan got his city", (await city(f)) === "Pune", await city(f));
   ok("the person found by email got theirs", (await city(e6)) === "Thane", await city(e6));
   ok("Rohit's city is stored", (await city(r1)) === "Mumbai");
-  ok("the same-name, other-company and Admin people were not touched", (await q(`select count(*)::int c from employee_personal_details where "userId" in (select id from users where "employeeCode" in ('NBN-3','NBN-4','NBN-5','NBN-AD'))`))[0].c === 0);
-  ok("nobody was created", (await q(`select count(*)::int c from users where "employeeCode" like 'NBN-%'`))[0].c === 8);
+  ok("the same-name, other-company and Admin people were not touched", (await q(`select count(*)::int c from employee_personal_details where "userId" in (select id from users where "employeeCode" in ('NBN-4','NBN-5','NBN-AD'))`))[0].c === 0);
+  ok("nobody was created", (await q(`select count(*)::int c from users where "employeeCode" like 'NBN-%'`))[0].c === 9);
   await wipe();
   await db.end();
   console.log(`\n${pass} passed, ${fail} failed`);

@@ -21,7 +21,7 @@
 // ===========================================================================
 
 import { leftStatuses } from "../../lib/userStatus.js";
-import { PERSONAL_FIELDS, type PersonalField } from "../personal/personal.logic.js";
+import { PERSONAL_FIELDS, readWordDay, type PersonalField } from "../personal/personal.logic.js";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import readXlsxFile from "read-excel-file/node";
@@ -535,6 +535,8 @@ export function parseJoinDate(cell: Cell | undefined): { value?: string; error?:
     if (m) iso = `${m[1]}-${m[2]}-${m[3]}`;
     else if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/))) {
       iso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    } else if ((iso = readWordDay(s))) {
+      // "05th October 2026": the month is a word, so it is read as written
     } else return { error: `"${s}" is not a date. Use DD-MM-YYYY (for example 14-01-2025).` };
   }
 

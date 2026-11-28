@@ -33,6 +33,22 @@ export const DISPLAY: Record<string, Record<string, string>> = {
 };
 export const shown = (field: PersonalField, v: string | null | undefined): string => (v ? DISPLAY[field]?.[v] ?? v : "");
 
+const MONTHS: Record<string, number> = { jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12 };
+/** "05th October 2026", "5 Oct 2026", "October 5, 2026", "5-Oct-2026": the month is a WORD, so the order is never ambiguous. Returns YYYY-MM-DD for a real day, else null. */
+export function readWordDay(raw: unknown): string | null {
+  const s = String(raw ?? "").replace(/\s+/g, " ").trim().replace(/,/g, " ").replace(/\s+/g, " ");
+  let d: number, mon: string, y: number;
+  let m = /^(\d{1,2})(?:st|nd|rd|th)?[ \-/.]+([A-Za-z]{3,9})\.?[ \-/.]+(\d{4})$/.exec(s);
+  if (m) { d = +m[1]; mon = m[2]; y = +m[3]; }
+  else if ((m = /^([A-Za-z]{3,9})\.?[ \-/.]+(\d{1,2})(?:st|nd|rd|th)?[ \-/.]+(\d{4})$/.exec(s))) { mon = m[1]; d = +m[2]; y = +m[3]; }
+  else return null;
+  const mo = MONTHS[mon.toLowerCase()];
+  if (!mo) return null;
+  const back = new Date(Date.UTC(y, mo - 1, d));
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d) return null;
+  return `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 /** A real calendar day. Accepts 2000-01-29, 2000-01-29T00:00:00.000Z (Excel), and day-month-year with / - or . (29-01-2000). Returns YYYY-MM-DD or null. */
 export function readDay(raw: unknown): string | null {
   if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw.toISOString().slice(0, 10);
@@ -41,7 +57,7 @@ export function readDay(raw: unknown): string | null {
   let mt = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(s);
   if (mt) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
   else if ((mt = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s))) { d = +mt[1]; m = +mt[2]; y = +mt[3]; }
-  else return null;
+  else return readWordDay(s);
   const back = new Date(Date.UTC(y, m - 1, d));
   if (back.getUTCFullYear() !== y || back.getUTCMonth() !== m - 1 || back.getUTCDate() !== d) return null; // 30 Feb and the like
   return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;

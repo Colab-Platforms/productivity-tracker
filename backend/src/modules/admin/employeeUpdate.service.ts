@@ -126,7 +126,17 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
   const resolvedCode = new Map<number, string>();
   const resolveNote = new Map<number, string>();
   const resolveError = new Map<number, string>();
-  const blankRows = live.filter((r) => text(get(r, "employeeId")).trim() === "");
+  // An ID typed in the sheet that NO account has (for example an old username such as "vishwaa_avatar") is treated like a blank one: the person is looked up by
+  // email or exact name and their real HRMS ID is used. An ID that DOES exist is never second-guessed (it is used as typed).
+  const typedIds = Array.from(new Set(live.map((r) => text(get(r, "employeeId")).trim()).filter(Boolean)));
+  const existingIds = new Set(
+    typedIds.length
+      ? (await prisma.user.findMany({ where: { OR: typedIds.map((c) => ({ employeeCode: { equals: c, mode: "insensitive" as const } })) }, select: { employeeCode: true } })).map((u) => String(u.employeeCode).toLowerCase())
+      : []
+  );
+  const typedOf = (r: ParsedRow) => text(get(r, "employeeId")).trim();
+  const blankRows = live.filter((r) => typedOf(r) === "" || !existingIds.has(typedOf(r).toLowerCase()));
+  const why = (r: ParsedRow) => (typedOf(r) === "" ? "Employee ID was blank" : "The ID \"" + typedOf(r) + "\" in the sheet is not an HRMS ID");
   if (blankRows.length) {
     const pool = await prisma.user.findMany({
       where: { ...(viewer.access.all ? {} : { platformId: { in: viewer.access.ids } }), role: { not: "ADMIN" }, employeeCode: { not: null } },
@@ -142,20 +152,20 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       if (!email && !name) { resolveError.set(r.rowNumber, "Employee ID is required: it is how the person is found. (No name or email on this row to look them up by.)"); continue; }
       if (byEmail.length === 1 && (byName.length === 0 || byName.some((u) => u.employeeCode === byEmail[0].employeeCode))) {
         resolvedCode.set(r.rowNumber, byEmail[0].employeeCode!);
-        resolveNote.set(r.rowNumber, `Employee ID was blank: found by work email, existing ID ${byEmail[0].employeeCode} used.`);
+        resolveNote.set(r.rowNumber, `${why(r)}: found by work email, existing ID ${byEmail[0].employeeCode} used.`);
       } else if (byEmail.length === 1 && byName.length > 0) {
         resolveError.set(r.rowNumber, `The email belongs to ${byEmail[0].employeeCode} but the name matches ${byName.map((u) => u.employeeCode).join(", ")}. Fill in the Employee ID to say which person this is.`);
       } else if (byName.length === 1) {
         resolvedCode.set(r.rowNumber, byName[0].employeeCode!);
-        resolveNote.set(r.rowNumber, `Employee ID was blank: matched by exact name, existing ID ${byName[0].employeeCode} used. Check it is the right person.`);
+        resolveNote.set(r.rowNumber, `${why(r)}: matched by exact name, existing ID ${byName[0].employeeCode} used. Check it is the right person.`);
       } else if (byName.length > 1) {
         resolveError.set(r.rowNumber, `More than one person is called "${name}" (${byName.map((u) => u.employeeCode).join(", ")}). Fill in the Employee ID.`);
       } else {
-        resolveError.set(r.rowNumber, `Employee ID is blank and no existing employee matches ${email ? `the email ${email}` : `the name "${name}"`}. Fill in the Employee ID (to add a new person use Import Employees).`);
+        resolveError.set(r.rowNumber, `${why(r)} and no existing employee matches ${email ? `the email ${email}` : `the name "${name}"`}. Fill in the Employee ID (to add a new person use Import Employees).`);
       }
     }
   }
-  const idOf = (r: ParsedRow) => text(get(r, "employeeId")).trim() || resolvedCode.get(r.rowNumber) || "";
+  const idOf = (r: ParsedRow) => resolvedCode.get(r.rowNumber) ?? text(get(r, "employeeId")).trim();
   const codes = Array.from(new Set(live.map((r) => idOf(r)).filter(Boolean)));
 
   // --- one batch of reads, joined in memory --------------------------------------
@@ -227,7 +237,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
 
     const user = byCode.get(code.toLowerCase());
     if (!user) {
-      err("employeeId", "NOT_FOUND", `No employee has the ID ${code}. To add a new person use Import Employees.`);
+      err("employeeId", "NOT_FOUND", resolveError.get(r.rowNumber) ?? `No employee has the ID ${code}. To add a new person use Import Employees.`);
       row.status = "INVALID";
       continue;
     }
@@ -346,8 +356,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     // --- reports to --------------------------------------------------------------------
     const mName = text(get(r, "reportsToName")).trim();
     const mId = text(get(r, "reportsToId")).trim();
-    if ((mName || mId) && viewer.role !== "ADMIN") err("reportsToId", "ADMIN_ONLY_FIELD", "Only an Admin can change who a person reports to.");
-    else if (mName || mId) {
+    if (mName || mId) {
       const none = (s: string) => s.toUpperCase() === "NONE";
       let target: string | null | undefined;
       if (none(mName) || none(mId)) target = null;
@@ -367,7 +376,10 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
         err("reportsToId", "MANAGER_SELF", "A person cannot report to themselves.");
         target = undefined;
       }
-      if (target !== undefined && target !== user.reportsToId) {
+      if (target !== undefined && target !== user.reportsToId && viewer.role !== "ADMIN") {
+        // HR may upload a sheet that repeats the CURRENT reporting manager (no change, no error); a different one is Admin only.
+        err("reportsToId", "ADMIN_ONLY_FIELD", "Only an Admin can change who a person reports to. The sheet names a different manager than the one saved.");
+      } else if (target !== undefined && target !== user.reportsToId) {
         apply.reportsToId = target;
         propose("reportsTo", personName(user.reportsToId), target === null ? "NONE (no manager)" : personName(target), user.reportsToId === null);
       }
