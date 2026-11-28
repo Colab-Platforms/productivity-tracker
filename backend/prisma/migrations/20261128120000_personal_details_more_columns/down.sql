@@ -1,0 +1,1 @@
+ALTER TABLE "employee_personal_details" DROP COLUMN IF EXISTS "phoneCode", DROP COLUMN IF EXISTS "department", DROP COLUMN IF EXISTS "extraField1", DROP COLUMN IF EXISTS "extraField2", DROP COLUMN IF EXISTS "extraField3", DROP COLUMN IF EXISTS "extraField4", DROP COLUMN IF EXISTS "extraField5", DROP COLUMN IF EXISTS "notes";

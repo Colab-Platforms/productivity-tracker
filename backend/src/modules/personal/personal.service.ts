@@ -13,10 +13,11 @@ import { checkPersonal, compare, LABEL, PERSONAL_FIELDS, SENSITIVE, type Persona
 // The audit log records WHICH fields changed, never the sensitive values (date of birth, address, phone, gender, marital status).
 // ---------------------------------------------------------------------------
 
+// "Not ready" = the table is missing (P2021) OR it exists without one of today's columns (P2022, e.g. it was created from an earlier version of the migration).
 const isMissingTable = (e: unknown) => {
   const code = (e as { code?: unknown })?.code;
   const msg = e instanceof Error ? e.message : "";
-  return code === "P2021" || (/employee_personal_details/.test(msg) && /does not exist|relation/.test(msg));
+  return code === "P2021" || code === "P2022" || (/employee_personal_details/.test(msg) && /does not exist|relation|column/.test(msg)) || /column .* does not exist/.test(msg);
 };
 let readyValue = false;
 let readyAt = 0;
@@ -27,7 +28,7 @@ export async function personalReady(): Promise<boolean> {
   if (Date.now() - readyAt < 15_000) return false;
   checking = (async () => {
     try {
-      await prisma.employeePersonalDetails.findFirst({ select: { userId: true } });
+      await prisma.employeePersonalDetails.findFirst(); // all columns on purpose: a missing column must read as "not ready", never crash a screen
       readyValue = true;
     } catch (e) {
       if (!isMissingTable(e)) throw e;
