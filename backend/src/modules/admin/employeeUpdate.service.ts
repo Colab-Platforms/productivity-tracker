@@ -180,6 +180,12 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       })
     : [];
   const platformIds = Array.from(new Set(found.map((u) => u.platformId)));
+  const crossManagers = (
+    await prisma.user.findMany({
+      where: { ...(viewer.access.all ? {} : { platformId: { in: viewer.access.ids } }), role: { in: ["MANAGER", "ADMIN"] }, status: "ACTIVE", employeeCode: { not: null } },
+      select: { id: true, platformId: true, employeeCode: true, firstName: true, lastName: true, role: true, status: true, platform: { select: { name: true } } },
+    })
+  ).map((x) => ({ ...x, platformName: x.platform.name }));
   const [people, teams, shifts] = await Promise.all([
     platformIds.length
       ? prisma.user.findMany({
@@ -198,7 +204,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
   const linksOk = await linksReady();
   const linksNow = linksOk ? await linkedManagerIdsOf(found.map((u) => u.id)) : new Map<string, string[]>();
   const byCode = new Map(found.map((u) => [String(u.employeeCode ?? "").toLowerCase(), u]));
-  const personById = new Map(people.map((p) => [p.id, p]));
+  const personById = new Map<string, { firstName: string; lastName: string; employeeCode: string | null }>([...crossManagers.map((p) => [p.id, p] as const), ...people.map((p) => [p.id, p] as const)]);
   const personByCode = new Map(people.map((p) => [`${p.platformId}|${String(p.employeeCode ?? "").toLowerCase()}`, p]));
   const personName = (id: string | null) => {
     const p = id ? personById.get(id) : null;
@@ -367,27 +373,38 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
           err("reportsToId", "MANAGER_MISMATCH", `Reports-to name "${mName}" and ID ${mId} point to different people (${mId} is ${p.firstName} ${p.lastName}).`.replace("  ", " "));
         } else target = p.id;
       } else {
-        let hits = people.filter((p) => p.platformId === user.platformId && normName(`${p.firstName} ${p.lastName}`) === normName(mName));
-        // A form of address after the name ("jayesh sir", "Mr Jayesh", "Neha madam") is dropped. When what is left is a SINGLE word, it is accepted only if exactly ONE
-        // active Manager or Admin of this company has that first name; the preview says so. Anything else stays "not found" or "ambiguous".
-        if (hits.length === 0) {
-          const stripped = normName(mName.replace(/\b(sir|ma'?am|mam|madam|mr|mrs|ms|miss|dr|shri|smt)\b\.?/gi, " ").replace(/\./g, " "));
-          if (stripped && stripped !== normName(mName)) hits = people.filter((p) => p.platformId === user.platformId && normName(`${p.firstName} ${p.lastName}`) === stripped);
+        // The manager is looked for in the employee's OWN company first, then among the active Managers and Admins of every company this viewer may act on
+        // (a reporting line may cross companies, and an Admin such as Jayesh may sit in another company). A form of address after the name (sir, madam, mr...) is dropped;
+        // a SINGLE remaining word is accepted only when exactly ONE active Manager or Admin in that list has that first name. The preview says where and how it was found.
+        const stripped = normName(mName.replace(/\b(sir|ma'?am|mam|madam|mr|mrs|ms|miss|dr|shri|smt)\b\.?/gi, " ").replace(/\./g, " "));
+        const full = (x: { firstName: string; lastName: string }) => normName(`${x.firstName} ${x.lastName}`);
+        const isMgr = (x: { status: unknown; role: unknown }) => String(x.status) === "ACTIVE" && (x.role === "MANAGER" || x.role === "ADMIN");
+        const searches = [
+          { list: people.filter((x) => x.platformId === user.platformId), where: user.platform.name, own: true },
+          { list: crossManagers.filter((x) => x.platformId !== user.platformId), where: "", own: false },
+        ];
+        let hits: { id: string; firstName: string; lastName: string; employeeCode: string | null; platformName?: string }[] = [];
+        let how: "full" | "first" | "" = "";
+        let ownSearch = true;
+        for (const sr of searches) {
+          ownSearch = sr.own;
+          hits = sr.list.filter((x) => full(x) === normName(mName));
+          how = "full";
+          if (hits.length === 0 && stripped && stripped !== normName(mName)) hits = sr.list.filter((x) => full(x) === stripped);
           if (hits.length === 0 && stripped && !stripped.includes(" ")) {
-            const firstNameOnly = people.filter((p) => p.platformId === user.platformId && String(p.status) === "ACTIVE" && (p.role === "MANAGER" || p.role === "ADMIN") && normName(p.firstName) === stripped);
-            if (firstNameOnly.length === 1) {
-              hits = firstNameOnly;
-              notes.push(`Reporting manager "${mName}" was read as ${firstNameOnly[0].firstName} ${firstNameOnly[0].lastName} (${firstNameOnly[0].employeeCode}): the only active Manager or Admin here with that first name. Check it is right.`);
-            } else if (firstNameOnly.length > 1) {
-              err("reportsToId", "MANAGER_AMBIGUOUS", `More than one Manager or Admin here is called "${mName}" (${firstNameOnly.map((p) => p.employeeCode).join(", ")}). Write the full name or the manager's employee ID.`);
-              hits = firstNameOnly;
-            }
+            hits = sr.list.filter((x) => isMgr(x) && normName(x.firstName) === stripped);
+            how = "first";
           }
+          if (hits.length) break;
         }
-        if (hits.length === 0) err("reportsToId", "MANAGER_NOT_FOUND", `Reporting manager "${mName}" was not found in ${user.platform.name}.`);
-        else if (hits.length > 1 && !issues.some((i) => i.code === "MANAGER_AMBIGUOUS")) err("reportsToId", "MANAGER_AMBIGUOUS", `More than one person is called "${mName}". Add the manager's employee ID.`);
-        else if (hits.length > 1) { /* already reported above */ }
-        else target = hits[0].id;
+        const where = (h: { platformName?: string }) => (ownSearch ? user.platform.name : h.platformName ?? "another company");
+        if (hits.length === 0) err("reportsToId", "MANAGER_NOT_FOUND", `Reporting manager "${mName}" was not found in ${user.platform.name}, or among the active Managers and Admins of the other companies you manage.`);
+        else if (hits.length > 1) err("reportsToId", "MANAGER_AMBIGUOUS", `More than one ${how === "first" ? "Manager or Admin" : "person"} is called "${mName}" (${hits.map((x) => x.employeeCode).join(", ")}). Write the full name or the manager's employee ID.`);
+        else {
+          if (how === "first") notes.push(`Reporting manager "${mName}" was read as ${hits[0].firstName} ${hits[0].lastName} (${hits[0].employeeCode}, ${where(hits[0])}): the only active Manager or Admin with that first name. Check it is right.`);
+          else if (!ownSearch) notes.push(`Reporting manager ${hits[0].firstName} ${hits[0].lastName} (${hits[0].employeeCode}) was found in ${where(hits[0])}, another company you manage.`);
+          target = hits[0].id;
+        }
       }
       if (target === user.id) {
         err("reportsToId", "MANAGER_SELF", "A person cannot report to themselves.");
@@ -482,6 +499,9 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     // "Office timings" (one cell such as "10:00 AM - 7:00 PM") is read as the shift start and end ONLY when the separate Shift start / Shift end columns are empty.
     // Working days are never invented: they come from the Working days column or the person's current shift; if neither exists the timings are reported, not applied.
     const timingsText = text(getX(r, "officeTimings")).trim();
+    // Office timings are a day (morning to evening) range: an end that is earlier than the start, with no AM/PM written, is the EVENING (9:30 to 6:30 = 09:30 to 18:30).
+    // Owner's decision 2026-11-28: no tick is needed for this cell, and the row says so. The separate Shift start / Shift end columns still need the tick.
+    let officeDayShift = false;
     if (timingsText && "empty" in startO && "empty" in endO) {
       const parts = timingsText.split(/\s*(?:-|–|—|\bto\b)\s*/i).filter(Boolean);
       if (parts.length !== 2) err("row", "BAD_OFFICE_TIMINGS", `Office timings "${timingsText}" should look like "10:00 AM - 7:00 PM".`);
@@ -494,6 +514,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
         };
         startO = parseTime(withWords(parts[0]), options);
         endO = parseTime(withWords(parts[1]), options);
+        officeDayShift = true;
         if (daysRaw.trim() === "") {
           if (user.shift) daysRaw = dayLabel([...user.shift.workingDays].sort((a, b) => a - b));
           else {
@@ -525,7 +546,10 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
         if (end <= start) {
           const [eh, em] = end.split(":").map(Number);
           const asPm = hhmm(eh + 12, em);
-          if (eh < 12 && asPm > start && options.pmEndTimes) {
+          if (eh < 12 && asPm > start && officeDayShift) {
+            notes.push(`Office timings: ${start} to ${end} read as ${start} to ${asPm} (morning to evening).`);
+            end = asPm;
+          } else if (eh < 12 && asPm > start && options.pmEndTimes) {
             notes.push(`Shift end ${end} is before the start ${start}: read as ${asPm} (PM) (confirmed)`);
             end = asPm;
           } else {
