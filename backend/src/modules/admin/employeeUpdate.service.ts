@@ -268,6 +268,10 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       notes.push(`The sheet says "${sheetName}"; the system has "${row.name}". Names are never changed by an update.`);
     }
 
+    // Fields only an Admin may change (role, team, projects, reporting lines, secondary manager). When HR uploads a sheet that names them, that part is SKIPPED with a
+    // visible note and the rest of the row is still saved. HR never applies them.
+    const skipAdminOnly = (what: string, detail = "") => notes.push(`${what} was NOT changed: only an Admin can change it${detail ? ` (${detail})` : ""}. Everything else on this row is saved; an Admin can apply this part.`);
+
     // a helper that records one proposed change
     const propose = (field: UpdateField, current: string, proposed: string, blank: boolean, fieldChosen = chosen.has(field)) => {
       before[field] = current;
@@ -317,7 +321,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       if (!role) err("role", "BAD_ROLE", `"${roleText}" is not a role. Use Employee, Manager, HR or Admin.`);
       else if (role !== String(user.role)) {
         if (viewer.role !== "ADMIN") {
-          err("role", "ROLE_NOT_ALLOWED", "Only an Admin can change a person's system role.");
+          skipAdminOnly("System role");
         } else {
           apply.role = role;
           // Everyone starts as Employee, so Employee counts as "not set yet".
@@ -330,7 +334,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
     const teamIn = (name: string) => teams.find((t) => t.platformId === user.platformId && normName(t.name) === normName(name));
     const primary = user.teamMemberships.find((m) => m.isPrimary);
     const teamText = text(get(r, "team")).trim();
-    if (teamText && viewer.role !== "ADMIN") err("team", "ADMIN_ONLY_FIELD", "Only an Admin can change team / project assignments.");
+    if (teamText && viewer.role !== "ADMIN") skipAdminOnly("Team");
     else if (teamText) {
       const t = teamIn(teamText);
       if (!t) err("team", "UNKNOWN_TEAM", `"${teamText}" is not a team in ${user.platform.name}. Create it in Admin → Teams first.`);
@@ -341,7 +345,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       }
     }
     const projectText = text(get(r, "projects")).trim();
-    if (projectText && viewer.role !== "ADMIN") err("projects", "ADMIN_ONLY_FIELD", "Only an Admin can change team / project assignments.");
+    if (projectText && viewer.role !== "ADMIN") skipAdminOnly("Projects");
     else if (projectText) {
       const add: string[] = [];
       const names: string[] = [];
@@ -412,7 +416,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
       }
       if (target !== undefined && target !== user.reportsToId && viewer.role !== "ADMIN") {
         // HR may upload a sheet that repeats the CURRENT reporting manager (no change, no error); a different one is Admin only.
-        err("reportsToId", "ADMIN_ONLY_FIELD", "Only an Admin can change who a person reports to. The sheet names a different manager than the one saved.");
+        skipAdminOnly("Reporting manager", "the sheet names a different manager than the one saved");
       } else if (target !== undefined && target !== user.reportsToId) {
         apply.reportsToId = target;
         propose("reportsTo", personName(user.reportsToId), target === null ? "NONE (no manager)" : personName(target), user.reportsToId === null);
@@ -469,7 +473,7 @@ async function runUpdateValidation(viewer: Viewer, input: UpdateInput) {
 
     // --- secondary manager (an ADDITIONAL reporting manager; Admin only, never replaces the main one) ------------------
     const secText = text(getX(r, "secondaryManager")).trim();
-    if (secText && viewer.role !== "ADMIN") err("row", "ADMIN_ONLY_FIELD", "Only an Admin can add a secondary reporting manager.");
+    if (secText && viewer.role !== "ADMIN") skipAdminOnly("Secondary manager");
     else if (secText) {
       if (!linksOk) err("row", "SECONDARY_NOT_READY", "Secondary managers cannot be saved on this server yet (the database update has not been applied).");
       else {

@@ -66,7 +66,7 @@ const PW = "Pdt@12345678";
   const f = (pv.b.rows?.[0]?.changes || []).map((c) => c.field);
   ok("personal, type and secondary manager are proposed", ["gender", "dateOfBirth", "addressLine1", "city", "department", "extraField1", "extraField5", "phoneCode", "employmentType", "secondaryManager", "grade"].every((x) => f.includes(x)), f);
   ok("nothing stored yet", (await q(`select count(*)::int c from employee_personal_details where "userId"=$1`, [e1]))[0].c === 0 && (await q(`select count(*)::int c from reporting_manager_links where "userId"=$1`, [e1]))[0].c === 0);
-  ok("HR gets the secondary manager row refused (Admin only)", (await call("POST", "/admin/employees/update/preview", T.HR, body([r1]))).b.rows[0].issues.some((i) => i.code === "ADMIN_ONLY_FIELD"));
+  { const hrRow = (await call("POST", "/admin/employees/update/preview", T.HR, body([r1]))).b.rows[0]; console.log("   HR row issues:", JSON.stringify(hrRow.issues).slice(0, 400)); ok("HR: the secondary manager and team parts are skipped with a note, the rest of the row still saves", hrRow.issues.length === 0 && hrRow.notes.some((n) => /Secondary manager was NOT changed: only an Admin/.test(n)) && !hrRow.changes.some((c) => c.field === "secondaryManager") && hrRow.changes.some((c) => c.field === "gender"), hrRow); }
 
   console.log("\n## commit");
   const cm = await call("POST", "/admin/employees/update/commit", T.AD, { ...body([r1]), confirm: true });

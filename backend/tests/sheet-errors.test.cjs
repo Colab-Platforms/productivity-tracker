@@ -11,7 +11,8 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
   const db = new Client({ connectionString: process.env.TEST_DATABASE_URL }); await db.connect();
   const q = async (s, p) => (await db.query(s, p)).rows;
   const A = (await q(`select id from platforms where slug='avatar'`))[0].id;
-  const wipe = async () => { await q(`delete from company_access where "userId" in (select id from users where "employeeCode" like 'SHE-%')`).catch(() => {}); await q(`update audit_logs set "actorId"=null where "actorId" in (select id from users where "employeeCode" like 'SHE-%')`).catch(() => {}); await q(`delete from login_events where "employeeCode" like 'SHE-%'`).catch(() => {}); await q(`delete from users where "employeeCode" like 'SHE-%'`).catch((e) => console.log("wipe", e.message.slice(0, 60))); };
+  const wipe = async () => { await q(`delete from company_access where "userId" in (select id from users where "employeeCode" like 'SHE-%')`).catch(() => {});
+    await q(`delete from employee_personal_details where "userId" in (select id from users where "employeeCode" like 'SHE-%')`).catch(() => {}); await q(`update audit_logs set "actorId"=null where "actorId" in (select id from users where "employeeCode" like 'SHE-%')`).catch(() => {}); await q(`delete from login_events where "employeeCode" like 'SHE-%'`).catch(() => {}); await q(`delete from users where "employeeCode" like 'SHE-%'`).catch((e) => console.log("wipe", e.message.slice(0, 60))); };
   await wipe();
   let SHEOTHER = (await q(`select id from platforms where slug='she-co'`))[0]?.id;
   if (!SHEOTHER) SHEOTHER = (await q(`insert into platforms (id,name,slug,"updatedAt") values (gen_random_uuid(),'She Co','she-co',now()) returning id`))[0].id;
@@ -43,8 +44,15 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
   let r = await run(["SHE-E1", "Mona Boss", "", "", ""]);
   ok("HR repeating the CURRENT reporting manager: no error, no change", r.issues.length === 0 && r.status === "NO_CHANGE", r);
   r = await run(["SHE-E1", "Other Chief", "", "", ""]);
-  ok("HR naming a DIFFERENT manager is still refused (Admin only)", r.status === "INVALID" && r.issues.some((i) => i.code === "ADMIN_ONLY_FIELD"), r);
-  ok("the refusal says why", /different manager/.test(r.issues[0].message), r.issues);
+  ok("HR naming a DIFFERENT manager: the manager is NOT changed, a note says why, and the row is not an error", r.issues.length === 0 && !r.changes.some((c) => c.field === "reportsTo") && r.notes.some((n) => /Reporting manager was NOT changed: only an Admin/.test(n)), r);
+
+  {
+    const m2 = { ...mapping, city: 5 };
+    const cm = await post("/admin/employees/update/commit", tok, { rows: [{ rowNumber: 2, cells: ["SHE-E1", "Other Chief", "", "", "", "Testville"] }], mapping: m2, options: {}, confirm: true });
+    ok("HR commit: the city is saved even though the manager part was skipped", cm.s === 200 && cm.b.summary.updated === 1, cm);
+    ok("...and the reporting manager did NOT change", (await q(`select "reportsToId" r from users where "employeeCode"='SHE-E1'`))[0].r === boss);
+    ok("...and the city is stored", (await q(`select city from employee_personal_details where "userId"=(select id from users where "employeeCode"='SHE-E1')`))[0]?.city === "Testville");
+  }
 
   console.log("\n## 1b. a form of address after the manager's name (as an Admin, who may change reporting lines)");
   const admTok = (await (await fetch(API + "/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "SHE-AD", password: "She@12345678" }) })).json()).token;
@@ -60,7 +68,7 @@ const ok = (n, c, x) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL 
   r = await runA(["SHE-E1", "eli sir", "", "", ""]);
   ok("the first name of an ordinary employee is NOT accepted as a manager", r.issues.some((i) => i.code === "MANAGER_NOT_FOUND"), r);
   r = await run(["SHE-E1", "zorbo sir", "", "", ""]);
-  ok("HR (not Admin) naming a different manager is still refused", r.issues.some((i) => i.code === "ADMIN_ONLY_FIELD"), r);
+  ok("HR (not Admin) naming a different manager never applies it", !r.changes.some((c) => c.field === "reportsTo") && r.notes.some((n) => /only an Admin can change it/.test(n)), r);
 
   console.log("\n## 1c. a manager who sits in ANOTHER company (reporting lines may cross companies)");
   const gTok = (await (await fetch(API + "/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "SHE-AD2", password: "She@12345678" }) })).json()).token;
