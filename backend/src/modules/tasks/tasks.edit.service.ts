@@ -21,7 +21,7 @@ import { allowedDaysFor, lateReady } from "./tasks.late.js";
 import { checkBackdate } from "./tasks.late.logic.js";
 import { parseHours, parseProgress, storeProgress, progressOf, checkBlockedReason, mayReview, PROGRESS_LABEL } from "./tasks.entry.logic.js";
 import { taskNotice } from "./tasks.notify.js";
-import { actingUserIds, assertCanReviewTask, listTasks, resolveProject, userContext } from "./tasks.service.js";
+import { actingUserIds, assertCanReviewTask, listTasks, mayUseReviewActions, resolveProject, userContext } from "./tasks.service.js";
 import { changeEvents, changesReady, taskIdsWithChangesSince, writeChange } from "./tasks.edit.js";
 import { detectAfterSubmit } from "./repetition.detect.js";
 import {
@@ -280,7 +280,7 @@ export async function requestCorrection(userId: string, taskId: string, body: Re
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 export async function decideCorrection(actorId: string, taskId: string, body: { requestId?: unknown; approve?: unknown; note?: unknown }) {
   const ctx = await userContext(actorId);
-  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  if (!(await mayUseReviewActions(ctx, actorId))) throw new Error("NOT_ALLOWED");
   const actor = { id: actorId, role: ctx.role, platformId: ctx.platformId };
   if (typeof body.approve !== "boolean") throw new Error("BAD_DECISION");
   const requestId = typeof body.requestId === "string" ? body.requestId : "";
@@ -380,7 +380,7 @@ const nameOf = (u: { firstName: string; lastName: string } | null | undefined) =
 /** Correction requests waiting for THIS person (only tasks they would be allowed to approve; never HR or Admin by role). */
 export async function pendingCorrections(viewerId: string) {
   const ctx = await userContext(viewerId);
-  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  if (!(await mayUseReviewActions(ctx, viewerId))) throw new Error("NOT_ALLOWED");
   if (!(await changesReady())) return { ready: false, corrections: [] as unknown[] };
   const ids = await taskIdsWithChangesSince(new Date(Date.now() - 180 * 86_400_000));
   if (ids.length === 0) return { ready: true, corrections: [] as unknown[] };
@@ -431,7 +431,7 @@ export async function taskChanges(viewerId: string, taskId: string) {
   const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) }, include: { user: { select: { firstName: true, lastName: true, employeeCode: true } }, team: { select: { name: true } } } });
   if (!task) throw new Error("NOT_FOUND");
   let allowed = task.userId === viewerId;
-  if (!allowed && MANAGING_ROLES.includes(ctx.role)) {
+  if (!allowed && (await mayUseReviewActions(ctx, viewerId))) {
     try {
       await assertCanReviewTask({ id: viewerId, role: ctx.role, platformId: ctx.platformId }, task);
       allowed = true;

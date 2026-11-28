@@ -1,7 +1,7 @@
 import { NOT_ADMIN } from "../../lib/tracked.js";
 import { isLinkedManager, linkedReportIds } from "../../lib/reportingLinks.js";
 import { PRIORITY_WEIGHT, weightOf, weightedPerformance } from "./tasks.weighted.js";
-import { CAP_TASK_ASSIGN_COMPANY, hasCapability } from "../../lib/capabilities.js";
+import { CAP_TASK_APPROVE_COMPANY, CAP_TASK_ASSIGN_COMPANY, hasCapability } from "../../lib/capabilities.js";
 import { attachTimers } from "./tasks.timer.js";
 import { emitTaskChange } from "../../lib/realtime.js";
 import { taskNotice } from "./tasks.notify.js";
@@ -42,6 +42,10 @@ export const TASK_WEIGHTS: Record<string, number> = { ...PRIORITY_WEIGHT };
 const WEIGHTS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const STATUSES = ["PENDING", "IN_PROGRESS", "COMPLETED"];
 const MANAGING_ROLES = ["MANAGER", "HR", "ADMIN"];
+/** May this person use the review actions at all? Manager / HR / Admin, or an Employee holding TASK_APPROVE_COMPANY (who then decides ONLY tasks tagged to them, enforced in assertCanReviewTask). */
+export async function mayUseReviewActions(ctx: { role: string }, userId: string): Promise<boolean> {
+  return MANAGING_ROLES.includes(String(ctx.role)) || (String(ctx.role) === "EMPLOYEE" && (await hasCapability(userId, CAP_TASK_APPROVE_COMPANY)));
+}
 
 export async function userContext(userId: string) {
   const user = await prisma.user.findUnique({
@@ -375,6 +379,8 @@ export async function listTasks(userId: string) {
     selfManagedMode,
     // true for an Employee who holds TASK_ASSIGN_COMPANY (Productivity Supervisors): the page then shows the "Assign Tasks" tab. The server enforces it again on every call.
     canAssignCompany: String(ctx.role) === "EMPLOYEE" && (await hasCapability(userId, CAP_TASK_ASSIGN_COMPANY)),
+    // true for an Employee who holds TASK_APPROVE_COMPANY: Daily Tasks then shows the "Employee submitted tasks" tab, where only tasks tagged to them can be decided.
+    canApproveCompany: String(ctx.role) === "EMPLOYEE" && (await isSupervisor(userId)) && (await hasCapability(userId, CAP_TASK_APPROVE_COMPANY)),
     score,
     scorePercent: score.percent,
     weighted: weightedPerformance(rows),
@@ -793,6 +799,7 @@ export async function listForApproval(
   // A Productivity Supervisor (an Employee with a monitoring row) reads every task of every company, strictly read-only: no row is ever actionable
   // for them, and the approve / rate / delete / revert / assign routes keep refusing the EMPLOYEE role.
   const supervisor = ctx.role === "EMPLOYEE" && (await isSupervisor(managerId));
+  const supervisorMayDecide = supervisor && (await hasCapability(managerId, CAP_TASK_APPROVE_COMPANY));
   if (!MANAGING_ROLES.includes(ctx.role) && !supervisor) throw new Error("NOT_ALLOWED");
 
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
@@ -944,8 +951,9 @@ export async function listForApproval(
       decidedBy: t.approvedById ? deciders.get(t.approvedById) ?? null : null,
       decidedAt: t.approvedAt ? t.approvedAt.toISOString() : null,
       // HR can act only on a task tagged to them (no legacy reporting-line fallback); everyone else follows mayReview.
+      // A Productivity Supervisor is read-only EXCEPT for a task tagged to them when they hold TASK_APPROVE_COMPANY.
       canAct: supervisor
-        ? false
+        ? supervisorMayDecide && !!d?.taggedManagerId && d.taggedManagerActive && d.taggedManagerId === managerId
         : ctx.role === "HR"
         ? !!d?.taggedManagerId && d.taggedManagerActive && d.taggedManagerId === managerId
         : mayReview({ actorId: managerId, taggedId: d?.taggedManagerId ?? null, taggedActive: d?.taggedManagerActive ?? false, legacyOk: acting.has(t.userId) }),
@@ -1086,7 +1094,7 @@ export async function approveTask(
   note?: string
 ) {
   const ctx = await userContext(managerId);
-  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  if (!(await mayUseReviewActions(ctx, managerId))) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
 
   // Whoever proposed the task deserves to know why it was turned down.
@@ -1137,7 +1145,7 @@ export async function reviewTask(
   input: { rating?: unknown; comment?: unknown; outcome?: unknown; expectedMinutes?: unknown }
 ) {
   const ctx = await userContext(managerId);
-  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  if (!(await mayUseReviewActions(ctx, managerId))) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
 
   // The old three-way grade is gone: a request that still sends it is told to use stars.
@@ -1202,7 +1210,7 @@ export async function reviewTask(
  */
 export async function markPartial(managerId: string, taskId: string, partialIn: unknown, extra: { percent?: unknown; milestone?: unknown } = {}) {
   const ctx = await userContext(managerId);
-  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  if (!(await mayUseReviewActions(ctx, managerId))) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
   if (typeof partialIn !== "boolean") throw new Error("BAD_PARTIAL");
   const task = await prisma.dailyTask.findUnique({ where: { id: taskId, ...(await activeTasks()) } });
@@ -1246,7 +1254,7 @@ export async function markPartial(managerId: string, taskId: string, partialIn: 
  */
 export async function revertTask(managerId: string, taskId: string, typeIn: unknown, remarkIn: unknown, reasonIn?: unknown) {
   const ctx = await userContext(managerId);
-  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  if (!(await mayUseReviewActions(ctx, managerId))) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
 
   const type = String(typeIn ?? "") as RevertType;
@@ -1325,7 +1333,7 @@ export async function deleteTaskAsManager(managerId: string, taskId: string, inp
   if (!(await deletionsReady())) throw new Error("FEATURES_NOT_READY");
   const reason = checkDeletion(input);
   const ctx = await userContext(managerId);
-  if (!MANAGING_ROLES.includes(ctx.role)) throw new Error("NOT_ALLOWED");
+  if (!(await mayUseReviewActions(ctx, managerId))) throw new Error("NOT_ALLOWED");
   const actor = { id: managerId, role: ctx.role, platformId: ctx.platformId };
 
   // carryCount >= 0: a manager's personal "previous tasks" (carryCount -1) are not tasks anyone else can review or delete: they read as not found.

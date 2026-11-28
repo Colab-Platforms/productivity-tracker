@@ -118,6 +118,7 @@ type Payload = {
   selfManagedMode?: boolean;
   // true for an Employee who holds the TASK_ASSIGN_COMPANY capability (a Productivity Supervisor): the "Assign Tasks" tab is shown
   canAssignCompany?: boolean;
+  canApproveCompany?: boolean;
   entryForm?: EntryForm;
   projects?: { id: string; name: string }[];
   awaitingApproval: Task[];
@@ -186,7 +187,7 @@ function TasksPageInner() {
   const view = pickedView ?? (tabParam === "submitted" || tabParam === "assigned" || tabParam === "assign" || tabParam === "received" || tabParam === "previous" ? tabParam : "main");
   const setView = setPickedView;
   // HR and Admin may open the same queue of employee-submitted tasks (they only act on tasks tagged to them; the rest is view only).
-  const canReview = me?.role === "HR" || me?.role === "ADMIN";
+  const canReview = me?.role === "HR" || me?.role === "ADMIN" || (me?.role === "EMPLOYEE" && data?.canApproveCompany === true);
   const [assignedOpen, setAssignedOpen] = useState(0);
   useEffect(() => {
     apiGet<{ counts: { todo: number; inProgress: number } }>("/tasks/assigned/mine").then((p) => setAssignedOpen(p.counts.todo + p.counts.inProgress)).catch(() => undefined);

@@ -14,13 +14,17 @@ const { Client } = require(B + "pg");
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
 const APPLY = flag("--apply");
-const CAPABILITY = "TASK_ASSIGN_COMPANY";
+const argv = (n) => (args.find((a) => a.startsWith(n + "=")) || "").slice(n.length + 1);
+const CAPABILITY = argv("--capability") || "TASK_ASSIGN_COMPANY"; // or TASK_APPROVE_COMPANY
+if (!["TASK_ASSIGN_COMPANY", "TASK_APPROVE_COMPANY"].includes(CAPABILITY)) throw new Error("Unknown --capability " + CAPABILITY);
 
 // Matched by employee ID AND name AND role AND status, so a changed or reused ID can never give the capability to somebody else.
-const TARGETS = [
+const ALL_TARGETS = [
   { code: "CP-01", first: "Saurabh", last: "Jadhav" },
   { code: "AWL-06", first: "Chirag", last: "Parmar" },
 ];
+// Approval rights are granted to Saurabh Jadhav only (owner decision 2026-11-28); assigning stays with both.
+const TARGETS = CAPABILITY === "TASK_APPROVE_COMPANY" ? ALL_TARGETS.filter((t) => t.code === "CP-01") : ALL_TARGETS;
 
 // The pooled and the direct Neon host of the same database differ only by "-pooler": compare them as one.
 const norm = (h) => (h || "").toLowerCase().replace("-pooler", "");

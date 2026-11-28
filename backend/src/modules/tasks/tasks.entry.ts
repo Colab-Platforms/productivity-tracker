@@ -1,5 +1,6 @@
 import { allLinkedManagerIds, linkedManagerIdsOf } from "../../lib/reportingLinks.js";
 import { prisma } from "../../lib/prisma.js";
+import { CAP_TASK_APPROVE_COMPANY, holdersOf } from "../../lib/capabilities.js";
 import { managerIdsByTeam } from "../../lib/teamManagers.js";
 import { getPinnedCompany, onlyPinnedCompany } from "../../lib/deployment.js";
 import { pickDefaults, progressOf, type EntryDefaults, type Progress } from "./tasks.entry.logic.js";
@@ -106,6 +107,13 @@ export async function eligibleManagers(owner: { id: string; platformId: string }
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
   const list = users.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), code: u.employeeCode, role: String(u.role) }));
+  // An Employee account that holds TASK_APPROVE_COMPANY may be tagged as the approver (and decides only the tasks tagged to them).
+  for (const h of await holdersOf(CAP_TASK_APPROVE_COMPANY)) {
+    if (h.id === owner.id || list.some((m) => m.id === h.id)) continue;
+    if (!(await onlyPinnedCompany([h.id])).length) continue;
+    list.push({ id: h.id, name: `${h.firstName} ${h.lastName}`.trim(), code: h.employeeCode, role: "EMPLOYEE" });
+  }
+  list.sort((a, b) => a.name.localeCompare(b.name));
   // An active HR person who IS this employee's own reporting manager may also approve this employee's tasks (the owner's rule, 2026-11-17).
   // Read from users.reportsToId, never by name; HR who are not the employee's reporting manager stay view-only.
   const me = await prisma.user.findUnique({ where: { id: owner.id }, select: { reportsToId: true } });
