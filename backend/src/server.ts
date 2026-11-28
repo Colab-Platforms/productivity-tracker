@@ -1,6 +1,8 @@
 import "dotenv/config";
 import { policyFromEnv, trustedProxyCheck } from "./lib/ipPolicy.js";
 import { checkSecret } from "./lib/session.js";
+import { assertDemoDatabase, isDemo } from "./lib/demo.js";
+import demoRoutes from "./modules/demo/demo.routes.js";
 import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
@@ -41,6 +43,7 @@ import crmReportsRoutes from "./modules/crm-reports/crmReports.routes.js";
 import supervisorRoutes from "./modules/supervisor/supervisor.routes.js";
 import loginActivityRoutes from "./modules/login-activity/loginActivity.routes.js";
 import breakMonitorRoutes from "./modules/break-monitor/breakMonitor.routes.js";
+import personalDetailsRoutes from "./modules/personal/personal.routes.js";
 import { startLoginActivityPurge } from "./modules/login-activity/loginEvents.js";
 import { typingAudience } from "./modules/chat/chat.service.js";
 import { startRealtime } from "./lib/realtime.js";
@@ -118,6 +121,8 @@ app.get("/api/db-health", async (_req, res) => {
   }
 });
 
+// DEMO MODE only (a separate server + database): the universal demo login, role switcher and reset. Not mounted anywhere else.
+if (isDemo) app.use("/api/demo", demoRoutes);
 app.use("/api/auth", authRoutes);
 
 // The gate runs before any tracker route. Someone mid-onboarding can sign
@@ -157,6 +162,7 @@ app.use("/api/crm-reports", crmReportsRoutes);
 app.use("/api/supervisor", supervisorRoutes);
 app.use("/api/login-activity", loginActivityRoutes);
 app.use("/api/break-monitor", breakMonitorRoutes);
+app.use("/api/personal-details", personalDetailsRoutes);
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
 });
@@ -173,6 +179,16 @@ try {
   });
 } catch (e) {
   console.error("[realtime] not started:", e instanceof Error ? e.message : e);
+}
+
+// In demo mode the server only starts on a database that carries the demo marker (see lib/demo.ts); otherwise it exits before listening or running any job.
+await assertDemoDatabase();
+if (isDemo) {
+  // keep the fictional "today" fresh (see refreshIfStale); the database name is only used by the seed's own safety rule
+  const dbName = (process.env.DATABASE_URL ?? "").split("/").pop()?.split("?")[0] ?? "";
+  const { refreshIfStale } = await import("./modules/demo/demoSeed.js");
+  await refreshIfStale(dbName).catch((e) => console.error("[demo] refresh failed:", e instanceof Error ? e.message : e));
+  setInterval(() => void refreshIfStale(dbName).catch((e) => console.error("[demo] refresh failed:", e instanceof Error ? e.message : e)), 30 * 60_000);
 }
 
 httpServer.listen(PORT, () => {

@@ -174,6 +174,12 @@ export async function sendMail(mail: Mail): Promise<{
 }> {
   const text = mail.text ?? toText(mail.html);
 
+  // DEMO MODE: nothing ever leaves the demo server. The message is dropped and reported as not sent.
+  if (process.env.DEMO_MODE === "true") {
+    console.log(`[mail] demo mode: email switched off, not sent (${mail.subject})`);
+    return { sent: false, reason: "Demo mode: email is switched off." };
+  }
+
   if (apiConfigured) {
     const viaApi = await sendViaApi(mail, text);
     if (viaApi.sent) {

@@ -1,5 +1,6 @@
 "use client";
 
+import DemoBar from "./_demo/DemoBar";
 import { Suspense, createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { dashboardTitle } from "@/lib/roles";
 import { homeFor } from "@/lib/roleHome";
@@ -790,6 +791,7 @@ export default function DashboardLayout({
           <main className="app-container app-main animate-in">{children}</main>
         </div>
       </div>
+      <DemoBar role={me?.role} />
       <ChatDrawer open={chatOpen} activeId={chatActive} onSelect={setChatActive} onClose={closeChat} />
       </NotificationsProvider>
       </ThemeProvider>

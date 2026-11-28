@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { homeFor } from "@/lib/roleHome";
+import { getDemoInfo, type DemoInfo } from "@/lib/demo";
 import { useRouter } from "next/navigation";
 import { apiGet, apiPost, getToken, setToken, LOGIN_NOTICE_KEY } from "@/lib/api";
 
@@ -28,6 +29,8 @@ export default function LoginPage() {
   const [failures, setFailures] = useState(0); // wrong-password answers in this visit, only to decide how much help to show
   const [capsOn, setCapsOn] = useState(false);
   const [help, setHelp] = useState(false);
+  const [demo, setDemo] = useState<DemoInfo | null>(null);
+  useEffect(() => { void getDemoInfo().then(setDemo); }, []);
 
   // Already signed in? Don't make them log in again.
   useEffect(() => {
@@ -52,7 +55,7 @@ export default function LoginPage() {
 
     try {
       // The ID or email is trimmed (a pasted trailing space is never meant). The password is sent EXACTLY as typed: it may legitimately contain spaces.
-      const result = await apiPost<{ token: string }>("/auth/login", {
+      const result = await apiPost<{ token: string }>(demo ? "/demo/login" : "/auth/login", {
         email: email.trim(),
         password,
       });
@@ -98,6 +101,11 @@ export default function LoginPage() {
           <p className="mt-1 text-sm text-slate-500">
             Sign in to start your day
           </p>
+          {demo && (
+            <p data-testid="demo-login-note" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <b>DEMO MODE.</b> Every record is fictional. Sign in with the demo username and password you were given, then switch between Admin, HR, Manager and Employee from the bar at the bottom.
+            </p>
+          )}
         </div>
 
         <form

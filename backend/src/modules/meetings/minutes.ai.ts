@@ -12,13 +12,13 @@ const BASE = process.env.MINUTES_API_BASE || "https://api.groq.com/openai/v1";
 export const STT_MODEL = process.env.MINUTES_STT_MODEL || "whisper-large-v3";
 export const LLM_MODEL = process.env.MINUTES_LLM_MODEL || "openai/gpt-oss-120b";
 
-export const aiConfigured = () => !!process.env.GROQ_API_KEY;
+export const aiConfigured = () => process.env.DEMO_MODE !== "true" && !!process.env.GROQ_API_KEY; // never in demo mode
 
 const EXT: Record<string, string> = { "audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "audio/x-m4a": "m4a", "audio/m4a": "m4a", "audio/flac": "flac" };
 export const extFor = (mime: string) => EXT[mime.split(";")[0].trim().toLowerCase()] ?? null;
 
 async function call(path: string, init: RequestInit, timeoutMs: number): Promise<Record<string, unknown>> {
-  const key = process.env.GROQ_API_KEY;
+  const key = process.env.DEMO_MODE === "true" ? undefined : process.env.GROQ_API_KEY; // demo mode: no outside AI calls, ever
   if (!key) throw new Error("MINUTES_NOT_CONFIGURED");
   let res: Response;
   try {
